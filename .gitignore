@@ -4,3 +4,7 @@ __pycache__/
 
 # Server audio cache (runtime artifact)
 server/cache/
+
+# Python bytecode
+server/__pycache__/
+server/tests/__pycache__/
