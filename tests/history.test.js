@@ -92,6 +92,78 @@ test('updateLastSelectedIndex records progress on the matching entry only', asyn
   assert.equal(entry.lastSelectedIndex, 7);
 });
 
+test('setFavorite toggles the star flag on the matching entry', async () => {
+  const { repo } = makeRepo();
+  await repo.add('passage');
+  const entry = (await repo.getRecent())[0];
+  assert.equal(entry.favorite, false);
+  await repo.setFavorite(entry.id, true);
+  assert.equal((await repo.getRecent())[0].favorite, true);
+  await repo.setFavorite(entry.id, false);
+  assert.equal((await repo.getRecent())[0].favorite, false);
+});
+
+test('trimming skips favorited entries; non-favorites stay bounded', async () => {
+  let now = 1000;
+  const { repo, removed } = makeRepo();
+  repo.now = () => now++;
+  for (let i = 0; i < MAX_ENTRIES + 5; i++) {
+    await repo.add(`entry ${i}`);
+  }
+  // Favorite the oldest survivor ('entry 5'), which the next add would trim.
+  const target = (await repo.getRecent()).find((e) => e.text === 'entry 5');
+  assert.ok(target, 'entry 5 exists before trimming');
+  await repo.setFavorite(target.id, true);
+  await repo.add('one more');
+  const recent = await repo.getRecent();
+  assert.ok(recent.some((e) => e.id === target.id), 'favorite survives trimming');
+  const nonFavorites = recent.filter((e) => !e.favorite);
+  assert.equal(nonFavorites.length, MAX_ENTRIES);
+  assert.ok(!removed.includes(target.id), 'favorite id is not reported as removed');
+});
+
+test('getRecent returns favorites even beyond the bound', async () => {
+  let now = 1000;
+  const { repo } = makeRepo();
+  repo.now = () => now++;
+  for (let i = 0; i < MAX_ENTRIES + 10; i++) {
+    await repo.add(`entry ${i}`);
+  }
+  // The oldest 10 were trimmed already; favorite a survivor, then push more.
+  const survivor = (await repo.getRecent())[0];
+  await repo.setFavorite(survivor.id, true);
+  for (let i = 0; i < 5; i++) {
+    await repo.add(`new ${i}`);
+  }
+  const recent = await repo.getRecent();
+  assert.ok(recent.some((e) => e.id === survivor.id));
+});
+
+test('duplicate add keeps the favorite flag on the collapsed entry', async () => {
+  let now = 1000;
+  const { repo } = makeRepo();
+  repo.now = () => now;
+  await repo.add('Same text');
+  const entry = (await repo.getRecent())[0];
+  await repo.setFavorite(entry.id, true);
+  now = 2000;
+  await repo.add('Same text');
+  const collapsed = (await repo.getRecent())[0];
+  assert.equal(collapsed.id, entry.id);
+  assert.equal(collapsed.favorite, true);
+  assert.equal(collapsed.createdAt, 2000);
+});
+
+test('deleteEntry removes a favorite like any other entry', async () => {
+  const { repo, removed } = makeRepo();
+  await repo.add('doomed');
+  const entry = (await repo.getRecent())[0];
+  await repo.setFavorite(entry.id, true);
+  await repo.deleteEntry(entry.id);
+  assert.deepEqual(await repo.getRecent(), []);
+  assert.deepEqual(removed, [entry.id]);
+});
+
 test('audio ownership: references follow the ADR 0008 lifetime rule', () => {
   const refs = new Map();
   record(refs, '/tts?text=A&voice=v&rate=%2B0%25', 1);

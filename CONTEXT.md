@@ -4,8 +4,13 @@ LearnBuddy is the Web/PWA port of dasan's Language Reader Android app: paste tex
 
 ## Core screens
 
-- **Paste screen** — The first screen. Contains a large text field, a **Paste from clipboard** button, a **Read** button, and a list of recent **history entries**. The Read button is disabled when the text field is empty.
-- **Reader screen** — The second screen. Shows the pasted text as a scrollable list of **sentence cards**. The first sentence is automatically **selected** after segmentation so the bottom controls are immediately usable. Tapping a card plays its audio.
+- **Paste screen** — The first screen. Contains a large text field, a **Paste from clipboard** button, a **Read** button, and a list of recent **history entries**. The Read button is disabled when the text field is empty. (Android baseline; on web it is the mobile **Paste view**.)
+- **Reader screen** — The second screen. Shows the pasted text as a scrollable list of **sentence cards**. The first sentence is automatically **selected** after segmentation so the bottom controls are immediately usable. Tapping a card plays its audio. (Android baseline; on web it is the mobile **Reader view**.)
+- **Paste view** — *Web*: the mobile in-page view hosting the **Editor** and **History**. The same URL as the **Reader view**; the two are switched in-page, replacing the Android two-screen navigation.
+- **Reader view** — *Web*: the mobile in-page view hosting the **Reading area**. Reached from the Paste view's **Read** button; the header back button returns to the Paste view.
+- **Editor** — *Web*: the text area for pasting, modifying, or appending the passage, with the **Paste from clipboard** button, the **Update** button, and the **History** tabs. On desktop it sits at the bottom of the single page: collapsed to two lines, expanding to the lower half of the screen when focused and collapsing again on **Update**. On mobile it is the full-screen **Paste view**.
+- **Reading area** — *Web*: the page region showing the **sentence cards** and the **Playback controls**. On desktop it occupies the top of the single page above the **Editor**; on mobile it is the full-screen **Reader view**.
+- **Update** — *Web*: the button that re-segments the edited text into sentences, commits the passage to **History**, and on desktop collapses the **Editor**. Re-segmentation keeps the **selected sentence** when its text still exists exactly; otherwise the first sentence is selected.
 
 ## Text and segmentation
 
@@ -42,18 +47,19 @@ LearnBuddy is the Web/PWA port of dasan's Language Reader Android app: paste tex
 ## History
 
 - **History** — A local, learner-visible list of texts submitted from the Paste screen, stored in IndexedDB. It survives sessions and is bounded to 50 entries.
-- **History entry** — One record in History, containing the submitted text and a timestamp. Duplicate texts are collapsed into a single entry with the newest timestamp.
+- **History entry** — One record in History, containing the submitted text, a timestamp, the last selected sentence index, and a **Favorite** flag. Duplicate texts are collapsed into a single entry with the newest timestamp.
+- **Favorite** — *Web*: the star flag a learner sets on a **History entry**. Favorited entries are exempt from **History trimming**; the non-favorite bound stays at 50. Favorites appear in the History **favorites filter** and can still be deleted.
 - **Delete history entry** — The learner-initiated removal of a History entry from the Paste screen. The entry disappears immediately; its audio cache entries are purged except those still referenced by other live entries.
-- **History trimming** — Automatic removal of the oldest History entries when the 50-entry maximum is exceeded, without learner action. A trimmed entry's audio is purged exactly as if the entry had been deleted.
+- **History trimming** — Automatic removal of the oldest non-favorite History entries when the 50-entry maximum is exceeded, without learner action. **Favorite** entries are never trimmed. A trimmed entry's audio is purged exactly as if the entry had been deleted.
 
 ## Terms we avoid
 
 | Avoid | Use instead | Why |
 |-------|-------------|-----|
 | `phrase`, `clause`, `line` | `sentence` | The UI and splitter operate on sentence boundaries. |
-| `player screen`, `listen screen` | `Reader screen` | Consistent with the two-screen model. |
+| `player screen`, `listen screen` | `Reader screen` | Consistent with the two-view model (Android screens; web **Paste view**/**Reader view**). |
 | `speed` | `rate` | Matches SSML parameter naming. |
 | `offline TTS`, `on-device synthesis` | — | Out of scope; do not imply it exists. |
 | `offline mode`, `offline playback` | `offline replay` | Only replays previously fetched audio; never arbitrary text without network. |
-| `account`, `favorites` | — | Out of scope. |
+| `account`, `starred`, `bookmarked` | — | Out of scope; the star flag is called **Favorite**. |
 | `translation`, `furigana`, `quiz` | — | Out of scope. |

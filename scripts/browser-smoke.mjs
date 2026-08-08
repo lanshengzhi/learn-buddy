@@ -1,7 +1,8 @@
 /**
  * Browser smoke test (dev machine only — needs the backend running and
- * Playwright's chromium installed). Exercises the real UI flow:
- * paste → read → cards → tap-to-play → loop/rate controls → back → history.
+ * Playwright's chromium installed). Exercises the real single-page UI flow
+ * (ADR 0002): mobile Paste view ⇄ Reader view, desktop reading-on-top with
+ * the collapsible editor, history favorites, and offline replay.
  *
  * Usage:  python3 server/tts_server.py --port 8123 &
  *         node scripts/browser-smoke.mjs
@@ -25,7 +26,7 @@ const PASSAGE = 'Hello world. This is a test sentence. How are you today?';
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH ?? '/home/lansy/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome',
 });
-const page = await browser.newPage();
+const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
 const errors = [];
 page.on('console', (msg) => {
   if (msg.type() === 'error') errors.push(msg.text());
@@ -33,65 +34,63 @@ page.on('console', (msg) => {
 page.on('pageerror', (err) => errors.push(String(err)));
 
 try {
-  // 1. Paste screen renders.
+  // ==== Mobile flow: Paste view ⇄ Reader view ==============================
+  // 1. Paste view renders; read/update disabled while empty.
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
   await page.waitForSelector('#text-input');
-
-  // 2. Read button is disabled while empty, enables with text.
-  const readDisabled = await page.isDisabled('#read-button');
-  console.log('read disabled on empty:', readDisabled);
+  console.log('read disabled on empty:', await page.isDisabled('#read-button'));
   await page.fill('#text-input', PASSAGE);
   console.log('read enabled after typing:', !(await page.isDisabled('#read-button')));
 
-  // 3. Submit → Reader screen, cards rendered, first selected.
+  // 2. Read → Reader view in-page (no navigation), cards rendered, first selected.
   await page.click('#read-button');
-  await page.waitForURL('**/reader.html');
+  await page.waitForFunction(() => document.body.classList.contains('view-read'));
   await page.waitForSelector('.sentence-list li');
   const cardCount = await page.locator('.sentence-list li').count();
   const firstSelected = await page.locator('.sentence-list li').first().evaluate((el) => el.classList.contains('selected'));
   console.log(`cards: ${cardCount}, first selected: ${firstSelected}`);
-  const cardTexts = await page.locator('.sentence-list li').allTextContents();
-  console.log('card texts:', JSON.stringify(cardTexts));
+  console.log('card texts:', JSON.stringify(await page.locator('.sentence-list li').allTextContents()));
 
-  // 4. Tap a card → audio loads and plays (playing class appears).
+  // 3. Tap a card → audio loads and plays (playing class appears).
   await page.locator('.sentence-list li').nth(1).click();
-  await page.waitForFunction(() => {
-    const card = document.querySelector('.sentence-list li.playing');
-    return card !== null;
-  }, { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector('.sentence-list li.playing') !== null, { timeout: 15000 });
   console.log('playing card highlighted after tap');
 
-  // 5. Loop toggle cycles to Loop-all (tinted icon).
+  // 4. Loop toggle cycles to Loop-all; rate select switches to 2×.
   await page.click('#loop-button');
-  const loopLabel = await page.getAttribute('#loop-button', 'aria-label');
-  console.log('loop after one toggle:', loopLabel);
-
-  // 6. Rate select switches to 2×.
+  console.log('loop after one toggle:', await page.getAttribute('#loop-button', 'aria-label'));
   await page.selectOption('#rate-select', 'Double');
-  console.log('rate label now:', await page.getAttribute('#rate-select', 'aria-label') ?? '(select)');
+  console.log('rate set to 2×');
 
-  // 7. Back to paste; history shows the entry.
+  // 5. Back to Paste view; open the History tab; entry present; favorite; filter.
   await page.click('#back-button');
-  await page.waitForURL('**/index.html');
+  await page.waitForFunction(() => !document.body.classList.contains('view-read'));
+  await page.click('#tab-history');
   await page.waitForSelector('.history-list li');
-  const historyText = await page.locator('.history-entry').first().textContent();
-  console.log('history entry:', JSON.stringify(historyText?.slice(0, 40)));
+  console.log('history entry:', JSON.stringify((await page.locator('.history-entry').first().textContent())?.slice(0, 40)));
+  await page.click('.star-btn');
+  await page.waitForFunction(() => document.querySelectorAll('.star-btn.on').length === 1);
+  console.log('starred: true');
+  await page.click('#filter-fav');
+  await page.waitForFunction(() => document.querySelectorAll('.history-list li').length === 1);
+  console.log('favorites filter shows 1 entry');
+  await page.click('#filter-all');
 
-  // 8. Open history entry → reader again, restoring lastSelectedIndex.
+  // 6. Open history entry → Reader view again (lastSelectedIndex restored).
   await page.locator('.history-entry').first().click();
-  await page.waitForURL('**/reader.html');
+  await page.waitForFunction(() => document.body.classList.contains('view-read'));
   await page.waitForSelector('.sentence-list li');
   console.log('history reopen OK');
 
-  // 9. Delete the entry from history.
+  // 7. Delete the entry from history (still favorited — delete works on favorites).
   await page.click('#back-button');
-  await page.waitForURL('**/index.html');
+  await page.waitForFunction(() => !document.body.classList.contains('view-read'));
   await page.waitForSelector('.history-list li');
   await page.click('.delete-entry');
   await page.waitForFunction(() => document.querySelectorAll('.history-list li').length === 0);
   console.log('history entry deleted');
 
-  // 10. Service worker registers (localhost is a secure context).
+  // 8. Service worker registers (localhost is a secure context).
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
   await page.waitForFunction(async () => {
     if (!('serviceWorker' in navigator)) return false;
@@ -100,39 +99,67 @@ try {
   }, { timeout: 10000 });
   console.log('service worker active');
 
-  // 11. Offline replay: play a sentence, go offline, reload, replay from cache.
-  // Loop mode persists (ADR 0009) and was left in Loop-all by step 5 —
-  // cycle it back to Off once on the reader so the sentence ends naturally.
+  // 9. Offline replay: play a sentence, go offline, reload, replay from cache.
   await page.fill('#text-input', 'Offline replay sentence.');
   await page.click('#read-button');
   await page.waitForSelector('.sentence-list li');
+  // Loop persists (ADR 0009) and step 4 left it on 全部; cycle back to 关
+  // (Off → All → One → Off) so the sentence ends naturally.
   for (let i = 0; i < 3; i++) {
     const label = await page.getAttribute('#loop-button', 'aria-label');
-    if (label === 'Loop all off') break;
+    if (label === '循环：关') break;
     await page.click('#loop-button');
   }
   await page.locator('.sentence-list li').first().click();
-  await page.waitForFunction(() => !!document.querySelector('.sentence-list li.playing'), { timeout: 15000 });
-  await page.waitForFunction(() => !document.querySelector('.sentence-list li.playing'), { timeout: 15000 });
-  console.log('sentence played online (SW audio cache filled)');
+  await page.waitForFunction(() => document.querySelector('.sentence-list li.playing') !== null, { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector('.sentence-list li.playing') === null, { timeout: 30000 });
+  console.log('online replay finished');
 
   await page.context().setOffline(true);
-  await page.click('#back-button');
-  await page.waitForURL('**/index.html');
-  await page.locator('.history-entry').first().click();
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.fill('#text-input', 'Offline replay sentence.');
+  await page.click('#read-button');
   await page.waitForSelector('.sentence-list li');
   await page.locator('.sentence-list li').first().click();
-  await page.waitForFunction(() => !!document.querySelector('.sentence-list li.playing'), { timeout: 10000 });
-  console.log('OFFLINE REPLAY OK — cached audio played without network');
+  await page.waitForFunction(() => document.querySelector('.sentence-list li.playing') !== null, { timeout: 15000 });
+  console.log('offline replay OK (audio served from SW cache)');
   await page.context().setOffline(false);
 
-  if (errors.length > 0) {
-    console.log('\nCONSOLE/PAGE ERRORS:');
-    for (const e of errors) console.log('  -', e);
-    process.exitCode = 1;
-  } else {
-    console.log('\nSMOKE TEST PASSED — no console errors');
-  }
+  // ==== Desktop flow: reading on top, collapsible editor at the bottom =====
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.reload({ waitUntil: 'networkidle' });
+
+  // 10. Desktop shows both areas; empty text invites the editor (expanded).
+  await page.waitForFunction(() => document.body.classList.contains('editor-expanded'));
+  console.log('desktop: editor expanded on empty text:', await page.locator('#editor-region').isVisible());
+  console.log('desktop: reading area visible:', await page.locator('#reading-area').isVisible());
+
+  // 11. Type + 更新 → editor collapses to two lines, sentences render on top.
+  await page.fill('#text-input', PASSAGE);
+  await page.click('#update-button');
+  await page.waitForFunction(() => document.body.classList.contains('editor-collapsed'));
+  await page.waitForSelector('.sentence-list li');
+  console.log('desktop: update collapsed editor, sentences:', await page.locator('.sentence-list li').count());
+  const collapsedEditorH = await page.locator('#editor-region').evaluate((el) => el.getBoundingClientRect().height);
+  console.log('desktop: collapsed editor height:', Math.round(collapsedEditorH), '(expect < 130)');
+
+  // 12. Focus the editor → expands to the lower half; Escape collapses.
+  await page.focus('#text-input');
+  await page.waitForFunction(() => document.body.classList.contains('editor-expanded'));
+  const expandedH = await page.locator('#editor-region').evaluate((el) => el.getBoundingClientRect().height);
+  console.log('desktop: expanded editor height:', Math.round(expandedH), '(expect ≈ 450)');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.body.classList.contains('editor-collapsed'));
+
+  // 13. 历史 button while collapsed → editor expands onto the history tab.
+  await page.click('#history-button');
+  await page.waitForFunction(() => document.body.classList.contains('editor-expanded'));
+  console.log('desktop: history pane visible after 历史:', await page.locator('#history-pane').isVisible());
+
+  // 14. No console/page errors.
+  console.log('console errors:', errors.length);
 } finally {
   await browser.close();
 }
+
+process.exit(errors.length > 0 ? 1 : 0);
