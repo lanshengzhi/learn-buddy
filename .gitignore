@@ -1,0 +1,6 @@
+# Python
+__pycache__/
+*.pyc
+
+# Server audio cache (runtime artifact)
+server/cache/
