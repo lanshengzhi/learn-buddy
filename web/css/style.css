@@ -1,4 +1,6 @@
-/* LearnBuddy — two-screen language reader. Light/dark via prefers-color-scheme. */
+/* LearnBuddy — single-page language reader (desktop: reading on top, editor
+   at the bottom; mobile: Paste view ⇄ Reader view). Light/dark via
+   prefers-color-scheme. Layout per ADR 0002. */
 
 :root {
   --bg: #f7f6f3;
@@ -34,6 +36,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -47,9 +53,10 @@ body {
     "Noto Sans CJK JP", "Noto Sans SC", sans-serif;
   display: flex;
   flex-direction: column;
+  height: 100dvh;
 }
 
-/* ---- layout ---- */
+/* ---- app shell ---- */
 
 .app-header {
   display: flex;
@@ -59,43 +66,75 @@ body {
   padding-top: calc(12px + env(safe-area-inset-top));
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  flex: none;
 }
 
 .app-header h1 {
   margin: 0;
   font-size: 20px;
   font-weight: 600;
+  flex: 1;
 }
 
-.content {
+.lang-badge {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+/* ---- reading area ---- */
+
+.reading-area {
   flex: 1;
-  overflow-y: auto;
-  padding: 16px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-.paste-screen .content {
-  display: block;
-  max-width: 720px;
-  margin: 0 auto;
-  width: 100%;
+.reader-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 12px;
 }
 
-/* ---- paste screen ---- */
+/* ---- editor region ---- */
 
-.paste-panel h2,
-.history-panel h2 {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.editor-region {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+#edit-pane,
+#history-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+#edit-pane {
+  flex: 1;
+  min-height: 0;
+}
+
+#history-pane {
+  flex: 1;
+  min-height: 0;
 }
 
 #text-input {
   width: 100%;
-  min-height: 160px;
+  flex: none;
+  min-height: 0;
   padding: 12px;
   font: inherit;
   font-size: 17px;
@@ -114,10 +153,67 @@ body {
 
 .actions {
   display: flex;
-  gap: 12px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 4px;
   flex-wrap: wrap;
+  align-items: center;
 }
+
+.auto-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.editor-status {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-height: 16px;
+}
+
+/* history filter chips and list */
+
+.chips {
+  display: flex;
+  gap: 6px;
+}
+
+.chips button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  padding: 4px 12px;
+  font-size: 13px;
+  border-radius: 999px;
+}
+
+.chips button.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+/* ---- desktop: collapsible editor ---- */
+
+.collapsed-status {
+  display: none;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.collapsed-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ---- buttons ---- */
 
 button {
   font: inherit;
@@ -140,6 +236,23 @@ button.secondary {
 button:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.btn {
+  font-size: 15px;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: var(--primary);
+  color: #fff;
+}
+
+.btn.secondary {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
 }
 
 button.icon-button {
@@ -166,6 +279,29 @@ button.icon-button.primary {
 
 button.icon-button.tinted {
   color: var(--primary-strong);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px 0;
+}
+
+.tabs button {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  padding: 7px 0;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 10px;
+}
+
+.tabs button.active {
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  border-color: var(--primary);
 }
 
 .error {
@@ -199,11 +335,11 @@ button.icon-button.tinted {
 .history-list li {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 10px 10px 10px 14px;
+  padding: 8px 8px 8px 12px;
   box-shadow: var(--card-shadow);
 }
 
@@ -225,29 +361,39 @@ button.icon-button.tinted {
   color: var(--primary-strong);
 }
 
+.star-btn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 6px;
+  color: var(--text-muted);
+}
+
+.star-btn.on {
+  color: #d9a520;
+}
+
 .delete-entry {
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
-  padding: 6px 8px;
+  padding: 4px 6px;
 }
 
 .delete-entry:hover {
   color: var(--error);
 }
 
+.entry-time {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 /* ---- reader ---- */
-
-.reader-screen {
-  height: 100dvh;
-}
-
-.reader-content {
-  padding: 8px 12px;
-  gap: 8px;
-}
 
 .loading-indicator {
   width: 28px;
@@ -332,6 +478,7 @@ button.icon-button.tinted {
   padding-bottom: calc(8px + env(safe-area-inset-bottom));
   background: var(--surface);
   border-top: 1px solid var(--border);
+  flex: none;
 }
 
 .rate-control select {
@@ -343,6 +490,93 @@ button.icon-button.tinted {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
+}
+
+/* ---- views: mobile (default) vs desktop ---- */
+
+/* Mobile: Paste view fills the page below the header and scrolls; the
+   Reader view swaps the editor out for the reading area. */
+
+body.view-read #reading-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+body.view-read #editor-region {
+  display: none;
+}
+
+/* Desktop: reading area on top, editor at the bottom (ADR 0002). The editor
+   collapses to two lines; focusing the textarea expands it to the lower
+   half; 更新 collapses it back. */
+
+@media (min-width: 1024px) {
+  #reading-area {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  #editor-region {
+    flex: none;
+    min-height: 0;
+    overflow: hidden;
+    border-top: 1px solid var(--border);
+  }
+
+  body.editor-expanded #editor-region {
+    height: 50vh;
+    display: flex;
+  }
+
+  body.editor-collapsed #editor-region {
+    display: flex;
+  }
+
+  body.editor-collapsed #edit-pane {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  body.editor-collapsed #text-input {
+    height: 56px;
+    min-height: 0;
+    flex: 1;
+    resize: none;
+    overflow-y: hidden;
+  }
+
+  body.editor-expanded #text-input {
+    flex: 1;
+    min-height: 0;
+    resize: none;
+  }
+
+  body.editor-expanded #edit-pane {
+    flex: 1;
+    min-height: 0;
+  }
+
+  #history-pane {
+    flex: 1;
+    min-height: 0;
+  }
+
+  #history-list {
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  .collapsed-status {
+    display: flex;
+  }
+
+  .mobile-only {
+    display: none !important;
+  }
 }
 
 @media (max-width: 420px) {

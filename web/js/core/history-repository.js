@@ -30,7 +30,20 @@ export class HistoryRepository {
   }
 
   async getRecent() {
-    return this.store.listRecent(this.maxEntries);
+    // Favorites are exempt from the bound (ADR 0002): merge the newest
+    // entries with every favorite, dedupe, and order newest-first.
+    const [recent, favorites] = await Promise.all([
+      this.store.listRecent(this.maxEntries),
+      this.store.listFavorites(),
+    ]);
+    const seen = new Set();
+    const merged = [];
+    for (const item of [...recent, ...favorites]) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      merged.push(item);
+    }
+    return merged.sort((a, b) => b.createdAt - a.createdAt || b.id - a.id);
   }
 
   /**
@@ -66,6 +79,11 @@ export class HistoryRepository {
     const existing = await this.store.findByText(trimmed);
     if (!existing) return;
     await this.store.updateLastSelectedIndex(existing.id, lastSelectedIndex);
+  }
+
+  /** Sets the Favorite (star) flag; favorited entries are exempt from trimming. */
+  async setFavorite(id, favorite) {
+    await this.store.setFavorite(id, favorite);
   }
 
   /** Resolves the entry id for a text, or null when not in History. */

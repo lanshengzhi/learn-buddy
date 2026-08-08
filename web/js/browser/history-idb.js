@@ -9,12 +9,14 @@ import { HistoryItem } from '../core/history-store.js';
 
 const DB_NAME = 'learnbuddy';
 const STORE_NAME = 'history';
+const DB_VERSION = 2; // v2: records gain the `favorite` flag (defaults to false on old records)
 
 function openDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
+      if (db.objectStoreNames.contains(STORE_NAME)) return;
       const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
       store.createIndex('text', 'text', { unique: true });
       store.createIndex('createdAt', 'createdAt');
@@ -57,6 +59,12 @@ export class IndexedDbHistoryStore {
       .map(toItem);
   }
 
+  async listFavorites() {
+    const db = await this.#db();
+    const items = await tx(db, 'readonly', (store) => requestToPromise(store.getAll()));
+    return items.filter((i) => i.favorite).map(toItem);
+  }
+
   async findByText(text) {
     const db = await this.#db();
     const index = db.transaction(STORE_NAME).objectStore(STORE_NAME).index('text');
@@ -96,6 +104,18 @@ export class IndexedDbHistoryStore {
     });
   }
 
+  async setFavorite(id, favorite) {
+    const db = await this.#db();
+    await tx(db, 'readwrite', (store) => {
+      const request = store.get(id);
+      request.onsuccess = () => {
+        const item = request.result;
+        if (item) store.put({ ...item, favorite });
+      };
+      return request;
+    });
+  }
+
   async deleteById(id) {
     const db = await this.#db();
     await tx(db, 'readwrite', (store) => requestToPromise(store.delete(id)));
@@ -106,6 +126,10 @@ export class IndexedDbHistoryStore {
     const items = await tx(db, 'readonly', (store) => requestToPromise(store.getAll()));
     const sorted = [...items].sort((a, b) => b.createdAt - a.createdAt || b.id - a.id);
     const keep = new Set(sorted.slice(0, limit).map((i) => i.id));
+    // Favorites are exempt from trimming (ADR 0002).
+    for (const item of items) {
+      if (item.favorite) keep.add(item.id);
+    }
     const removed = items.filter((i) => !keep.has(i.id)).map((i) => i.id);
     if (removed.length > 0) {
       await tx(db, 'readwrite', (store) => {
@@ -123,5 +147,6 @@ function toItem(record) {
     text: record.text,
     createdAt: record.createdAt,
     lastSelectedIndex: record.lastSelectedIndex ?? null,
+    favorite: record.favorite ?? false,
   });
 }

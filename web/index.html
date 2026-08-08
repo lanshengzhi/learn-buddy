@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -10,27 +10,85 @@
   <meta name="theme-color" content="#2f6f4f">
   <link rel="stylesheet" href="/css/style.css">
 </head>
-<body class="paste-screen">
+<body class="view-paste">
   <header class="app-header">
+    <button id="back-button" class="icon-button" type="button" aria-label="返回粘贴" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+    </button>
     <h1>LearnBuddy</h1>
+    <span id="lang-badge" class="lang-badge" hidden></span>
   </header>
-  <main class="content">
-    <section class="paste-panel">
-      <h2>Paste text</h2>
-      <textarea id="text-input" rows="8" spellcheck="false"
-        placeholder="Paste Japanese, English, or Chinese text you want to read…"></textarea>
-      <div class="actions">
-        <button id="paste-button" class="secondary" type="button">Paste from clipboard</button>
-        <button id="read-button" type="button" disabled>Read</button>
+
+  <main id="reading-area" class="reading-area" hidden>
+    <div class="reader-body">
+      <div id="reader-loading" class="loading-indicator" hidden></div>
+      <p id="reader-error" class="error" role="alert" hidden></p>
+      <p id="reader-empty" class="muted" hidden>还没有句子，先在下方粘贴文本。</p>
+      <ul id="sentence-list" class="sentence-list"></ul>
+    </div>
+    <nav id="bottom-bar" class="bottom-bar" hidden>
+      <button id="prev-button" class="icon-button" type="button" aria-label="上一句" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+      </button>
+      <button id="replay-button" class="icon-button" type="button" aria-label="重播当前句" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+      </button>
+      <button id="play-button" class="icon-button primary" type="button" aria-label="播放" disabled>
+        <svg id="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+        <svg id="pause-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+      </button>
+      <button id="next-button" class="icon-button" type="button" aria-label="下一句" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+      </button>
+      <label class="rate-control">
+        <span class="sr-only">播放语速</span>
+        <select id="rate-select" aria-label="播放语速"></select>
+      </label>
+      <button id="loop-button" class="icon-button" type="button" aria-label="循环：关">
+        <svg id="loop-off-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+        <svg id="loop-all-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+        <svg id="loop-one-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"/></svg>
+      </button>
+    </nav>
+  </main>
+
+  <section id="editor-region" class="editor-region">
+    <div class="tabs" id="editor-tabs" hidden>
+      <button id="tab-edit" class="active" type="button">编辑</button>
+      <button id="tab-history" type="button">历史</button>
+    </div>
+
+    <div id="edit-pane" class="pane">
+      <textarea id="text-input" class="textarea" rows="8" spellcheck="false"
+        placeholder="粘贴日文、英文或中文文本…"></textarea>
+      <div class="actions" id="editor-actions">
+        <button id="paste-button" class="secondary" type="button">从剪贴板粘贴</button>
+        <button id="update-button" type="button" disabled>更新</button>
+        <button id="read-button" type="button" class="mobile-only" disabled>阅读 →</button>
+        <label class="auto-row"><input type="checkbox" id="auto-toggle"> 输入时自动分段</label>
+        <span id="editor-status" class="editor-status"></span>
       </div>
       <p id="paste-error" class="error" role="alert" hidden></p>
-    </section>
-    <section class="history-panel">
-      <h2>History</h2>
-      <p id="history-empty" class="muted" hidden>No history yet</p>
+    </div>
+
+    <div id="history-pane" class="pane" hidden>
+      <div class="chips">
+        <button id="filter-all" class="active" type="button">全部</button>
+        <button id="filter-fav" type="button">★ 收藏</button>
+      </div>
+      <p id="history-empty" class="muted" hidden>暂无历史</p>
       <ul id="history-list" class="history-list"></ul>
-    </section>
-  </main>
+    </div>
+
+    <div id="collapsed-status" class="collapsed-status" hidden>
+      <span id="collapsed-info"></span>
+      <span class="collapsed-right">
+        <button id="history-button" class="btn secondary" type="button">历史</button>
+        <span class="muted">点击文本框展开编辑</span>
+      </span>
+    </div>
+  </section>
+
   <script type="module" src="/js/app.js"></script>
 </body>
 </html>
