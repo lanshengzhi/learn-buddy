@@ -414,6 +414,32 @@ def _audio_frame(payload):
     header = b"Path:audio\r\nContent-Type:audio/mpeg\r\n\r\n"
     return len(header).to_bytes(2, "big") + header + payload
 
+class TestConnectionPath(unittest.TestCase):
+    def test_default_open_connection_passes_path_only_target(self):
+        """Regression: absolute-form request targets (full wss:// URL) are
+        rejected with 400 by the upstream; the GET target must be path-only."""
+        import edge_tts as et_module
+
+        captured = {}
+
+        def spy(*args, **kwargs):
+            captured["path"] = args[2]
+            raise WebSocketError(0, "stop")
+
+        original = et_module.WebSocket.connect
+        et_module.WebSocket.connect = spy
+        try:
+            synth = et_module.EdgeTtsSynthesizer()
+            with self.assertRaises(WebSocketError):
+                synth._synthesize_once("Microsoft Server Speech Text to Speech Voice (en-US, AriaNeural)", "+0%", "hi")
+        finally:
+            et_module.WebSocket.connect = original
+
+        self.assertFalse(captured["path"].startswith("wss://"), captured["path"])
+        self.assertTrue(captured["path"].startswith("/consumer/"), captured["path"])
+        self.assertIn("Sec-MS-GEC=", captured["path"])
+        self.assertIn("Sec-MS-GEC-Version=1-143.0.3650.75", captured["path"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,7 @@ import socket
 import ssl
 import struct
 import time
+import urllib.parse
 import uuid
 
 WSS_HOST = "speech.platform.bing.com"
@@ -289,7 +290,8 @@ class WebSocket:
         sock.settimeout(timeout)
 
         key = base64.b64encode(os.urandom(16)).decode()
-        request_lines = [f"GET {path} HTTP/1.1", f"Host: {host}:{port}"]
+        host_header = host if port in (80, 443) else f"{host}:{port}"
+        request_lines = [f"GET {path} HTTP/1.1", f"Host: {host_header}"]
         request_lines += [f"{name}: {value}" for name, value in headers.items()]
         request_lines += [
             "Upgrade: websocket",
@@ -438,10 +440,14 @@ class EdgeTtsSynthesizer:
         self.clock_skew_seconds = 0
 
     def _default_open_connection(self, url, headers):
+        # The GET request target must be path-only (absolute-form request
+        # targets are rejected with 400 by the upstream).
+        parsed = urllib.parse.urlsplit(url)
+        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
         return WebSocket.connect(
             WSS_HOST,
             WSS_PORT,
-            url,
+            path,
             headers,
             timeout=self.timeout,
             server_date_cb=self._note_server_date,

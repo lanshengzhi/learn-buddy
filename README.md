@@ -27,9 +27,18 @@ python3 server/tts_server.py --port 8000
 ## 测试
 
 ```bash
-node --test tests/          # 前端纯逻辑（断句对照、语言检测、历史、语速、循环状态机…）
+node --test          # 前端纯逻辑（断句对照、语言检测、历史、语速、循环状态机…）
 python3 -m unittest discover -s server/tests -p 'test_*.py' -v   # 后端（无网络依赖）
 ```
+
+浏览器冒烟（需本机 playwright + chromium；先起后端）：
+
+```bash
+python3 server/tts_server.py --port 8123 &
+node scripts/browser-smoke.mjs
+```
+
+冒烟覆盖：粘贴→断句→点听（真实 Edge TTS 合成）、循环/语速持久化、历史增删、Service Worker 注册、**离线回放**（断网后从 SW 音频缓存重播）。
 
 ## API
 

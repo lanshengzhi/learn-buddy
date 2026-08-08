@@ -20,8 +20,10 @@ export class TtsClient {
    * @param {typeof fetch} [options.fetchImpl] — seam for tests
    * @param {string} [options.baseUrl] — origin prefix, default '' (same origin)
    */
-  constructor({ fetchImpl = fetch, baseUrl = '' } = {}) {
-    this.fetchImpl = fetchImpl;
+  constructor({ fetchImpl, baseUrl = '' } = {}) {
+    // Bind fetch: a bare `fetch` reference loses its receiver when stored
+    // and called as a method ("Illegal invocation").
+    this.fetchImpl = fetchImpl ?? ((...args) => fetch(...args));
     this.baseUrl = baseUrl;
   }
 

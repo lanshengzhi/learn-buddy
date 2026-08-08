@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>LearnBuddy</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="theme-color" content="#2f6f4f">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="paste-screen">
+  <header class="app-header">
+    <h1>LearnBuddy</h1>
+  </header>
+  <main class="content">
+    <section class="paste-panel">
+      <h2>Paste text</h2>
+      <textarea id="text-input" rows="8" spellcheck="false"
+        placeholder="Paste Japanese, English, or Chinese text you want to read…"></textarea>
+      <div class="actions">
+        <button id="paste-button" class="secondary" type="button">Paste from clipboard</button>
+        <button id="read-button" type="button" disabled>Read</button>
+      </div>
+      <p id="paste-error" class="error" role="alert" hidden></p>
+    </section>
+    <section class="history-panel">
+      <h2>History</h2>
+      <p id="history-empty" class="muted" hidden>No history yet</p>
+      <ul id="history-list" class="history-list"></ul>
+    </section>
+  </main>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

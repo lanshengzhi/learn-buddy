@@ -1,0 +1,352 @@
+/* LearnBuddy — two-screen language reader. Light/dark via prefers-color-scheme. */
+
+:root {
+  --bg: #f7f6f3;
+  --surface: #ffffff;
+  --text: #1f2328;
+  --text-muted: #6a737d;
+  --border: #d8d6d1;
+  --primary: #2f6f4f;
+  --primary-strong: #24563e;
+  --primary-soft: #e4efe8;
+  --error: #c0392b;
+  --ring: #2f6f4f;
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191c;
+    --surface: #202327;
+    --text: #e8e6e3;
+    --text-muted: #9aa0a6;
+    --border: #3a3f45;
+    --primary: #5aa37e;
+    --primary-strong: #6fb692;
+    --primary-soft: #23382c;
+    --error: #e57373;
+    --ring: #5aa37e;
+    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    "Noto Sans CJK JP", "Noto Sans SC", sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- layout ---- */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.paste-screen .content {
+  display: block;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ---- paste screen ---- */
+
+.paste-panel h2,
+.history-panel h2 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+#text-input {
+  width: 100%;
+  min-height: 160px;
+  padding: 12px;
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  resize: vertical;
+}
+
+#text-input:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+button {
+  font: inherit;
+  font-size: 16px;
+  font-weight: 500;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: var(--primary);
+  color: #fff;
+}
+
+button.secondary {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.icon-button {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  padding: 8px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+button.icon-button svg {
+  width: 26px;
+  height: 26px;
+  fill: currentColor;
+}
+
+button.icon-button.primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+button.icon-button.tinted {
+  color: var(--primary-strong);
+}
+
+.error {
+  color: var(--error);
+  margin: 10px 0 0;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* ---- history ---- */
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 10px 10px 14px;
+  box-shadow: var(--card-shadow);
+}
+
+.history-entry {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-entry:hover {
+  color: var(--primary-strong);
+}
+
+.delete-entry {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 6px 8px;
+}
+
+.delete-entry:hover {
+  color: var(--error);
+}
+
+/* ---- reader ---- */
+
+.reader-screen {
+  height: 100dvh;
+}
+
+.reader-content {
+  padding: 8px 12px;
+  gap: 8px;
+}
+
+.loading-indicator {
+  width: 28px;
+  height: 28px;
+  margin: 16px auto;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sentence-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sentence-list li {
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  font-size: 18px;
+  line-height: 1.65;
+  cursor: pointer;
+  box-shadow: var(--card-shadow);
+}
+
+.sentence-list li.selected {
+  border-color: var(--ring);
+}
+
+.sentence-list li.playing {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+
+/* Loading ring: the card border animates while audio is being fetched. */
+@keyframes ring-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(47, 111, 79, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(47, 111, 79, 0);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  @keyframes ring-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(90, 163, 126, 0.5);
+    }
+    50% {
+      box-shadow: 0 0 0 6px rgba(90, 163, 126, 0);
+    }
+  }
+}
+
+.sentence-list li.loading {
+  animation: ring-pulse 1.1s ease-out infinite;
+}
+
+/* ---- bottom bar ---- */
+
+.bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  gap: 4px;
+  padding: 8px 12px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.rate-control select {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+@media (max-width: 420px) {
+  .bottom-bar {
+    justify-content: space-between;
+  }
+}

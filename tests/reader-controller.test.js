@@ -354,6 +354,17 @@ test('history progress is reported for the selected sentence and each play start
   assert.deepEqual(progress, [0, 1]);
 });
 
+test('onStateChange fires on every state mutation', async () => {
+  const states = [];
+  const { controller } = setup();
+  controller.onStateChange = (s) => states.push(s);
+  await controller.loadText('One. Two.');
+  assert.ok(states.length >= 2); // loading, then loaded+selected
+  assert.equal(states.at(-1).sentences.length, 2);
+  controller.onLoopToggleClicked();
+  assert.equal(states.at(-1).loopMode, LoopMode.All);
+});
+
 test('dispose cancels in-flight work', async () => {
   const { controller, player } = setup();
   await load(controller);

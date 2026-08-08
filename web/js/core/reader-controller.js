@@ -27,8 +27,9 @@ export class ReaderController {
    * @param {(blob: Blob) => string} [deps.makeObjectUrl=URL.createObjectURL]
    * @param {(url: string) => void} [deps.revokeObjectUrl=URL.revokeObjectURL]
    * @param {(index: number) => void} [deps.onHistoryProgress]
+   * @param {(state: object) => void} [deps.onStateChange] — fired after every state mutation
    */
-  constructor({ segmentation, tts, player, prefs, makeObjectUrl, revokeObjectUrl, onHistoryProgress }) {
+  constructor({ segmentation, tts, player, prefs, makeObjectUrl, revokeObjectUrl, onHistoryProgress, onStateChange }) {
     this.segmentation = segmentation;
     this.tts = tts;
     this.player = player;
@@ -36,6 +37,7 @@ export class ReaderController {
     this.makeObjectUrl = makeObjectUrl ?? ((blob) => URL.createObjectURL(blob));
     this.revokeObjectUrl = revokeObjectUrl ?? ((url) => URL.revokeObjectURL(url));
     this.onHistoryProgress = onHistoryProgress ?? (() => {});
+    this.onStateChange = onStateChange ?? (() => {});
 
     this.state = {
       sentences: [],
@@ -169,6 +171,7 @@ export class ReaderController {
 
   #set(patch) {
     this.state = { ...this.state, ...patch };
+    this.onStateChange(this.state);
   }
 
   #progress(index) {
