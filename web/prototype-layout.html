@@ -1,0 +1,509 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Validates the chosen desktop layout for LearnBuddy:
+  reading on top, editor at the bottom. The editor collapses to two lines;
+  focusing it expands to the lower half of the page; 「更新」 collapses it back
+  and re-segments. UI copy is Chinese by default.
+  Fake data, fake segmentation, in-memory state, no TTS, no persistence.
+  Not linked from index.html. Verdict lands in ADR 0002; this file moves to a throwaway branch.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>布局原型 — LearnBuddy</title>
+<style>
+  :root {
+    --bg: #f7f6f3;
+    --surface: #ffffff;
+    --text: #1f2328;
+    --text-muted: #6a737d;
+    --border: #d8d6d1;
+    --primary: #2f6f4f;
+    --primary-strong: #24563e;
+    --primary-soft: #e4efe8;
+    --error: #c0392b;
+    --ring: #2f6f4f;
+    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17191c;
+      --surface: #202327;
+      --text: #e8e6e3;
+      --text-muted: #9aa0a6;
+      --border: #3a3f45;
+      --primary: #5aa37e;
+      --primary-strong: #6fb692;
+      --primary-soft: #23382c;
+      --error: #e57373;
+      --ring: #5aa37e;
+      --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+      "Noto Sans CJK JP", "Noto Sans SC", sans-serif;
+  }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { opacity: 0.45; cursor: default; }
+
+  /* shared components — copied from the real app so the prototype butts against real styling */
+  .btn {
+    font-size: 15px; font-weight: 500; padding: 9px 18px; border-radius: 10px;
+    border: 1px solid transparent; background: var(--primary); color: #fff;
+  }
+  .btn.secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+  .icon-btn {
+    background: transparent; color: var(--text); border: none; padding: 8px;
+    border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .icon-btn svg { width: 26px; height: 26px; fill: currentColor; }
+  .icon-btn.primary { background: var(--primary); color: #fff; }
+  .icon-btn.tinted { color: var(--primary-strong); }
+
+  .tabs { display: flex; gap: 4px; padding: 8px 12px 0; }
+  .tabs button {
+    flex: 1; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+    padding: 7px 0; font-size: 14px; font-weight: 500; border-radius: 10px;
+  }
+  .tabs button.active { background: var(--primary-soft); color: var(--primary-strong); border-color: var(--primary); }
+  .chips { display: flex; gap: 6px; padding: 8px 12px 0; }
+  .chips button {
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+    padding: 4px 12px; font-size: 13px; border-radius: 999px;
+  }
+  .chips button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+  .textarea {
+    width: 100%; flex: 1; min-height: 140px; padding: 12px; font: inherit; font-size: 15px;
+    line-height: 1.6; color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px; resize: none;
+  }
+  .textarea:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+  .panel-title {
+    font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+    letter-spacing: 0.04em; margin: 0;
+  }
+  .muted { color: var(--text-muted); }
+  .editor-status { font-size: 12px; color: var(--text-muted); min-height: 16px; }
+  .auto-row { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }
+
+  .sentence-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .sentence-list li {
+    padding: 13px 16px; background: var(--surface); border: 2px solid var(--border);
+    border-radius: 12px; font-size: 17px; line-height: 1.65; cursor: pointer; box-shadow: var(--card-shadow);
+  }
+  .sentence-list li.selected { border-color: var(--ring); }
+  .sentence-list li.playing { border-color: var(--ring); box-shadow: 0 0 0 1px var(--ring); }
+  @keyframes ring-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(47, 111, 79, 0.45); }
+    50% { box-shadow: 0 0 0 6px rgba(47, 111, 79, 0); }
+  }
+  @media (prefers-color-scheme: dark) {
+    @keyframes ring-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(90, 163, 126, 0.5); }
+      50% { box-shadow: 0 0 0 6px rgba(90, 163, 126, 0); }
+    }
+  }
+  .sentence-list li.loading { animation: ring-pulse 1.1s ease-out infinite; }
+
+  .bottom-bar {
+    display: flex; align-items: center; justify-content: space-around; gap: 4px;
+    padding: 8px 12px; background: var(--surface); border-top: 1px solid var(--border);
+  }
+  .bottom-bar select {
+    font: inherit; font-size: 15px; font-weight: 600; padding: 8px 10px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  }
+
+  .history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .history-list li {
+    display: flex; align-items: center; gap: 6px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 8px 8px 12px; box-shadow: var(--card-shadow);
+  }
+  .history-entry { flex: 1; text-align: left; background: none; border: none; color: var(--text);
+    font-size: 14px; line-height: 1.5; padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .history-entry:hover { color: var(--primary-strong); }
+  .star-btn { background: none; border: none; font-size: 18px; line-height: 1; padding: 4px 6px; color: var(--text-muted); }
+  .star-btn.on { color: #d9a520; }
+  .del-btn { background: none; border: none; color: var(--text-muted); font-size: 16px; line-height: 1; padding: 4px 6px; }
+  .del-btn:hover { color: var(--error); }
+
+  .app-header { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+    background: var(--surface); border-bottom: 1px solid var(--border); }
+  .app-header h1 { margin: 0; font-size: 18px; font-weight: 600; flex: 1; }
+  .lang-badge {
+    font-size: 12px; font-weight: 600; color: var(--primary-strong); background: var(--primary-soft);
+    padding: 3px 10px; border-radius: 999px;
+  }
+  .empty-note { text-align: center; color: var(--text-muted); padding: 40px 0; }
+
+  /* ============ layout — reading on top, editor at the bottom ============ */
+  .app { height: 100dvh; display: flex; flex-direction: column; }
+  .reader-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; }
+  .editor-region { background: var(--surface); border-top: 1px solid var(--border); display: flex; flex-direction: column; }
+  .editor-region .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+  .editor-region.expanded { height: 50vh; }
+  .collapsed-row { display: flex; gap: 10px; padding: 10px 12px; align-items: stretch; }
+  .collapsed-row .collapsed-input { min-height: 0; flex: 1; }
+  .collapsed-row .collapsed-side { display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+  .collapsed-status { display: flex; justify-content: space-between; align-items: center; padding: 0 14px 8px; font-size: 12px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+  <section id="root" class="app"></section>
+
+<script>
+/* ------------------------------------------------------------------ */
+/* State — in-memory only, no persistence (that's the real app's job). */
+/* ------------------------------------------------------------------ */
+const SAMPLE_TEXT =
+  "一只猫坐在窗台上望着雨落。\n" +
+  "每一滴雨都沿着玻璃缓缓滑下。\n" +
+  "她从清晨就待在那里，安静而耐心。\n" +
+  "身后是温暖而安静的房间。\n" +
+  "不知何处，时钟滴答地走过午后。\n" +
+  "黄昏时分雨停了，花园里弥漫着湿润的泥土气息。\n" +
+  "她伸了个懒腰，打了个哈欠，把自己更深地埋进毛里。\n" +
+  "明天太阳会回来，随之而来的还有新的游戏。";
+
+const HISTORY = [
+  { id: 1, text: "一只猫坐在窗台上望着雨落。每一滴雨都沿着玻璃缓缓滑下。", time: "今天 09:12", fav: true },
+  { id: 2, text: "春はあけぼの。やうやう白くなりゆく山ぎは、少し明りて紫だちたる雲の細くたなびきたる。", time: "昨天 21:40", fav: false },
+  { id: 3, text: "Learning a language is a long journey. Small steps every day take you further than big leaps once a week.", time: "周一 08:05", fav: false },
+];
+
+const state = {
+  text: SAMPLE_TEXT,
+  sentences: [],
+  selected: -1,
+  playing: false,
+  auto: false,
+  rate: "1×",
+  loop: 0, // 0 off, 1 all, 2 one
+  history: JSON.parse(JSON.stringify(HISTORY)),
+  favFilter: "all",
+  editorExpanded: false,
+  tab: "edit",
+  caret: 0,
+};
+let playTimer = null;
+let debounceTimer = null;
+
+/* ---------- fake logic (segmentation / language) ---------- */
+function segment(text) {
+  const out = [];
+  for (const line of text.split(/\n+/)) {
+    for (const part of line.split(/(?<=[。！？!?；;.])\s*/)) {
+      const t = part.trim();
+      if (t) out.push(t);
+    }
+  }
+  return out;
+}
+function detectLang(text) {
+  if (/[\u3040-\u30ff]/.test(text)) return "JA";
+  if (/[\u4e00-\u9fff]/.test(text)) return "ZH";
+  return "EN";
+}
+
+/* ---------- core interactions ---------- */
+function updateReading() {
+  const prev = state.selected >= 0 ? state.sentences[state.selected] : null;
+  state.sentences = segment(state.text);
+  if (prev) {
+    const idx = state.sentences.indexOf(prev); // content-match preservation
+    state.selected = idx >= 0 ? idx : (state.sentences.length ? 0 : -1);
+  } else {
+    state.selected = state.sentences.length ? 0 : -1;
+  }
+  stopPlayback();
+  renderDynamic();
+}
+function fakePlay() {
+  stopPlayback();
+  if (state.selected < 0) return;
+  state.playing = true;
+  renderSentences();
+  renderControls();
+  playTimer = setTimeout(() => {
+    state.playing = false;
+    renderSentences();
+    renderControls();
+  }, 1500);
+}
+function stopPlayback() {
+  if (playTimer) clearTimeout(playTimer);
+  playTimer = null;
+  state.playing = false;
+}
+function loadText(t) {
+  state.text = t;
+  updateReading();
+  const ta = document.querySelector('[data-slot="editor-input"]');
+  if (ta) ta.value = t;
+}
+
+/* ---------- rendering ---------- */
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+function sentencesHTML() {
+  if (!state.sentences.length) return '<p class="empty-note">还没有句子 — 粘贴文本后点击「更新」。</p>';
+  return "<ul class=\"sentence-list\">" + state.sentences.map((s, i) =>
+    `<li data-action="select" data-index="${i}" class="${i === state.selected ? "selected" : ""} ${i === state.selected && state.playing ? "playing" : ""} ${i === state.selected && state.playing ? "loading" : ""}">${esc(s)}</li>`
+  ).join("") + "</ul>";
+}
+
+function historyHTML() {
+  const items = state.history.filter(h => state.favFilter === "all" || h.fav);
+  if (!items.length) return '<p class="empty-note muted">' + (state.favFilter === "all" ? "暂无历史" : "暂无收藏") + "</p>";
+  return "<ul class=\"history-list\">" + items.map(h =>
+    `<li>
+      <button class="star-btn ${h.fav ? "on" : ""}" data-action="star" data-id="${h.id}" aria-label="收藏">${h.fav ? "★" : "☆"}</button>
+      <button class="history-entry" data-action="open-history" data-id="${h.id}" title="${esc(h.text)}">${esc(h.text)}</button>
+      <span class="muted" style="font-size:12px;white-space:nowrap">${h.time}</span>
+      <button class="del-btn" data-action="del-history" data-id="${h.id}" aria-label="删除">×</button>
+    </li>`
+  ).join("") + "</ul>";
+}
+
+const bottomBarHTML = `
+  <nav class="bottom-bar">
+    <button class="icon-btn" data-action="prev" aria-label="上一句"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></button>
+    <button class="icon-btn" data-action="replay" aria-label="重播当前句"><svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg></button>
+    <button class="icon-btn primary" data-action="play" aria-label="播放">
+      <svg data-icon="play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      <svg data-icon="pause" viewBox="0 0 24 24" hidden><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+    </button>
+    <button class="icon-btn" data-action="next" aria-label="下一句"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+    <label class="rate-control">
+      <span class="muted" style="font-size:13px">语速</span>
+      <select data-action="rate" aria-label="播放语速">
+        <option>0.5×</option><option>0.75×</option><option selected>1×</option>
+        <option>1.25×</option><option>1.5×</option><option>2×</option>
+      </select>
+    </label>
+    <button class="icon-btn tinted" data-action="loop" aria-label="循环模式">
+      <svg data-icon="loop-off" viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+      <svg data-icon="loop-all" viewBox="0 0 24 24" hidden><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+      <svg data-icon="loop-one" viewBox="0 0 24 24" hidden><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"/></svg>
+    </button>
+  </nav>`;
+
+function shell() {
+  const expanded = state.editorExpanded;
+  const tab = state.tab;
+  return `
+    <header class="app-header">
+      <h1>LearnBuddy</h1>
+      <span class="lang-badge">${detectLang(state.text)}</span>
+    </header>
+    <div class="reader-body" data-slot="sentences"></div>
+    ${bottomBarHTML}
+    <div class="editor-region ${expanded ? "expanded" : "collapsed"}">
+      ${expanded ? `
+        <div class="tabs">
+          <button data-action="tab" data-tab="edit" class="${tab === "edit" ? "active" : ""}">编辑</button>
+          <button data-action="tab" data-tab="history" class="${tab === "history" ? "active" : ""}">历史</button>
+        </div>
+        <div class="pane" ${tab === "edit" ? "" : "hidden"}>
+          <textarea class="textarea" data-slot="editor-input" spellcheck="false" placeholder="粘贴日文、英文或中文文本…">${esc(state.text)}</textarea>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <button class="btn secondary" data-action="paste">从剪贴板粘贴</button>
+            <button class="btn" data-action="update" ${state.text.trim() ? "" : "disabled"}>更新</button>
+            <label class="auto-row"><input type="checkbox" data-action="auto" ${state.auto ? "checked" : ""}> 输入时自动分段</label>
+            <span class="editor-status" data-slot="editor-status"></span>
+          </div>
+        </div>
+        <div class="pane" ${tab === "history" ? "" : "hidden"}>
+          <p class="panel-title">历史</p>
+          <div class="chips">
+            <button data-action="filter" data-filter="all" class="${state.favFilter === "all" ? "active" : ""}">全部</button>
+            <button data-action="filter" data-filter="fav" class="${state.favFilter === "fav" ? "active" : ""}">★ 收藏</button>
+          </div>
+          <div data-slot="history" style="flex:1;overflow-y:auto"></div>
+        </div>
+      ` : `
+        <div class="collapsed-row">
+          <textarea class="textarea collapsed-input" data-slot="editor-input" rows="2" spellcheck="false" placeholder="点击此处编辑文本…">${esc(state.text)}</textarea>
+          <div class="collapsed-side">
+            <button class="btn secondary" data-action="expand-history" style="padding:6px 12px">历史</button>
+          </div>
+        </div>
+        <div class="collapsed-status">
+          <span data-slot="editor-status"></span>
+          <span>点击文本框展开编辑</span>
+        </div>
+      `}
+    </div>`;
+}
+
+function renderShell() {
+  const root = document.getElementById("root");
+  root.innerHTML = shell();
+  const ta = root.querySelector('[data-slot="editor-input"]');
+  if (ta) ta.value = state.text;
+  renderDynamic();
+}
+
+function renderDynamic() {
+  const root = document.getElementById("root");
+  const sent = root.querySelector('[data-slot="sentences"]');
+  if (sent) sent.innerHTML = sentencesHTML();
+  const hist = root.querySelector('[data-slot="history"]');
+  if (hist) hist.innerHTML = historyHTML();
+  const status = root.querySelector('[data-slot="editor-status"]');
+  if (status) {
+    status.textContent = state.sentences.length
+      ? `${state.sentences.length} 句 · 选中 #${state.selected + 1} · ${detectLang(state.text)}`
+      : "还没有句子";
+  }
+  const ta = root.querySelector('[data-slot="editor-input"]');
+  const updateBtn = root.querySelector('[data-action="update"]');
+  if (updateBtn) updateBtn.disabled = !(ta ? ta.value.trim() : state.text.trim());
+  renderControls();
+}
+
+function renderControls() {
+  const root = document.getElementById("root");
+  const n = state.sentences.length;
+  const prev = root.querySelector('[data-action="prev"]');
+  const next = root.querySelector('[data-action="next"]');
+  const play = root.querySelector('[data-action="play"]');
+  if (prev) prev.disabled = !(n && state.selected > 0);
+  if (next) next.disabled = !(n && state.selected >= 0 && state.selected < n - 1);
+  if (play) play.disabled = !n;
+  root.querySelectorAll('[data-icon="play"]').forEach(s => s.hidden = state.playing);
+  root.querySelectorAll('[data-icon="pause"]').forEach(s => s.hidden = !state.playing);
+  root.querySelectorAll('[data-icon="loop-off"]').forEach(s => s.hidden = state.loop !== 0);
+  root.querySelectorAll('[data-icon="loop-all"]').forEach(s => s.hidden = state.loop !== 1);
+  root.querySelectorAll('[data-icon="loop-one"]').forEach(s => s.hidden = state.loop !== 2);
+  const rateSel = root.querySelector('[data-action="rate"]');
+  if (rateSel) rateSel.value = state.rate;
+}
+
+function renderSentences() {
+  const sent = document.getElementById("root").querySelector('[data-slot="sentences"]');
+  if (sent) sent.innerHTML = sentencesHTML();
+  renderControls();
+}
+
+function focusEditorInput() {
+  const ta = document.querySelector('.editor-region [data-slot="editor-input"]');
+  if (ta) {
+    ta.focus();
+    const c = Math.min(state.caret ?? ta.value.length, ta.value.length);
+    ta.setSelectionRange(c, c);
+  }
+}
+
+function collapseEditor() {
+  state.editorExpanded = false;
+  state.tab = "edit";
+  renderShell();
+}
+
+/* ---------- actions ---------- */
+const actions = {
+  select(root, el) {
+    state.selected = Number(el.dataset.index);
+    fakePlay();
+  },
+  play() {
+    if (state.playing) { stopPlayback(); renderDynamic(); }
+    else fakePlay();
+  },
+  prev() { if (state.selected > 0) { state.selected--; fakePlay(); } },
+  next() { if (state.selected < state.sentences.length - 1) { state.selected++; fakePlay(); } },
+  replay() { fakePlay(); },
+  loop() { state.loop = (state.loop + 1) % 3; renderControls(); },
+  rate(root, el) { state.rate = el.value; },
+  update() {
+    updateReading();
+    collapseEditor();
+  },
+  paste() {
+    navigator.clipboard?.readText().then(t => { if (t) { loadText(t); } }).catch(() => {});
+  },
+  auto(root, el) {
+    state.auto = el.checked;
+    if (state.auto && state.text.trim()) updateReading();
+  },
+  tab(root, el) {
+    state.tab = el.dataset.tab;
+    renderShell();
+    if (state.tab === "edit") focusEditorInput();
+  },
+  filter(root, el) { state.favFilter = el.dataset.filter; renderShell(); },
+  star(root, el) {
+    const h = state.history.find(x => x.id === Number(el.dataset.id));
+    if (h) h.fav = !h.fav;
+    renderShell();
+  },
+  "del-history"(root, el) {
+    state.history = state.history.filter(x => x.id !== Number(el.dataset.id));
+    renderShell();
+  },
+  "open-history"(root, el) {
+    const h = state.history.find(x => x.id === Number(el.dataset.id));
+    if (h) loadText(h.text);
+    renderShell();
+  },
+  "expand-history"() {
+    state.editorExpanded = true;
+    state.tab = "history";
+    renderShell();
+  },
+};
+
+/* ---------- wiring ---------- */
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const fn = actions[el.dataset.action];
+  if (fn) fn(document.getElementById("root"), el);
+});
+
+document.addEventListener("focusin", (e) => {
+  if (!e.target.matches('[data-slot="editor-input"]')) return;
+  if (state.editorExpanded) return;
+  state.caret = e.target.selectionStart ?? e.target.value.length;
+  state.editorExpanded = true;
+  state.tab = "edit";
+  renderShell();
+  focusEditorInput();
+});
+
+document.addEventListener("input", (e) => {
+  if (!e.target.matches('[data-slot="editor-input"]')) return;
+  state.text = e.target.value;
+  const updateBtn = document.querySelector('[data-action="update"]');
+  if (updateBtn) updateBtn.disabled = !e.target.value.trim();
+  if (state.auto) {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => { if (state.text.trim()) updateReading(); }, 800);
+  }
+});
+
+document.addEventListener("change", (e) => {
+  if (e.target.matches('[data-action="rate"]')) actions.rate(null, e.target);
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.editorExpanded) collapseEditor();
+});
+
+/* boot */
+state.sentences = segment(state.text);
+state.selected = state.sentences.length ? 0 : -1;
+renderShell();
+</script>
+</body>
+</html>
