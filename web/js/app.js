@@ -314,8 +314,11 @@ function applyState() {
   replayButton.disabled = selected == null;
   const isActive = (s.playingSentenceIndex != null && !s.isAudioPaused) || s.isAudioLoading;
   playButton.disabled = selected == null && s.playingSentenceIndex == null && !s.isAudioLoading;
-  $('play-icon').hidden = isActive;
-  $('pause-icon').hidden = !isActive;
+  // SVGElement has no `hidden` IDL — assigning `.hidden` on an SVG icon is a
+  // non-reflecting expando, and CSS `[hidden] { display: none }` matches the
+  // ATTRIBUTE. Use toggleAttribute so the triangle actually leaves.
+  $('play-icon').toggleAttribute('hidden', isActive);
+  $('pause-icon').toggleAttribute('hidden', !isActive);
   playButton.setAttribute('aria-label', isActive ? '暂停' : '播放');
 
   rateSelect.value = s.ratePreset.name;
@@ -323,7 +326,7 @@ function applyState() {
     s.loopMode === LoopMode.Off ? '关' : s.loopMode === LoopMode.All ? '全部' : '单句';
   loopButton.setAttribute('aria-label', `循环：${loopLabel}`);
   for (const [mode, icon] of Object.entries(loopIcons)) {
-    icon.hidden = mode !== s.loopMode;
+    icon.toggleAttribute('hidden', mode !== s.loopMode);
   }
   loopButton.classList.toggle('tinted', s.loopMode !== LoopMode.Off);
 

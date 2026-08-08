@@ -7,8 +7,12 @@ set -euo pipefail
 HOST=claw
 DEST=/srv/learnbuddy
 
-rsync -az --delete --exclude 'cache/' --exclude '__pycache__/' web/ "${HOST}:${DEST}/web/"
-rsync -az --delete --exclude 'cache/' --exclude '__pycache__/' server/ "${HOST}:${DEST}/server/"
+# No --delete here: removing old files before the service restarts creates a
+# window where a freshly loaded page references JS that is already gone (the
+# reader.js 404 incident). Stale files are harmless; restart makes the new
+# code live atomically.
+rsync -az --exclude 'cache/' --exclude '__pycache__/' web/ "${HOST}:${DEST}/web/"
+rsync -az --exclude 'cache/' --exclude '__pycache__/' server/ "${HOST}:${DEST}/server/"
 ssh "${HOST}" "sudo systemctl restart learnbuddy"
 
 echo "Deployed."

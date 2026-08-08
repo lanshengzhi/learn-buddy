@@ -56,6 +56,18 @@ try {
   await page.waitForFunction(() => document.querySelector('.sentence-list li.playing') !== null, { timeout: 15000 });
   console.log('playing card highlighted after tap');
 
+  // 3b. Play button icon toggles via the hidden ATTRIBUTE — the SVG `.hidden`
+  // property is a non-reflecting expando (SVGElement has no hidden IDL), and
+  // CSS `[hidden] { display: none }` matches the attribute. Assert the
+  // attribute, not the property, or the triangle never visually leaves.
+  const iconAttrs = await page.evaluate(() => ({
+    play: document.getElementById('play-icon').getAttribute('hidden'),
+    pause: document.getElementById('pause-icon').getAttribute('hidden'),
+  }));
+  const iconToggled = iconAttrs.play !== null && iconAttrs.pause === null;
+  console.log('play icon shows pause while playing:', iconToggled);
+  if (!iconToggled) throw new Error(`icon did not toggle: ${JSON.stringify(iconAttrs)}`);
+
   // 4. Loop toggle cycles to Loop-all; rate select switches to 2×.
   await page.click('#loop-button');
   console.log('loop after one toggle:', await page.getAttribute('#loop-button', 'aria-label'));
