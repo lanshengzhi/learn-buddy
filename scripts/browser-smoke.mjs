@@ -68,9 +68,29 @@ try {
   console.log('play icon shows pause while playing:', iconToggled);
   if (!iconToggled) throw new Error(`icon did not toggle: ${JSON.stringify(iconAttrs)}`);
 
-  // 4. Loop toggle cycles to Loop-all; rate select switches to 2×.
+  // 3c. When playback ends, the icon returns to play (triangle) — the same
+  // attribute-reflection contract as 3b, on the way back.
+  await page.waitForFunction(() => document.querySelector('.sentence-list li.playing') === null, { timeout: 30000 });
+  const endedAttrs = await page.evaluate(() => ({
+    play: document.getElementById('play-icon').getAttribute('hidden'),
+    pause: document.getElementById('pause-icon').getAttribute('hidden'),
+  }));
+  const iconRestored = endedAttrs.play === null && endedAttrs.pause !== null;
+  console.log('play icon back to play after ended:', iconRestored);
+  if (!iconRestored) throw new Error(`icon did not restore: ${JSON.stringify(endedAttrs)}`);
+
+  // 4. Loop toggle cycles to Loop-all; the active mode's icon is shown via
+  // the same hidden-ATTRIBUTE contract (loop icons are SVGs too).
   await page.click('#loop-button');
   console.log('loop after one toggle:', await page.getAttribute('#loop-button', 'aria-label'));
+  const loopAttrs = await page.evaluate(() => ({
+    off: document.getElementById('loop-off-icon').getAttribute('hidden'),
+    all: document.getElementById('loop-all-icon').getAttribute('hidden'),
+    one: document.getElementById('loop-one-icon').getAttribute('hidden'),
+  }));
+  const loopShowsAll = loopAttrs.off !== null && loopAttrs.all === null && loopAttrs.one !== null;
+  console.log('loop icon shows 全部 while on:', loopShowsAll);
+  if (!loopShowsAll) throw new Error(`loop icon did not switch: ${JSON.stringify(loopAttrs)}`);
   await page.selectOption('#rate-select', 'Double');
   console.log('rate set to 2×');
 
