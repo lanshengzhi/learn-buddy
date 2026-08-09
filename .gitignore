@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.pyc
+.venv/
 
 # Server audio cache (runtime artifact)
 server/cache/

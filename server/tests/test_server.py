@@ -31,7 +31,8 @@ class FakeSynthesizer:
 
 
 class ServerHarness:
-    def __init__(self, static_dir, fake_synth, pace_interval=0.01, sleep=time.sleep):
+    def __init__(self, static_dir, fake_synth, pace_interval=0.01, sleep=time.sleep,
+                 normalizer=None):
         self.tmp = tempfile.mkdtemp()
         self.cache_dir = os.path.join(self.tmp, "cache")
         server_obj = TtsServer(
@@ -40,6 +41,7 @@ class ServerHarness:
             synthesizer=fake_synth,
             pace_interval=pace_interval,
             sleep=sleep,
+            normalizer=normalizer,
         )
 
         self.httpd = AppServer(("127.0.0.1", 0), TtsHandler, server_obj)
@@ -169,6 +171,51 @@ class TestTtsEndpoint(unittest.TestCase):
                 harness.get(harness_url(harness, text=f"t{i}", voice="en-US-AriaNeural", rate="+0%"))
             gaps = [b - a for a, b in zip(calls, calls[1:])]
             self.assertTrue(all(gap >= 0.04 for gap in gaps), gaps)
+        finally:
+            harness.close()
+
+    # -- reading normalization (ADR 0004) ---------------------------------
+
+    def test_japanese_text_is_normalized_before_upstream(self):
+        # A ja-JP request passes through the reading normalizer before the
+        # upstream sees it; en does not (asserted below).
+        normalizer = lambda text: text.replace("今日は", "キョウハ")
+        fake = FakeSynthesizer()
+        harness = ServerHarness(self.static_dir, fake, normalizer=normalizer)
+        try:
+            harness.get(harness_url(harness, text="今日は", voice="ja-JP-KeitaNeural", rate="+0%"))
+            self.assertEqual(fake.calls[0][0], "キョウハ")
+        finally:
+            harness.close()
+
+    def test_english_text_is_not_normalized(self):
+        normalizer = lambda text: text.replace("今日は", "キョウハ")
+        fake = FakeSynthesizer()
+        harness = ServerHarness(self.static_dir, fake, normalizer=normalizer)
+        try:
+            harness.get(harness_url(harness, text="今日は hello", voice="en-US-AriaNeural", rate="+0%"))
+            self.assertEqual(fake.calls[0][0], "今日は hello")
+        finally:
+            harness.close()
+
+    def test_normalized_ja_and_raw_ja_share_a_cache_entry(self):
+        # Cache key is built from the normalized text, so a Japanese sentence
+        # and its kana form collide on purpose (same reading, one synthesis).
+        def normalizer(text):
+            return text.replace("銀行で", "ギンコウで")
+
+        calls = []
+
+        class RecordingSynthesizer:
+            def speak(self, text, voice, rate):
+                calls.append((text, voice, rate))
+                return b"mp3"
+
+        harness = ServerHarness(self.static_dir, RecordingSynthesizer(), normalizer=normalizer)
+        try:
+            harness.get(harness_url(harness, text="銀行で", voice="ja-JP-KeitaNeural", rate="+0%"))
+            harness.get(harness_url(harness, text="ギンコウで", voice="ja-JP-KeitaNeural", rate="+0%"))
+            self.assertEqual(len(calls), 1)  # second request hit the server cache
         finally:
             harness.close()
 

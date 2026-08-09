@@ -3,9 +3,10 @@
 
 - GET /tts?text&voice&rate → audio/mpeg (MP3), proxied from Edge TTS with a
   server audio cache keyed by SHA-256(text|voice|rate) shared by the whole
-  family (ADR 0001). Client-side validation → 400s; upstream failures → 502/
-  504; one upstream retry + 403 clock-skew retry + ~3s connection pacing are
-  handled by EdgeTtsSynthesizer and the PaceGate below.
+  family (ADR 0001). Japanese text is reading-normalized to kana first
+  (ADR 0004, see server/reading.py). Client-side validation → 400s; upstream
+  failures → 502/504; one upstream retry + 403 clock-skew retry + ~3s
+  connection pacing are handled by EdgeTtsSynthesizer and the PaceGate below.
 - static files (the web/ frontend).
 
 Errors: JSON {"error": "<code>"} using the shared error-code vocabulary
@@ -37,6 +38,7 @@ from edge_tts import (
     CODE_UPSTREAM_UNAVAILABLE,
     validate_request,
 )
+import reading
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_STATIC_DIR = os.path.join(REPO_ROOT, "web")
@@ -109,6 +111,11 @@ def default_voice_for(lang):
     return "en-US-AriaNeural"
 
 
+def _is_japanese_voice(voice):
+    """True when the (normalized, long-form) voice is a ja-JP neural voice."""
+    return "ja-JP" in voice
+
+
 # HTTP status per error code (frontend reads the JSON code, not the status).
 STATUS_BY_CODE = {
     CODE_EMPTY_TEXT: 400,
@@ -124,17 +131,24 @@ STATUS_BY_CODE = {
 
 class TtsServer:
     def __init__(self, static_dir=DEFAULT_STATIC_DIR, cache_dir=DEFAULT_CACHE_DIR,
-                 synthesizer=None, pace_interval=PACE_INTERVAL_SECONDS, sleep=time.sleep):
+                 synthesizer=None, pace_interval=PACE_INTERVAL_SECONDS, sleep=time.sleep,
+                 normalizer=None):
         self.static_dir = os.path.abspath(static_dir)
         self.cache = AudioCache(cache_dir)
         self.synthesizer = synthesizer or EdgeTtsSynthesizer()
+        self.normalizer = normalizer or reading.normalize_ja
         self.pace_gate = PaceGate(interval=pace_interval, sleep=sleep)
         self.synthesis_lock = threading.Lock()
 
     def synthesize(self, text, voice, rate):
-        """Runs one synthesis honoring validation, cache, pacing, and retry."""
+        """Runs one synthesis honoring validation, normalization, cache,
+        pacing, and retry. Japanese voices pass through the G2P reading
+        normalizer first (ADR 0004), and the cache key covers the normalized
+        text plus the normalization version so readings never go stale."""
         text, voice, rate = validate_request(text, voice, rate)
-        key = AudioCache.key(text, voice, rate)
+        if _is_japanese_voice(voice):
+            text = self.normalizer(text)
+        key = AudioCache.key(f"{reading.NORM_VERSION}|{text}", voice, rate)
 
         cached = self.cache.get(key)
         if cached is not None:

@@ -8,7 +8,7 @@ LearnBuddy 是一个家庭使用的 Web/PWA 语言阅读器：粘贴文本 → �
 
 ```
 web/      静态前端（vanilla TS/ES modules，无构建；含 Service Worker 与 PWA manifest）
-server/   Python 后端（stdlib-only）：GET /tts 代理 Edge TTS + 服务端音频缓存 + 静态托管
+server/   Python 后端（stdlib-only；可选 sudachipy 做日语读音归一化，未装则直通）：GET /tts 代理 Edge TTS + 服务端音频缓存 + 静态托管
 tests/    node --test 前端纯逻辑测试（断句/语言检测/历史/语速/循环状态机/错误映射）
 ```
 
@@ -42,6 +42,6 @@ node scripts/browser-smoke.mjs
 
 ## API
 
-`GET /tts?text=<urlencoded>&voice=<voice>&rate=<rate>` → `audio/mpeg`（服务端缓存命中直接返回）。`voice` 省略时按 `lang`（en/ja/zh）取默认 Neural 声；均省略时用 en。错误以 JSON `{"error": "<code>"}` 返回：`empty_text` / `text_too_long` / `invalid_voice` / `invalid_rate` / `upstream_unavailable` / `upstream_timeout` / `network_failure`。
+`GET /tts?text=<urlencoded>&voice=<voice>&rate=<rate>` → `audio/mpeg`（服务端缓存命中直接返回）。`voice` 省略时按 `lang`（en/ja/zh）取默认 Neural 声；均省略时用 en。日语（ja-JP 声）先经读音归一化（`server/reading.py`，ADR 0004）：用 SudachiPy 把汉字替换为假名读音再合成，矫正多音字误读；未安装 sudachipy 时直通。错误以 JSON `{"error": "<code>"}` 返回：`empty_text` / `text_too_long` / `invalid_voice` / `invalid_rate` / `upstream_unavailable` / `upstream_timeout` / `network_failure`。
 
 后端维护 Edge 上游的 UA 门控、单次重试、~3s 连接节奏与 403 时钟偏差重试。
