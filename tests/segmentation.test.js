@@ -77,6 +77,14 @@ test('language detection: otherwise → English (CJK punctuation is not a signal
   assert.equal(detectLanguage('Hello 世界'), 'zh-CN'); // Han without kana wins over ASCII
 });
 
+test('language detection: kana-less sentences inherit the passage locale', () => {
+  assert.equal(detectLanguage('東京大学', 'ja'), 'ja'); // all-Han inside a Japanese passage
+  assert.equal(detectLanguage('2024', 'ja'), 'ja'); // digits inside a Japanese passage
+  assert.equal(detectLanguage('OK。', 'ja'), 'ja'); // Latin inside a Japanese passage
+  assert.equal(detectLanguage('東京大学', 'zh-CN'), 'zh-CN'); // all-Han inside a Chinese passage
+  assert.equal(detectLanguage('こんにちは', 'zh-CN'), 'ja'); // kana still wins over the fallback
+});
+
 test('default voice per detected locale', () => {
   assert.equal(defaultVoiceFor('en'), 'en-US-AriaNeural');
   assert.equal(defaultVoiceFor('ja'), 'ja-JP-KeitaNeural');

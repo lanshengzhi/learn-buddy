@@ -3,20 +3,23 @@
  * sentence segmentation and Voice selection. Script-based triage:
  *
  * - kana (hiragana or katakana) present → Japanese
- * - Han ideographs present, no kana → Simplified Chinese
- * - otherwise → English
+ * - no kana → fallbackLocale when given (the passage's detected language);
+ *   otherwise Han ideographs present → Simplified Chinese; otherwise English
  *
- * Known limitation: Japanese text without kana (e.g. 日本) is detected as
- * Chinese and spoken with the Chinese voice.
+ * A kana-less sentence inside a Japanese passage therefore inherits
+ * Japanese — an all-kanji sentence (e.g. 東京大学) is spoken in Japanese.
+ * Known limitation: a whole Japanese passage without kana (e.g. 日本) is
+ * detected as Chinese and spoken with the Chinese voice.
  * CJK punctuation alone is deliberately not a signal.
  *
  * @param {string} text
+ * @param {'en' | 'ja' | 'zh-CN'} [fallbackLocale] — passage locale, inherited by kana-less text
  * @returns {'ja' | 'zh-CN' | 'en'}
  */
-export function detectLanguage(text) {
+export function detectLanguage(text, fallbackLocale) {
   if (hasKana(text)) return 'ja';
-  if (hasHanIdeographs(text)) return 'zh-CN';
-  return 'en';
+  if (hasHanIdeographs(text)) return fallbackLocale ?? 'zh-CN';
+  return fallbackLocale ?? 'en';
 }
 
 // Hiragana and Katakana blocks.

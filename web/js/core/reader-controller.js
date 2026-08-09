@@ -60,12 +60,15 @@ export class ReaderController {
   /**
    * Segments text into sentences; the first sentence (or a valid initial
    * index, e.g. restored from History) becomes the selected sentence.
+   * Detects the passage locale once and keeps it for Voice selection:
+   * kana-less sentences inherit it (see detectLanguage).
    */
   async loadText(text, initialSelectedIndex = -1) {
     this.currentText = text;
+    const locale = detectLanguage(text);
+    this.passageLocale = locale;
     this.#set({ isLoading: true, errorMessage: null });
     try {
-      const locale = detectLanguage(text);
       const sentences = this.segmentation
         .segment(text, locale)
         .map((sentenceText, index) => ({ index, text: sentenceText }));
@@ -229,7 +232,7 @@ export class ReaderController {
           errorMessage: null,
         });
         this.#progress(target.index);
-        const locale = detectLanguage(target.text);
+        const locale = detectLanguage(target.text, this.passageLocale);
         const blob = await this.tts.speak({
           text: target.text,
           voice: defaultVoiceFor(locale),

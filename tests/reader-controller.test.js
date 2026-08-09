@@ -296,6 +296,39 @@ test('rate change while idle only persists the preset', async () => {
   assert.deepEqual(player.calls, []);
 });
 
+test('an all-kanji sentence in a Japanese passage is spoken with the Japanese voice', async () => {
+  const { controller, tts, player } = setup();
+  await load(controller, '今日は晴れです。東京大学。');
+  assert.equal(controller.state.sentences.length, 2);
+  controller.onSentenceClicked(1); // 東京大学。 — no kana
+  await flush();
+  assert.equal(tts.requests.length, 1);
+  assert.equal(tts.requests[0].text, '東京大学。');
+  assert.equal(tts.requests[0].voice, 'ja-JP-KeitaNeural');
+  player.finish();
+  await flush();
+});
+
+test('a Latin/digit sentence in a Japanese passage is spoken with the Japanese voice', async () => {
+  const { controller, tts, player } = setup();
+  await load(controller, '今日はいい天気です。2024。');
+  controller.onSentenceClicked(1);
+  await flush();
+  assert.equal(tts.requests[0].voice, 'ja-JP-KeitaNeural');
+  player.finish();
+  await flush();
+});
+
+test('sentences in a Chinese passage keep the Chinese voice', async () => {
+  const { controller, tts, player } = setup();
+  await load(controller, '你好。世界。');
+  controller.onSentenceClicked(0);
+  await flush();
+  assert.equal(tts.requests[0].voice, 'zh-CN-YunxiNeural');
+  player.finish();
+  await flush();
+});
+
 test('replay re-plays the selected sentence', async () => {
   const { controller, tts } = setup();
   await load(controller);
