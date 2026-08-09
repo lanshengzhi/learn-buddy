@@ -28,7 +28,16 @@ LearnBuddy is a Web/PWA language reader for the whole family, deployed on claw: 
 - **Rate preset** — One of six learner-selectable speech rates — 0.5×, 0.75×, 1×, 1.25×, 1.5×, 2× — mapped linearly to SSML rates (`-50%`, `-25%`, `+0%`, `+25%`, `+50%`, `+100%`; 2× is the upstream +100% ceiling). One global preset applies to all passages and languages and persists across sessions. Selecting a preset re-synthesizes the current sentence at that rate.
 - **Rate control** — The Reading area bottom-bar control that opens a menu of the six **Rate presets** and shows the active preset as its label (e.g. `1×`). Selecting a preset while audio is playing, loading, or paused cancels it and restarts the current sentence at the new rate; in **Loop-all mode** and **Loop-one mode** the loop continues at the new rate.
 - **Server audio cache** — The backend's cache of MP3 bytes keyed by the SHA-256 hash of `text|voice|rate` (for Japanese, the **Reading-normalized** text plus the normalization version), shared by all family devices. A speed layer only — it never carries the offline promise.
-- **Reading normalization** — The backend's G2P stage (ADR 0004) that rewrites Japanese kanji into their kana reading before synthesis. Edge TTS cannot take furigana or SSML reading hints, so the only lever is text rewriting; the rewrite runs only for Japanese voices (en/zh pass through) and never touches the displayed text. Uses SudachiPy context disambiguation (銀行→ギンコウ but 行く→イク) plus a **corrections table** for the analyzer's known date/number failures (一日中→イチニチジュウ, 二十日→ハツカ, 一昨日→オトトイ).
+- **Reading normalization** — The backend's G2P stage (ADR 0004) that
+  rewrites Japanese kanji into their kana (hiragana) reading before synthesis.
+  Edge TTS cannot take furigana or SSML reading hints, so the only lever is
+  text rewriting; the rewrite runs only for Japanese voices (en/zh pass
+  through) and never touches the displayed text. Uses SudachiPy context
+  disambiguation (銀行→ぎんこう but 行く→いく) plus a **corrections table** for
+  the analyzer's known date/number failures (一日中→いちにちじゅう, 二十日→
+  はつか, 一昨日→おととい). Output is hiragana because katakana pushes Edge's
+  ja voices into the loanword head-high accent (カブシキガイシャ); original
+  katakana in the text (コーヒー) keeps its script and correct accent.
 - **Audio cache** — The Service Worker's device-level cache of played audio, keyed by the `text|voice|rate` request URL. It exists while at least one **History entry** references it and is purged when the last referencing entry is removed — whether the learner deletes the entry or **History trimming** evicts it.
 - **Offline replay** — Playing an audio-cached sentence without an active network connection. Only possible for sentences fetched while their History entry was alive — and only at the rate they were fetched at. Not offline TTS: no on-device synthesis exists.
 - **Playback controls** — **Previous** (select and play the sentence before the selected one), **Replay** (play the current sentence again), **Play/Pause** (start or suspend playback), **Next** (select and play the sentence after the selected one), the **Loop toggle**, and the **Rate control**. While the Loop toggle is Off, every control plays exactly one sentence.

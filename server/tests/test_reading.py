@@ -31,33 +31,33 @@ class TestNormalizeJa(unittest.TestCase):
 
     def test_context_disambiguates_same_kanji(self):
         # 行 is ギンコウ in 銀行 but イキ in 行きます.
-        self.assertEqual(normalize_ja("銀行で行きます。"), "ギンコウでイキます。")
+        self.assertEqual(normalize_ja("銀行で行きます。"), "ぎんこうでいきます。")
 
     def test_compound_and_jukujikun(self):
-        self.assertEqual(normalize_ja("東京大学に通う。"), "トウキョウダイガクにカヨウ。")
-        self.assertEqual(normalize_ja("一生懸命頑張る。"), "イッショウケンメイガンバル。")
+        self.assertEqual(normalize_ja("東京大学に通う。"), "とうきょうだいがくにかよう。")
+        self.assertEqual(normalize_ja("一生懸命頑張る。"), "いっしょうけんめいがんばる。")
 
     def test_homophone_surfaces_keep_distinct_readings(self):
-        self.assertEqual(normalize_ja("橋を渡る。"), "ハシをワタル。")
-        self.assertEqual(normalize_ja("箸で食べる。"), "ハシでタベル。")
+        self.assertEqual(normalize_ja("橋を渡る。"), "はしをわたる。")
+        self.assertEqual(normalize_ja("箸で食べる。"), "はしでたべる。")
 
     def test_corrections_table_fixes_analyzer_errors(self):
         # SudachiPy splits these date/number compounds and misreads them;
         # the overrides table pins the correct readings (ADR 0004).
-        self.assertEqual(normalize_ja("一日中勉強した。"), "イチニチジュウベンキョウした。")
-        self.assertEqual(normalize_ja("二十日は待った。"), "ハツカはマッた。")
-        self.assertEqual(normalize_ja("一昨日の朝。"), "オトトイのアサ。")
-        self.assertEqual(normalize_ja("一昨年、引っ越した。"), "オトトシ、ヒッコシた。")
-        self.assertEqual(normalize_ja("明後日まで待つ。"), "アサッテまでマツ。")
-        self.assertEqual(normalize_ja("一昨昨日は休みだった。"), "サキオトトイはヤスミだった。")
+        self.assertEqual(normalize_ja("一日中勉強した。"), "いちにちじゅうべんきょうした。")
+        self.assertEqual(normalize_ja("二十日は待った。"), "はつかはまった。")
+        self.assertEqual(normalize_ja("一昨日の朝。"), "おとといのあさ。")
+        self.assertEqual(normalize_ja("一昨年、引っ越した。"), "おととし、ひっこした。")
+        self.assertEqual(normalize_ja("明後日まで待つ。"), "あさってまでまつ。")
+        self.assertEqual(normalize_ja("一昨昨日は休みだった。"), "さきおとといはやすみだった。")
 
     def test_kana_and_particles_pass_through(self):
         # No kanji -> untouched; kana particles keep their surface (は/を/へ).
-        self.assertEqual(normalize_ja("こんにちは、元気ですか。"), "こんにちは、ゲンキですか。")
-        self.assertEqual(normalize_ja("これは本です。"), "これはホンです。")
+        self.assertEqual(normalize_ja("こんにちは、元気ですか。"), "こんにちは、げんきですか。")
+        self.assertEqual(normalize_ja("これは本です。"), "これはほんです。")
 
     def test_latin_and_punctuation_are_kept(self):
-        self.assertEqual(normalize_ja("Hello 今日"), "Hello キョウ")
+        self.assertEqual(normalize_ja("Hello 今日"), "Hello きょう")
 
     def test_output_contains_no_kanji(self):
         self.assert_no_kanji(normalize_ja("銀行で行きます。"))

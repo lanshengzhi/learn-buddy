@@ -27,11 +27,18 @@ classic cases correctly — 銀行/行く (ギンコウ/イキ), 一人/一人�
 - **A G2P stage lives in the backend** (`server/reading.py`), between
   `validate_request` and the Edge TTS client in `TtsServer.synthesize`. It
   fires only for Japanese voices (`ja-JP`); en/zh pass through untouched.
-- **Output is a full-kana (katakana) reading**, produced per-token by
+- **Output is a full-kana (hiragana) reading**, produced per-token by
   SudachiPy in `SplitMode.C`. Kana tokens, particles, punctuation, and Latin
   script keep their surface, so particle は/へ stay as written and Edge TTS
   reads them natively. Display text is never touched — this only rewrites the
   audio input.
+- **Hiragana, not katakana.** Edge's ja-JP voices choose pitch-accent
+  strategy from the writing form: katakana signals a loanword and triggers
+  the head-high (頭高) foreign accent — the first deployed version read
+  カブシキガイシャ with the accent on the first syllable, which listeners
+  rejected by ear. Hiragana is read with native Japanese word accents and was
+  confirmed correct. Original katakana in the text (コーヒー) stays katakana,
+  where its loanword accent is correct anyway.
 - **A corrections table pins the analyzer's known failures.** SudachiPy
   splits date/number compounds and misreads them (`一日中` → イチニチチュウ,
   `二十日` → ニトウカ, `一昨日` → イッサクニチ, `一昨年` → イッサクネン,
