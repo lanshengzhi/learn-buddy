@@ -1,9 +1,9 @@
 /**
  * AudioOwnership — the reference map between audio cache entries and History
- * entries (dasan ADR 0008 semantics, web edition).
+ * entries.
  *
  * Audio lives exactly as long as at least one History entry references it.
- * The Reader records a reference (request URL of a played sentence, which is
+ * The Reading area records a reference (request URL of a played sentence, which is
  * the Service Worker audio-cache key) against the open passage's entry id;
  * when entries are deleted or trimmed, forgetEntries returns the URLs whose
  * reference count dropped to zero so the caller can purge them from the

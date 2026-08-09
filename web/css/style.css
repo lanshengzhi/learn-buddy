@@ -1,6 +1,9 @@
-/* LearnBuddy — single-page language reader (desktop: reading on top, editor
-   at the bottom; mobile: Paste view ⇄ Reader view). Light/dark via
-   prefers-color-scheme. Layout per ADR 0002. */
+/* LearnBuddy — single-page language reader: reading area on top, editor at
+   the bottom, at every width and on every device (ADR 0003). The editor
+   collapses to a band (two lines with a mouse, one line on touch), expands
+   to the lower half when opened, and takes over the space above the virtual
+   keyboard while focused on touch devices. Light/dark via
+   prefers-color-scheme. */
 
 :root {
   --bg: #f7f6f3;
@@ -88,10 +91,14 @@ body {
 /* ---- reading area ---- */
 
 .reading-area {
-  flex: 1;
+  flex: 1 1 0%;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  /* Focus takeover slide on touch devices: the area vacates as the editor
+     grows into the space above the virtual keyboard (ADR 0003). */
+  transition: flex-grow 0.25s ease;
 }
 
 .reader-body {
@@ -99,18 +106,20 @@ body {
   min-height: 0;
   overflow-y: auto;
   padding: 8px 12px;
+  transition: transform 0.25s ease;
 }
 
 /* ---- editor region ---- */
 
 .editor-region {
-  flex: 1;
+  flex: none;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--surface);
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  transition: flex-grow 0.25s ease;
 }
 
 #edit-pane,
@@ -195,16 +204,82 @@ body {
   border-color: var(--primary);
 }
 
-/* ---- desktop: collapsible editor ---- */
+/* ---- collapsible editor ---- */
+
+body.editor-expanded .editor-region {
+  height: 50vh;
+}
+
+body.editor-collapsed #edit-pane {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+body.editor-collapsed #text-input {
+  height: 56px;
+  min-height: 0;
+  flex: 1;
+  resize: none;
+  overflow-y: hidden;
+}
+
+body.editor-expanded #text-input {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+}
+
+body.editor-expanded #edit-pane {
+  flex: 1;
+  min-height: 0;
+}
+
+#history-pane {
+  flex: 1;
+  min-height: 0;
+}
+
+#history-list {
+  overflow-y: auto;
+  min-height: 0;
+}
 
 .collapsed-status {
-  display: none;
+  display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
   padding: 0 14px 10px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* 历史 button: part of the collapsed band (sits next to the textarea). */
+#history-button {
+  display: none;
+}
+
+body.editor-collapsed #history-button {
+  display: inline-block;
+  flex: none;
+}
+
+/* 收起 button: right end of the tab bar, visible whenever the editor is open. */
+.tabs .collapse-btn {
+  flex: none;
+  font-size: 14px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.tabs .collapse-btn:hover {
+  color: var(--text);
 }
 
 .collapsed-right {
@@ -479,6 +554,7 @@ button.icon-button.tinted {
   background: var(--surface);
   border-top: 1px solid var(--border);
   flex: none;
+  transition: transform 0.25s ease;
 }
 
 .rate-control select {
@@ -492,90 +568,36 @@ button.icon-button.tinted {
   color: var(--text);
 }
 
-/* ---- views: mobile (default) vs desktop ---- */
+/* ---- touch devices: one-line band and focus takeover (ADR 0003) ---- */
 
-/* Mobile: Paste view fills the page below the header and scrolls; the
-   Reader view swaps the editor out for the reading area. */
-
-body.view-read #reading-area {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-
-body.view-read #editor-region {
-  display: none;
-}
-
-/* Desktop: reading area on top, editor at the bottom (ADR 0002). The editor
-   collapses to two lines; focusing the textarea expands it to the lower
-   half; 更新 collapses it back. */
-
-@media (min-width: 1024px) {
-  #reading-area {
-    display: flex;
-    flex: 1;
-    min-height: 0;
-  }
-
-  #editor-region {
-    flex: none;
-    min-height: 0;
-    overflow: hidden;
-    border-top: 1px solid var(--border);
-  }
-
-  body.editor-expanded #editor-region {
-    height: 50vh;
-    display: flex;
-  }
-
-  body.editor-collapsed #editor-region {
-    display: flex;
-  }
-
+@media (pointer: coarse) {
+  /* One-line collapsed band: textarea + 历史 button; no status line. */
   body.editor-collapsed #edit-pane {
-    flex-direction: row;
-    align-items: stretch;
-    gap: 10px;
-    padding: 10px 12px;
+    padding: 8px 12px;
   }
 
   body.editor-collapsed #text-input {
-    height: 56px;
-    min-height: 0;
-    flex: 1;
-    resize: none;
-    overflow-y: hidden;
-  }
-
-  body.editor-expanded #text-input {
-    flex: 1;
-    min-height: 0;
-    resize: none;
-  }
-
-  body.editor-expanded #edit-pane {
-    flex: 1;
-    min-height: 0;
-  }
-
-  #history-pane {
-    flex: 1;
-    min-height: 0;
-  }
-
-  #history-list {
-    overflow-y: auto;
-    min-height: 0;
+    height: 52px;
   }
 
   .collapsed-status {
-    display: flex;
+    display: none;
   }
 
-  .mobile-only {
-    display: none !important;
+  /* Focus takeover: the editor grows into the reading area's space while
+     the reading area slides out of view above the virtual keyboard. */
+  body.editor-takeover #reading-area {
+    flex-grow: 0;
+  }
+
+  body.editor-takeover #reading-area .reader-body,
+  body.editor-takeover #reading-area .bottom-bar {
+    transform: translateY(-100%);
+  }
+
+  body.editor-takeover .editor-region {
+    flex: 1;
+    height: auto;
   }
 }
 

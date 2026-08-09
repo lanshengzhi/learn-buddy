@@ -10,16 +10,13 @@
   <meta name="theme-color" content="#2f6f4f">
   <link rel="stylesheet" href="/css/style.css">
 </head>
-<body class="view-paste">
+<body>
   <header class="app-header">
-    <button id="back-button" class="icon-button" type="button" aria-label="返回粘贴" hidden>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
-    </button>
     <h1>LearnBuddy</h1>
     <span id="lang-badge" class="lang-badge" hidden></span>
   </header>
 
-  <main id="reading-area" class="reading-area" hidden>
+  <main id="reading-area" class="reading-area">
     <div class="reader-body">
       <div id="reader-loading" class="loading-indicator" hidden></div>
       <p id="reader-error" class="error" role="alert" hidden></p>
@@ -56,15 +53,16 @@
     <div class="tabs" id="editor-tabs" hidden>
       <button id="tab-edit" class="active" type="button">编辑</button>
       <button id="tab-history" type="button">历史</button>
+      <button id="collapse-button" class="collapse-btn" type="button">收起</button>
     </div>
 
     <div id="edit-pane" class="pane">
       <textarea id="text-input" class="textarea" rows="8" spellcheck="false"
         placeholder="粘贴日文、英文或中文文本…"></textarea>
+      <button id="history-button" class="btn secondary" type="button">历史</button>
       <div class="actions" id="editor-actions">
         <button id="paste-button" class="secondary" type="button">从剪贴板粘贴</button>
         <button id="update-button" type="button" disabled>更新</button>
-        <button id="read-button" type="button" class="mobile-only" disabled>阅读 →</button>
         <label class="auto-row"><input type="checkbox" id="auto-toggle"> 输入时自动分段</label>
         <span id="editor-status" class="editor-status"></span>
       </div>
@@ -83,7 +81,6 @@
     <div id="collapsed-status" class="collapsed-status" hidden>
       <span id="collapsed-info"></span>
       <span class="collapsed-right">
-        <button id="history-button" class="btn secondary" type="button">历史</button>
         <span class="muted">点击文本框展开编辑</span>
       </span>
     </div>

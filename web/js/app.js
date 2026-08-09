@@ -1,9 +1,10 @@
 /**
- * LearnBuddy single-page app (ADR 0002) — paste/edit and reading on one page.
- * Desktop (≥1024px): reading area on top, editor at the bottom — collapsed to
- * two lines, expanding to the lower half of the screen on focus and collapsing
- * again on 更新. Mobile: Paste view ⇄ Reader view switched in-page (no page
- * navigation; the sessionStorage handoff is gone).
+ * LearnBuddy single-page app (ADR 0003) — reading area on top, editor at the
+ * bottom, at every width and on every device. The editor rests as a band
+ * (two lines with a mouse, one line on touch), expands to the lower half of
+ * the screen when opened, and on touch devices takes over the full space
+ * above the virtual keyboard while focused. No view switching: narrowing the
+ * window changes nothing.
  *
  * The playback state machine lives in core/reader-controller.js (node-tested);
  * this file is the DOM binding plus the browser-only adapters (audio player,
@@ -25,7 +26,6 @@ const $ = (id) => document.getElementById(id);
 // --- DOM -------------------------------------------------------------------
 
 const readingArea = $('reading-area');
-const backButton = $('back-button');
 const langBadge = $('lang-badge');
 const loadingEl = $('reader-loading');
 const errorEl = $('reader-error');
@@ -55,7 +55,6 @@ const textInput = $('text-input');
 const pasteButton = $('paste-button');
 const pasteError = $('paste-error');
 const updateButton = $('update-button');
-const readButton = $('read-button');
 const autoToggle = $('auto-toggle');
 const editorStatus = $('editor-status');
 const historyList = $('history-list');
@@ -65,9 +64,12 @@ const filterFav = $('filter-fav');
 const collapsedStatus = $('collapsed-status');
 const collapsedInfo = $('collapsed-info');
 const historyButton = $('history-button');
+const collapseButton = $('collapse-button');
 
-const DESKTOP_QUERY = window.matchMedia('(min-width: 1024px)');
-let isDesktop = DESKTOP_QUERY.matches;
+// Touch devices get the focus takeover (the virtual keyboard needs the room);
+// with a mouse, focusing just expands the editor to the lower half (ADR 0003).
+const COARSE_POINTER = window.matchMedia('(pointer: coarse)');
+let isCoarse = COARSE_POINTER.matches;
 
 // --- state -----------------------------------------------------------------
 
@@ -79,13 +81,13 @@ let editorCollapsed = true;
 let debounceTimer = null;
 let cards = [];
 
-// --- reader controller (same wiring as the old reader screen) --------------
+// --- reader controller (the Reading area's playback state machine) ---------
 
 const ttsClient = new TtsClient();
 const recordingTts = {
   speak: async (request) => {
     const blob = await ttsClient.speak(request);
-    // Offline replay lives exactly as long as its History entry (ADR 0008):
+    // Offline replay lives exactly as long as its History entry (ownership rule):
     // an uncommitted passage (auto re-segment) gets its entry on first play.
     if (activeEntryId == null) await ensureHistoryEntry();
     if (activeEntryId != null) {
@@ -177,7 +179,6 @@ function setText(value) {
   text = value;
   textInput.value = value;
   updateButton.disabled = text.trim() === '';
-  readButton.disabled = text.trim() === '';
   langBadge.hidden = text.trim() === '';
   if (text.trim() === '') langBadge.textContent = '';
 }
@@ -206,34 +207,28 @@ async function openHistoryEntry(entry) {
   setText(entry.text);
   activeEntryId = entry.id;
   await resegment({ initialIndex: entry.lastSelectedIndex ?? -1 });
-  if (isDesktop) {
-    setEditorCollapsed(true);
-  } else {
-    showReadView();
-  }
+  setEditorCollapsed(true);
 }
 
-// --- views and the collapsible editor --------------------------------------
+// --- the collapsible editor ------------------------------------------------
 
 function applyLayout() {
-  const readView = !isDesktop && document.body.classList.contains('view-read');
-  const collapsed = isDesktop && editorCollapsed;
-
-  readingArea.hidden = !isDesktop && !readView;
-  backButton.hidden = !readView;
-  editorRegion.hidden = readView;
-  langBadge.hidden = text.trim() === '';
+  const collapsed = editorCollapsed;
 
   editorTabs.hidden = collapsed;
   editorActions.hidden = collapsed;
   collapsedStatus.hidden = !collapsed;
   editPane.hidden = collapsed ? false : editorTab !== 'edit';
   historyPane.hidden = collapsed || editorTab !== 'history';
+  langBadge.hidden = text.trim() === '';
 }
 
 function setEditorCollapsed(collapsed) {
   editorCollapsed = collapsed;
-  if (collapsed) editorTab = 'edit';
+  if (collapsed) {
+    editorTab = 'edit';
+    document.body.classList.remove('editor-takeover');
+  }
   document.body.classList.toggle('editor-collapsed', collapsed);
   document.body.classList.toggle('editor-expanded', !collapsed);
   applyLayout();
@@ -243,18 +238,6 @@ function setEditorTab(tab) {
   editorTab = tab;
   tabEdit.classList.toggle('active', tab === 'edit');
   tabHistory.classList.toggle('active', tab === 'history');
-  applyLayout();
-}
-
-function showReadView() {
-  document.body.classList.add('view-read');
-  document.body.classList.remove('view-paste');
-  applyLayout();
-}
-
-function showPasteView() {
-  document.body.classList.remove('view-read');
-  document.body.classList.add('view-paste');
   applyLayout();
 }
 
@@ -272,7 +255,11 @@ function renderSentences(sentences) {
     const li = document.createElement('li');
     li.dataset.index = String(sentence.index);
     li.textContent = sentence.text;
-    li.addEventListener('click', () => controller.onSentenceClicked(sentence.index));
+    li.addEventListener('click', () => {
+      controller.onSentenceClicked(sentence.index);
+      // Tapping a sentence means listening, not editing — collapse the editor.
+      if (!editorCollapsed) setEditorCollapsed(true);
+    });
     listEl.append(li);
     cards.push(li);
   }
@@ -390,7 +377,17 @@ textInput.addEventListener('input', () => {
 });
 
 textInput.addEventListener('focus', () => {
-  if (isDesktop && editorCollapsed) setEditorCollapsed(false);
+  if (editorCollapsed) setEditorCollapsed(false);
+  if (isCoarse) document.body.classList.add('editor-takeover');
+});
+
+textInput.addEventListener('blur', (e) => {
+  if (!isCoarse || !document.body.classList.contains('editor-takeover')) return;
+  // Tapping a control inside the editor (更新, tabs, 收起, paste) moves focus
+  // to it — keep the takeover so that control's click still lands; the
+  // control's own handler collapses. Tapping outside retreats the takeover.
+  if (e.relatedTarget && editorRegion.contains(e.relatedTarget)) return;
+  setEditorCollapsed(true);
 });
 
 pasteButton.addEventListener('click', async () => {
@@ -415,17 +412,7 @@ pasteButton.addEventListener('click', async () => {
 
 updateButton.addEventListener('click', () => {
   if (text.trim() === '') return;
-  void resegment({ commit: true }).then(() => {
-    if (isDesktop) setEditorCollapsed(true);
-  });
-});
-
-readButton.addEventListener('click', () => {
-  if (text.trim() === '') {
-    showPasteError('请先粘贴文本。');
-    return;
-  }
-  void resegment({ commit: true }).then(showReadView);
+  void resegment({ commit: true }).then(() => setEditorCollapsed(true));
 });
 
 autoToggle.addEventListener('change', () => {
@@ -440,6 +427,8 @@ historyButton.addEventListener('click', () => {
   setEditorTab('history');
 });
 
+collapseButton.addEventListener('click', () => setEditorCollapsed(true));
+
 filterAll.addEventListener('click', () => {
   favFilter = 'all';
   filterAll.classList.add('active');
@@ -453,23 +442,16 @@ filterFav.addEventListener('click', () => {
   void renderHistory();
 });
 
-backButton.addEventListener('click', showPasteView);
-
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && isDesktop && !editorCollapsed) setEditorCollapsed(true);
+  if (e.key === 'Escape' && !editorCollapsed) setEditorCollapsed(true);
 });
 
-// --- breakpoint ------------------------------------------------------------
+// --- pointer handling ------------------------------------------------------
 
-DESKTOP_QUERY.addEventListener('change', (e) => {
-  isDesktop = e.matches;
-  if (isDesktop) {
-    // Crossing to desktop: show both areas; empty text invites the editor.
-    document.body.classList.remove('view-paste', 'view-read');
-    setEditorCollapsed(text.trim() !== '');
-  } else {
-    // Crossing to mobile: back to the Paste view (Android-style start).
-    showPasteView();
+COARSE_POINTER.addEventListener('change', (e) => {
+  isCoarse = e.matches;
+  if (!isCoarse && document.body.classList.contains('editor-takeover')) {
+    setEditorCollapsed(true);
   }
 });
 
@@ -477,11 +459,6 @@ DESKTOP_QUERY.addEventListener('change', (e) => {
 
 renderHistory();
 registerServiceWorker();
-
-if (isDesktop) {
-  document.body.classList.add('editor-collapsed');
-  setEditorCollapsed(text.trim() !== '');
-} else {
-  document.body.classList.add('view-paste');
-}
-applyLayout();
+// Empty text has nothing to read — invite the paste/edit surface. Once there
+// is text, rest collapsed so the reading area owns the screen.
+setEditorCollapsed(text.trim() !== '');

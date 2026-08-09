@@ -46,7 +46,7 @@ test('loop toggle cycles Off -> All -> One -> Off', () => {
   assert.equal(loopModeByName('garbage'), LoopMode.Off);
 });
 
-test('backend error codes map to the Android user-facing strings', () => {
+test('backend error codes map to the learner-facing strings', () => {
   assert.equal(ttsErrorToMessage(TTS_ERROR_CODES.EMPTY_TEXT), 'Selected sentence is empty.');
   assert.equal(ttsErrorToMessage(TTS_ERROR_CODES.TEXT_TOO_LONG), 'Sentence is too long.');
   assert.equal(ttsErrorToMessage(TTS_ERROR_CODES.INVALID_VOICE), 'Voice is not available.');

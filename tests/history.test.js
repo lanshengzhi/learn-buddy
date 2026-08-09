@@ -164,7 +164,7 @@ test('deleteEntry removes a favorite like any other entry', async () => {
   assert.deepEqual(removed, [entry.id]);
 });
 
-test('audio ownership: references follow the ADR 0008 lifetime rule', () => {
+test('audio ownership: references follow the ownership lifetime rule', () => {
   const refs = new Map();
   record(refs, '/tts?text=A&voice=v&rate=%2B0%25', 1);
   record(refs, '/tts?text=A&voice=v&rate=%2B0%25', 2); // shared by two entries

@@ -1,7 +1,6 @@
 """
 Edge TTS upstream client — stdlib only, maintained in exactly one place
-(ADR 0001). Implements the protocol verified in
-research/edge-tts-browser.md and dasan's EdgeTtsProtocol.kt:
+(ADR 0001). Implements the protocol (verified empirically against the live endpoint):
 
 - wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1
 - TrustedClientToken + Sec-MS-GEC (300s-rounded Windows FILETIME ticks + token,
@@ -426,12 +425,12 @@ class WebSocket:
 
 
 class EdgeTtsSynthesizer:
-    """Synthesizes MP3 bytes for one request with the Android retry policy:
+    """Synthesizes MP3 bytes for one request with the retry policy:
 
     - client-side validation errors propagate (400s)
     - one retry on upstream_unavailable / upstream_timeout
     - on a 403 handshake rejection, adjust the clock skew from the server's
-      Date header and retry once (mirrors synthesizeWithClockSkewRetry)
+      Date header and retry once
     """
 
     def __init__(self, open_connection=None, timeout=30):

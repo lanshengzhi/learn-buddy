@@ -1,14 +1,14 @@
 /**
- * ReaderController — the Reader screen's playback state machine, a faithful
- * port of dasan's ReaderViewModel: sentence selection, the audio job loop,
- * Loop-all / Loop-one / Off, Rate preset restart semantics, pause/resume,
- * and TTS error mapping. DOM-free: playback and TTS are injected adapters,
- * so the whole machine is node-testable.
+ * ReaderController — the Reading area's playback state machine: sentence
+ * selection, the audio job loop, Loop-all / Loop-one / Off, Rate preset
+ * restart semantics, pause/resume, and TTS error mapping. DOM-free:
+ * playback and TTS are injected adapters, so the whole machine is
+ * node-testable.
  *
  * Deliberate deviation (fetch model): pausing while audio is *loading*
  * cancels the fetch and clears the playing sentence, leaving it selected —
- * Play restarts it. Android keeps the playing index set in that transient
- * state, which its player can't resume anyway.
+ * Play restarts it. The playing index stays set in that transient state,
+ * which the player can't resume anyway.
  */
 
 import { detectLanguage, defaultVoiceFor } from './language.js';

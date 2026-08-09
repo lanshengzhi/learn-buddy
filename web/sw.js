@@ -4,13 +4,13 @@
  * - /tts requests (audio, keyed by the text|voice|rate request URL):
  *   cache-first with network store on miss. A sentence is replayable offline
  *   exactly while its History entry lives; the page purges orphaned entries
- *   via the audio cache name below (ADR 0008 semantics).
+ *   via the audio cache name below (audio-ownership semantics).
  * - navigations: network-first with cached fallback, so app updates flow on
  *   the LAN and the shell still opens offline.
  * - static assets: cache-first over the precached shell.
  */
 
-const SHELL_CACHE = 'learnbuddy-shell-v2';
+const SHELL_CACHE = 'learnbuddy-shell-v3';
 const AUDIO_CACHE = 'learnbuddy-audio-v1';
 // Keep in sync with js/core/sw-config.js.
 const SHELL_ASSETS = [

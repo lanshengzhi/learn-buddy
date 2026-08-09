@@ -1,10 +1,10 @@
 /**
  * History — the local, learner-visible list of texts submitted from the
- * Paste screen, bounded to MAX_ENTRIES. Mirrors dasan's HistoryRepository
- * (dedupe by text with newest timestamp, trimming, deletion) and adds the
- * audio-ownership hook: when entries are removed (delete or trim), the
- * repository reports the removed ids so AudioOwnership can purge audio
- * cache entries that no live entry references.
+ * Editor, bounded to MAX_ENTRIES. Dedupe by text with newest timestamp,
+ * trimming, and deletion; plus the audio-ownership hook: when entries are
+ * removed (delete or trim), the repository reports the removed ids so
+ * AudioOwnership can purge audio cache entries that no live entry
+ * references.
  */
 
 import { InMemoryHistoryStore } from './history-store.js';

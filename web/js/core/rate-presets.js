@@ -1,9 +1,8 @@
 /**
  * Rate preset — one of the six learner-selectable speech rates on the
- * Reader's Rate control. Ported from dasan's RatePreset (kotlin enum):
- * each preset maps linearly to an SSML rate string; 2× sits at the upstream
- * +100% ceiling. Presets are synthesized server-side, so selecting one
- * re-fetches audio at that rate.
+ * Reading area's Rate control. Each preset maps linearly to an SSML rate
+ * string; 2× sits at the upstream +100% ceiling. Presets are synthesized
+ * server-side, so selecting one re-fetches audio at that rate.
  */
 
 export const RATE_PRESETS = [

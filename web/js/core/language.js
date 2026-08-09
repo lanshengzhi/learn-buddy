@@ -1,14 +1,13 @@
 /**
  * Language detection — script-based triage of pasted text, feeding both
- * sentence segmentation and Voice selection. Ported verbatim from dasan's
- * LanguageDetector (kotlin) to preserve ADR 0007 behavior:
+ * sentence segmentation and Voice selection. Script-based triage:
  *
  * - kana (hiragana or katakana) present → Japanese
  * - Han ideographs present, no kana → Simplified Chinese
  * - otherwise → English
  *
- * Known limitation (dasan ADR 0007, preserved): Japanese text without kana
- * (e.g. 日本) is detected as Chinese and spoken with the Chinese voice.
+ * Known limitation: Japanese text without kana (e.g. 日本) is detected as
+ * Chinese and spoken with the Chinese voice.
  * CJK punctuation alone is deliberately not a signal.
  *
  * @param {string} text

@@ -85,7 +85,7 @@ class TestValidation(unittest.TestCase):
             normalize_voice("en-US-AriaNeural"),
             "Microsoft Server Speech Text to Speech Voice (en-US, AriaNeural)",
         )
-        # Voice names containing an extra dash keep the region part (Android parity).
+        # Voice names containing an extra dash keep the region part (voice-name parity).
         self.assertEqual(
             normalize_voice("zh-CN-XiaoxiaoNeural"),
             "Microsoft Server Speech Text to Speech Voice (zh-CN, XiaoxiaoNeural)",

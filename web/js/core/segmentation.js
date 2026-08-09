@@ -2,10 +2,10 @@
  * Sentence segmentation — the seam the Reader splits text through.
  *
  * The interface exists so a future AI-backed segmentation backend can replace
- * the local implementation without touching the Reader (ADR 0001). Behavior
- * mirrors dasan's SentenceSplitter: BreakIterator sentence iteration with
- * per-locale granularity, trimmed chunks, empty chunks dropped, and a
- * fixed-length fallback for overlong or unpunctuated text.
+ * the local implementation without touching the Reading area (ADR 0001). Behavior:
+ * Intl.Segmenter sentence iteration with per-locale granularity, trimmed
+ * chunks, empty chunks dropped, and a fixed-length fallback for overlong or
+ * unpunctuated text.
  */
 
 export const MAX_SENTENCE_LENGTH = 250;
@@ -43,7 +43,7 @@ export class IntlSegmenterSegmentationService {
   }
 }
 
-/** Default service instance (module-level singleton, like Android DI default). */
+/** Default service instance (module-level singleton). */
 export const segmentationService = new IntlSegmenterSegmentationService();
 
 /**
@@ -57,9 +57,8 @@ export function split(text, locale = 'en') {
 /**
  * Fixed-length fallback: splits text that has no usable sentence boundary
  * (or a suspiciously long single sentence) into MAX_SENTENCE_LENGTH chunks
- * so the Reader never produces an unusable card. Mirrors
- * SentenceSplitter.splitOverlong (character-index arithmetic, so surrogate
- * pairs may be split exactly as in the Android implementation).
+ * so the Reading area never produces an unusable card. Character-index arithmetic,
+ * so surrogate pairs may be split mid-pair.
  */
 export function splitOverlong(text) {
   if (text.length <= MAX_SENTENCE_LENGTH) return [text];

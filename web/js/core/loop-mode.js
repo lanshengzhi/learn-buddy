@@ -1,8 +1,8 @@
 /**
- * Loop mode — the Reader's playback mode, switched by the Loop toggle in the
- * bottom bar. Each tap cycles Off → All → One → Off (ported from dasan's
- * LoopMode). The mode persists across sessions and applies globally; restore
- * is mode-only and never auto-resumes playback.
+ * Loop mode — the Reading area's playback mode, switched by the Loop toggle
+ * in the bottom bar. Each tap cycles Off → All → One → Off. The mode
+ * persists across sessions and applies globally; restore is mode-only and
+ * never auto-resumes playback.
  */
 
 export const LoopMode = Object.freeze({

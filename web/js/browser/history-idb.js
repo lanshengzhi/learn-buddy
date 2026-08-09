@@ -1,8 +1,8 @@
 /**
  * IndexedDB-backed HistoryStore (the browser implementation of the
- * HistoryStore interface; tests use InMemoryHistoryStore). Records mirror
- * dasan's HistoryItemEntity: auto-increment id, text, createdAt, and the
- * learner's last selected sentence index.
+ * HistoryStore interface; tests use InMemoryHistoryStore). Records carry an
+ * auto-increment id, text, createdAt, and the learner's last selected
+ * sentence index.
  */
 
 import { HistoryItem } from '../core/history-store.js';

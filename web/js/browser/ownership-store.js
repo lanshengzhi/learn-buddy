@@ -66,7 +66,7 @@ export class AudioOwnershipStore {
 
   /**
    * Drops removed entry ids and purges audio cache entries that no live
-   * history entry references anymore (ADR 0008 lifetime rule).
+   * history entry references anymore (the ownership lifetime rule).
    * @param {number[]} entryIds
    */
   async forgetEntries(entryIds) {

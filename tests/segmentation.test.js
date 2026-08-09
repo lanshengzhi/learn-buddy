@@ -63,10 +63,10 @@ test('language detection: kana → Japanese', () => {
   assert.equal(detectLanguage('日本語とEnglishが混ざる'), 'ja');
 });
 
-test('language detection: Han without kana → Simplified Chinese (incl. ADR 0007 limitation)', () => {
+test('language detection: Han without kana → Simplified Chinese (incl. the known limitation)', () => {
   assert.equal(detectLanguage('你好世界'), 'zh-CN');
   assert.equal(detectLanguage('这是一段中文'), 'zh-CN');
-  // ADR 0007: Japanese without kana is detected as Chinese.
+  // Known limitation: Japanese without kana is detected as Chinese.
   assert.equal(detectLanguage('日本'), 'zh-CN');
 });
 

@@ -1,8 +1,8 @@
 /**
- * Playback preferences — the Reader's global playback preferences (active
- * Rate preset and Loop mode), persisted across sessions (dasan ADR 0009).
- * Restore is mode-only: the Reader never auto-resumes playback from a
- * restored mode. Browser storage is localStorage; tests inject a fake.
+ * Playback preferences — the Reading area's global playback preferences
+ * (active Rate preset and Loop mode), persisted across sessions. Restore is
+ * mode-only: playback never auto-resumes from a restored mode. Browser
+ * storage is localStorage; tests inject a fake.
  */
 
 import { DEFAULT_RATE_PRESET, ratePresetByName } from './rate-presets.js';

@@ -1,6 +1,6 @@
 // zh/ja/en sentence-segmentation parity cases: Intl.Segmenter vs ICU4J expectations.
-// Expected values generated from ICU4J 75.1 (com.ibm.icu.text.BreakIterator — the same
-// library dasan's Android SentenceSplitter uses) via the harness in /tmp/icu4j, then
+// Expected values generated from ICU4J 75.1 (com.ibm.icu.text.BreakIterator) via the
+// harness in /tmp/icu4j, then
 // verified identical against Intl.Segmenter on V8 (node 26.7.0, 2026-08).
 // A failing case here means Intl.Segmenter and ICU4J have drifted apart — review before changing.
 import { test } from 'node:test';

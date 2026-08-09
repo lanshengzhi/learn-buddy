@@ -1,9 +1,9 @@
 /**
  * History store — the persistence seam behind HistoryRepository.
  *
- * The interface mirrors dasan's HistoryDao (Room); the browser implementation
- * lives in history-idb.js (IndexedDB) and an in-memory implementation is used
- * by node tests. Entries are ordered newest-first.
+ * The interface's browser implementation lives in history-idb.js (IndexedDB);
+ * an in-memory implementation is used by node tests. Entries are ordered
+ * newest-first.
  */
 
 export class HistoryItem {

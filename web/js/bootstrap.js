@@ -1,6 +1,6 @@
 /**
  * Bootstrap — shared browser wiring: history repository with audio-ownership
- * cleanup (dasan ADR 0008 semantics), IndexedDB stores, and Service Worker
+ * cleanup, IndexedDB stores, and Service Worker
  * registration (secure contexts only; the plain-HTTP LAN origin simply runs
  * without offline replay — see the PWA ticket).
  */

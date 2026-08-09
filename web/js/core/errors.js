@@ -1,8 +1,7 @@
 /**
  * TTS exception — the error vocabulary shared by backend and frontend
- * (ported from dasan's TtsException hierarchy; the backend returns these
- * codes as JSON). ViewModels map codes to learner-facing strings via
- * ttsErrorToMessage.
+ * (the backend returns these codes as JSON). ViewModels map codes to
+ * learner-facing strings via ttsErrorToMessage.
  */
 
 export const TTS_ERROR_CODES = Object.freeze({
@@ -16,7 +15,7 @@ export const TTS_ERROR_CODES = Object.freeze({
   UNKNOWN: 'unknown',
 });
 
-/** Wording carried over verbatim from the Android app (ReaderViewModel.mapTtsError). */
+/** Learner-facing wording per TTS exception code. */
 const ERROR_MESSAGES = {
   [TTS_ERROR_CODES.EMPTY_TEXT]: 'Selected sentence is empty.',
   [TTS_ERROR_CODES.TEXT_TOO_LONG]: 'Sentence is too long.',
