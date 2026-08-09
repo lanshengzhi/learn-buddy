@@ -29,15 +29,14 @@ LearnBuddy is a Web/PWA language reader for the whole family, deployed on claw: 
 - **Rate control** — The Reading area bottom-bar control that opens a menu of the six **Rate presets** and shows the active preset as its label (e.g. `1×`). Selecting a preset while audio is playing, loading, or paused cancels it and restarts the current sentence at the new rate; in **Loop-all mode** and **Loop-one mode** the loop continues at the new rate.
 - **Server audio cache** — The backend's cache of MP3 bytes keyed by the SHA-256 hash of `text|voice|rate` (for Japanese, the **Reading-normalized** text plus the normalization version), shared by all family devices. A speed layer only — it never carries the offline promise.
 - **Reading normalization** — The backend's G2P stage (ADR 0004) that
-  rewrites Japanese kanji into their kana (hiragana) reading before synthesis.
-  Edge TTS cannot take furigana or SSML reading hints, so the only lever is
-  text rewriting; the rewrite runs only for Japanese voices (en/zh pass
-  through) and never touches the displayed text. Uses SudachiPy context
-  disambiguation (銀行→ぎんこう but 行く→いく) plus a **corrections table** for
-  the analyzer's known date/number failures (一日中→いちにちじゅう, 二十日→
-  はつか, 一昨日→おととい). Output is hiragana because katakana pushes Edge's
-  ja voices into the loanword head-high accent (カブシキガイシャ); original
-  katakana in the text (コーヒー) keeps its script and correct accent.
+  corrects confirmed Japanese mispronunciations before synthesis. **Kanji-
+  default**: the original text passes through untouched (Edge's kanji G2P
+  keeps the native pitch accent — kana input, in any form, was rejected by
+  ear: katakana triggers the loanword head-high accent, hiragana loses the
+  lexical accent), and only surfaces in the curated **replacement table**
+  (words confirmed misread, e.g. 一昨日→おととい) are rewritten to their
+  hiragana reading. Runs only for Japanese voices (en/zh pass through) and
+  never touches the displayed text.
 - **Audio cache** — The Service Worker's device-level cache of played audio, keyed by the `text|voice|rate` request URL. It exists while at least one **History entry** references it and is purged when the last referencing entry is removed — whether the learner deletes the entry or **History trimming** evicts it.
 - **Offline replay** — Playing an audio-cached sentence without an active network connection. Only possible for sentences fetched while their History entry was alive — and only at the rate they were fetched at. Not offline TTS: no on-device synthesis exists.
 - **Playback controls** — **Previous** (select and play the sentence before the selected one), **Replay** (play the current sentence again), **Play/Pause** (start or suspend playback), **Next** (select and play the sentence after the selected one), the **Loop toggle**, and the **Rate control**. While the Loop toggle is Off, every control plays exactly one sentence.
