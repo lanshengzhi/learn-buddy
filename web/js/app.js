@@ -66,6 +66,13 @@ const collapsedInfo = $('collapsed-info');
 const historyButton = $('history-button');
 const collapseButton = $('collapse-button');
 
+const LANGUAGE_LABELS = { en: '英语', ja: '日语', 'zh-CN': '中文' };
+
+/** Locale code → Chinese UI label (zh-CN is the default, shown as 中文). */
+function languageLabel(locale) {
+  return LANGUAGE_LABELS[locale] ?? locale;
+}
+
 // Touch devices get the focus takeover (the virtual keyboard needs the room);
 // with a mouse, focusing just expands the editor to the lower half (ADR 0003).
 const COARSE_POINTER = window.matchMedia('(pointer: coarse)');
@@ -270,11 +277,11 @@ function updateStatus() {
   const selected = controller.state.selectedSentenceIndex;
   const summary =
     n > 0
-      ? `${n} 句 · 选中第 ${(selected ?? -1) + 1} 句 · ${detectLanguage(text)}`
+      ? `${n} 句 · 选中第 ${(selected ?? -1) + 1} 句 · ${languageLabel(detectLanguage(text))}`
       : '';
   editorStatus.textContent = summary;
   collapsedInfo.textContent = summary;
-  langBadge.textContent = detectLanguage(text);
+  langBadge.textContent = languageLabel(detectLanguage(text));
 }
 
 function applyState() {
