@@ -249,6 +249,147 @@ try {
   await desktopCtx.close();
 }
 
+// ==== Visual follow (issue #8): the playing sentence never sits under the
+// playback bar. Geometry loop on a touch viewport, then the Q4 trigger paths
+// (resize, editor expand/collapse) on a fine-pointer viewport. =============
+const longPassage = Array.from(
+  { length: 30 },
+  (_, i) => `Sentence number ${i + 1} with some words to read.`,
+).join(' ');
+
+const followCtx = await browser.newContext({
+  viewport: { width: 390, height: 844 },
+  isMobile: true,
+  hasTouch: true,
+});
+const fpage = await followCtx.newPage();
+watch(fpage);
+
+// Resolves when the playing card is fully above the playback bar (tolerance
+// ±1px for subpixel rounding), or throws on timeout.
+async function waitFollowed(page, tag) {
+  await page.waitForFunction(
+    () => {
+      const body = document.getElementById('reader-body');
+      const bar = document.getElementById('bottom-bar');
+      const playing = document.querySelector('.sentence-list li.playing');
+      if (!body || !bar || !playing) return false;
+      const bodyRect = body.getBoundingClientRect();
+      const cardRect = playing.getBoundingClientRect();
+      return cardRect.top >= bodyRect.top - 1 && cardRect.bottom <= bar.getBoundingClientRect().top + 1;
+    },
+    { timeout: 5000 },
+  );
+  const rects = await page.evaluate(() => {
+    const body = document.getElementById('reader-body').getBoundingClientRect();
+    const card = document.querySelector('.sentence-list li.playing').getBoundingClientRect();
+    const bar = document.getElementById('bottom-bar').getBoundingClientRect();
+    return { cardTop: Math.round(card.top), cardBottom: Math.round(card.bottom), bodyTop: Math.round(body.top), barTop: Math.round(bar.top) };
+  });
+  console.log(`follow ${tag}: playing card above bar`, JSON.stringify(rects));
+}
+
+try {
+  await fpage.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await fpage.fill('#text-input', longPassage);
+  await fpage.click('#update-button');
+  await fpage.waitForSelector('.sentence-list li');
+  const cardCount = await fpage.locator('.sentence-list li').count();
+  console.log(`follow: ${cardCount} sentences rendered`);
+  if (cardCount < 25) throw new Error(`expected a long passage, got ${cardCount} sentences`);
+
+  // Loop-all at 2× so the loop advances quickly.
+  await fpage.click('#loop-button');
+  if ((await fpage.getAttribute('#loop-button', 'aria-label')) !== '循环：全部') {
+    throw new Error('loop did not reach Loop-all after one toggle');
+  }
+  await fpage.selectOption('#rate-select', 'Double');
+  await fpage.locator('.sentence-list li').first().click();
+  await fpage.waitForFunction(() => document.querySelector('.sentence-list li.playing') !== null, { timeout: 15000 });
+  await waitFollowed(fpage, 'first');
+
+  // Each advance must end with the playing card settled above the bar.
+  for (let i = 0; i < 3; i++) {
+    const prev = await fpage.evaluate(() =>
+      Number(document.querySelector('.sentence-list li.playing')?.dataset.index ?? -1),
+    );
+    await fpage.waitForFunction(
+      (prevIndex) => {
+        const el = document.querySelector('.sentence-list li.playing');
+        return el && Number(el.dataset.index) !== prevIndex;
+      },
+      prev,
+      { timeout: 30000 },
+    );
+    await waitFollowed(fpage, `advance ${i + 1}`);
+  }
+} finally {
+  await followCtx.close();
+}
+
+// Q4 trigger paths: while PAUSED (no state changes), manually scroll the
+// playing card out of view, then resize / expand / collapse the editor — only
+// the follow re-run hooks can pull it back.
+const followDesktopCtx = await browser.newContext({ viewport: { width: 800, height: 900 } });
+const qpage = await followDesktopCtx.newPage();
+watch(qpage);
+
+async function scrollPlayingOutOfView(page) {
+  await page.evaluate(() => {
+    const body = document.getElementById('reader-body');
+    body.scrollTop = body.scrollHeight;
+  });
+  const out = await page.evaluate(() => {
+    const body = document.getElementById('reader-body').getBoundingClientRect();
+    const card = document.querySelector('.sentence-list li.playing').getBoundingClientRect();
+    // Scrolled to the bottom, the first sentence's card sits above the viewport.
+    return card.bottom <= body.top + 1 || card.top >= body.bottom - 1;
+  });
+  if (!out) throw new Error('expected the playing card to be out of view after manual scroll');
+}
+
+try {
+  await qpage.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await qpage.fill('#text-input', longPassage);
+  await qpage.click('#update-button');
+  await qpage.waitForSelector('.sentence-list li');
+
+  // Loop-one at 2×, play the first sentence, then pause mid-playback.
+  await qpage.click('#loop-button');
+  await qpage.click('#loop-button');
+  if ((await qpage.getAttribute('#loop-button', 'aria-label')) !== '循环：单句') {
+    throw new Error('loop did not reach Loop-one after two toggles');
+  }
+  await qpage.selectOption('#rate-select', 'Double');
+  await qpage.locator('.sentence-list li').first().click();
+  await qpage.waitForFunction(() => document.querySelector('.sentence-list li.playing') !== null, { timeout: 15000 });
+  await qpage.click('#play-button'); // pause — no state changes from here on
+  await qpage.waitForFunction(
+    () => document.getElementById('pause-icon').getAttribute('hidden') !== null,
+    { timeout: 5000 },
+  );
+
+  // 18. Resize: the reading viewport shrinks; follow re-runs and pulls the
+  //     playing card back into view (no sentence change involved).
+  await scrollPlayingOutOfView(qpage);
+  await qpage.setViewportSize({ width: 800, height: 700 });
+  await waitFollowed(qpage, 'resize');
+
+  // 19. Editor expand (fine pointer: focus expands to the lower half) and
+  //     collapse; both re-trigger follow after the flex-grow transition.
+  await scrollPlayingOutOfView(qpage);
+  await qpage.focus('#text-input');
+  await qpage.waitForFunction(() => document.body.classList.contains('editor-expanded'));
+  await waitFollowed(qpage, 'editor-expand');
+
+  await scrollPlayingOutOfView(qpage);
+  await qpage.keyboard.press('Escape');
+  await qpage.waitForFunction(() => document.body.classList.contains('editor-collapsed'));
+  await waitFollowed(qpage, 'editor-collapse');
+} finally {
+  await followDesktopCtx.close();
+}
+
 console.log('console errors:', errors.length);
 await browser.close();
 

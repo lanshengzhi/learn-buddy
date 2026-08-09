@@ -17,6 +17,7 @@ import { TtsClient, ttsUrl } from './core/tts-client.js';
 import { PlaybackPreferences } from './core/playback-preferences.js';
 import { RATE_PRESETS } from './core/rate-presets.js';
 import { LoopMode } from './core/loop-mode.js';
+import { computeFollowAction } from './core/visual-follow.js';
 import { HtmlAudioPlayer } from './player.js';
 import { historyRepository, audioOwnership, registerServiceWorker } from './bootstrap.js';
 import { detectLanguage } from './core/language.js';
@@ -31,6 +32,7 @@ const loadingEl = $('reader-loading');
 const errorEl = $('reader-error');
 const emptyEl = $('reader-empty');
 const listEl = $('sentence-list');
+const readerBody = $('reader-body');
 const bottomBar = $('bottom-bar');
 const prevButton = $('prev-button');
 const replayButton = $('replay-button');
@@ -239,6 +241,12 @@ function setEditorCollapsed(collapsed) {
   document.body.classList.toggle('editor-collapsed', collapsed);
   document.body.classList.toggle('editor-expanded', !collapsed);
   applyLayout();
+  // The editor's height change resizes the reading viewport instantly on
+  // fine pointers (desktop expand/collapse); re-follow so a playing sentence
+  // newly covered by the playback bar scrolls back into view. On touch the
+  // takeover animates flex-grow instead — the transitionend listener below
+  // re-follows once the layout has settled.
+  followPlaying();
 }
 
 function setEditorTab(tab) {
@@ -331,22 +339,45 @@ function applyState() {
 // Visual follow (page-turn style, ported from ReaderScreen.kt): stay still
 // while the playing card is fully visible; scroll it to the top of the list
 // viewport otherwise. Downward (forward) page-turns animate; targets above
-// the viewport (loop wrap, upward retargeting) jump instantly.
+// the viewport (loop wrap, upward retargeting) jump instantly. The geometry
+// decision lives in core/visual-follow.js (node-tested); this binding only
+// executes the returned action. The viewport is #reader-body — the list's
+// scroll container — never #sentence-list, whose rect spans the whole
+// content, not the visible area.
 function followPlaying() {
   const playing = controller.state.playingSentenceIndex;
   if (playing == null) return;
   const card = cards.find((c) => Number(c.dataset.index) === playing);
   if (!card) return;
-  const listRect = listEl.getBoundingClientRect();
-  const cardRect = card.getBoundingClientRect();
-  const fullyVisible = cardRect.top >= listRect.top && cardRect.bottom <= listRect.bottom;
-  if (fullyVisible) return;
-  if (cardRect.top < listRect.top) {
-    listEl.scrollTop += cardRect.top - listRect.top;
-  } else {
+  const action = computeFollowAction(
+    readerBody.getBoundingClientRect(),
+    card.getBoundingClientRect(),
+  );
+  if (action === 'jump-top-instant') {
+    card.scrollIntoView({ behavior: 'instant', block: 'start' });
+  } else if (action === 'scroll-top-smooth') {
     card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 }
+
+// Layout changes mid-playback (window resize, editor collapse/expand) can
+// newly cover the playing sentence without any state change — re-run the
+// follow then. Deliberately NOT the scroll event: that would fight the
+// learner's own scrolling while a sentence is playing.
+let followScheduled = false;
+window.addEventListener('resize', () => {
+  if (followScheduled) return;
+  followScheduled = true;
+  requestAnimationFrame(() => {
+    followScheduled = false;
+    followPlaying();
+  });
+});
+// The editor expand/collapse animates #reading-area's flex-grow (ADR 0003);
+// re-follow once the new viewport has settled.
+readingArea.addEventListener('transitionend', (e) => {
+  if (e.propertyName === 'flex-grow') followPlaying();
+});
 
 // --- controls --------------------------------------------------------------
 
