@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """LearnBuddy backend — one stdlib-only process serving:
 
-- GET /tts?text&voice&rate → audio/mpeg (MP3), proxied from Edge TTS with a
-  server audio cache keyed by SHA-256(text|voice|rate) shared by the whole
-  family (ADR 0001). Japanese text is reading-normalized to kana first
-  (ADR 0004, see server/reading.py). Client-side validation → 400s; upstream
-  failures → 502/504; one upstream retry + 403 clock-skew retry + ~3s
-  connection pacing are handled by EdgeTtsSynthesizer and the PaceGate below.
+- GET /tts?text&voice&rate → audio/mpeg (MP3): Azure Speech primary when
+  AZURE_SPEECH_KEY is set (ADR 0005), Edge TTS as the automatic fallback
+  (no key, or any Azure failure), with a server audio cache keyed by
+  SHA-256(text|voice|rate) shared by the whole family (ADR 0001). Japanese
+  text is reading-normalized first (ADR 0004/0005, see server/reading.py):
+  Azure gets an SSML body with <phoneme> hints; the Edge fallback gets
+  plain text with kana readings. Client-side validation → 400s; upstream
+  failures → 502/504; Edge keeps its single retry + 403 clock-skew retry +
+  ~3s connection pacing (EdgeTtsSynthesizer + the PaceGate below); Azure
+  needs no pacing.
 - static files (the web/ frontend).
 
 Errors: JSON {"error": "<code>"} using the shared error-code vocabulary
@@ -25,6 +29,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote_plus, urlparse
 
+from azure_tts import AzureTtsSynthesizer
 from edge_tts import (
     EdgeTtsError,
     EdgeTtsSynthesizer,
@@ -131,34 +136,57 @@ STATUS_BY_CODE = {
 
 class TtsServer:
     def __init__(self, static_dir=DEFAULT_STATIC_DIR, cache_dir=DEFAULT_CACHE_DIR,
-                 synthesizer=None, pace_interval=PACE_INTERVAL_SECONDS, sleep=time.sleep,
-                 normalizer=None):
+                 synthesizer=None, azure=None, pace_interval=PACE_INTERVAL_SECONDS,
+                 sleep=time.sleep, normalizer=None):
         self.static_dir = os.path.abspath(static_dir)
         self.cache = AudioCache(cache_dir)
         self.synthesizer = synthesizer or EdgeTtsSynthesizer()
+        # azure is injectable for tests; the default reads AZURE_SPEECH_KEY
+        # from the environment and reports key=None when it is absent.
+        self.azure = azure if azure is not None else AzureTtsSynthesizer()
         self.normalizer = normalizer or reading.normalize_ja
         self.pace_gate = PaceGate(interval=pace_interval, sleep=sleep)
         self.synthesis_lock = threading.Lock()
 
+    def _use_azure(self):
+        """Azure is primary exactly when it holds a subscription key."""
+        return bool(self.azure.key)
+
     def synthesize(self, text, voice, rate):
         """Runs one synthesis honoring validation, normalization, cache,
-        pacing, and retry. Japanese voices pass through the G2P reading
-        normalizer first (ADR 0004), and the cache key covers the normalized
-        text plus the normalization version so readings never go stale."""
+        provider selection, and pacing. Japanese voices pass through the G2P
+        reading normalizer first (ADR 0004/0005) — Azure receives the SSML
+        body (phoneme hints), the Edge fallback receives plain kana text —
+        and the cache key covers the normalized body plus the normalization
+        version so readings never go stale."""
         text, voice, rate = validate_request(text, voice, rate)
         if _is_japanese_voice(voice):
-            text = self.normalizer(text)
-        key = AudioCache.key(f"{reading.NORM_VERSION}|{text}", voice, rate)
+            azure_body = self.normalizer(text)
+            edge_text = reading.normalize_ja_text(text)
+        else:
+            azure_body = reading.normalize(text)
+            edge_text = text
+        key = AudioCache.key(f"{reading.NORM_VERSION}|{azure_body}", voice, rate)
 
         cached = self.cache.get(key)
         if cached is not None:
             return key, cached, True
 
         with self.synthesis_lock:
-            self.pace_gate.wait()
-            audio = self.synthesizer.speak(text, voice, rate)
+            audio = self._synthesize(azure_body, edge_text, voice, rate)
         self.cache.put(key, audio)
         return key, audio, False
+
+    def _synthesize(self, azure_body, edge_text, voice, rate):
+        """Azure first (no pacing) when configured; any Azure failure falls
+        back to Edge, paced ~3s. Raises EdgeTtsError with the shared codes."""
+        if self._use_azure():
+            try:
+                return self.azure.speak(azure_body, voice, rate)
+            except EdgeTtsError:
+                pass  # fall through to the Edge fallback
+        self.pace_gate.wait()
+        return self.synthesizer.speak(edge_text, voice, rate)
 
 
 class AppServer(ThreadingHTTPServer):

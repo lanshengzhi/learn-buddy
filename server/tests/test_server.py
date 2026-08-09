@@ -30,15 +30,38 @@ class FakeSynthesizer:
         return b"\xff\xf3" + text.encode() + b"|" + voice.encode() + b"|" + rate.encode()
 
 
+class FakeAzureSynthesizer:
+    """Azure stand-in for provider-selection tests. key controls whether the
+    server treats Azure as primary (non-empty key → primary)."""
+
+    def __init__(self, key="test-key"):
+        self.key = key
+        self.calls = []
+        self.fail_with = None  # EdgeTtsError or list of them (raised in order)
+
+    def speak(self, body, voice, rate):
+        self.calls.append((body, voice, rate))
+        if isinstance(self.fail_with, list):
+            if self.fail_with:
+                raise self.fail_with.pop(0)
+        elif self.fail_with is not None:
+            raise self.fail_with
+        return b"azure-mp3" + body.encode()
+
+
 class ServerHarness:
     def __init__(self, static_dir, fake_synth, pace_interval=0.01, sleep=time.sleep,
-                 normalizer=None):
+                 normalizer=None, azure=None):
         self.tmp = tempfile.mkdtemp()
         self.cache_dir = os.path.join(self.tmp, "cache")
+        # Explicit fake providers so tests never depend on the developer's
+        # AZURE_SPEECH_KEY; default = no key → Edge primary.
+        azure_synth = azure if azure is not None else FakeAzureSynthesizer(key=None)
         server_obj = TtsServer(
             static_dir=static_dir,
             cache_dir=self.cache_dir,
             synthesizer=fake_synth,
+            azure=azure_synth,
             pace_interval=pace_interval,
             sleep=sleep,
             normalizer=normalizer,
@@ -176,15 +199,15 @@ class TestTtsEndpoint(unittest.TestCase):
 
     # -- reading normalization (ADR 0004) ---------------------------------
 
-    def test_japanese_text_is_normalized_before_upstream(self):
-        # A ja-JP request passes through the reading normalizer before the
-        # upstream sees it; en does not (asserted below).
-        normalizer = lambda text: text.replace("今日は", "キョウハ")
+    def test_japanese_text_is_reading_normalized_for_edge(self):
+        # With no Azure key, Edge is primary; a ja-JP request reaches the
+        # Edge synthesizer as the reading-normalized text form (kana), so a
+        # confirmed misread like 定める is corrected even on the fallback.
         fake = FakeSynthesizer()
-        harness = ServerHarness(self.static_dir, fake, normalizer=normalizer)
+        harness = ServerHarness(self.static_dir, fake)
         try:
-            harness.get(harness_url(harness, text="今日は", voice="ja-JP-KeitaNeural", rate="+0%"))
-            self.assertEqual(fake.calls[0][0], "キョウハ")
+            harness.get(harness_url(harness, text="定める", voice="ja-JP-KeitaNeural", rate="+0%"))
+            self.assertEqual(fake.calls[0][0], "さだめる")
         finally:
             harness.close()
 
@@ -216,6 +239,101 @@ class TestTtsEndpoint(unittest.TestCase):
             harness.get(harness_url(harness, text="銀行で", voice="ja-JP-KeitaNeural", rate="+0%"))
             harness.get(harness_url(harness, text="ギンコウで", voice="ja-JP-KeitaNeural", rate="+0%"))
             self.assertEqual(len(calls), 1)  # second request hit the server cache
+        finally:
+            harness.close()
+
+
+class TestProviderSelection(unittest.TestCase):
+    """Azure primary when a key is present; Edge fallback on any Azure
+    failure; the pace gate spaces Edge only (ADR 0005)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.static_dir = tempfile.mkdtemp()
+        with open(os.path.join(cls.static_dir, "index.html"), "w") as fh:
+            fh.write("<h1>LearnBuddy</h1>")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.static_dir, ignore_errors=True)
+
+    def test_azure_is_primary_when_key_present(self):
+        azure = FakeAzureSynthesizer(key="test-key")
+        edge = FakeSynthesizer()
+        harness = ServerHarness(self.static_dir, edge, azure=azure)
+        try:
+            harness.get(harness_url(harness, text="hello", voice="en-US-AriaNeural", rate="+0%"))
+            self.assertEqual(len(azure.calls), 1)
+            self.assertEqual(edge.calls, [])
+        finally:
+            harness.close()
+
+    def test_edge_is_primary_without_key(self):
+        azure = FakeAzureSynthesizer(key=None)
+        edge = FakeSynthesizer()
+        harness = ServerHarness(self.static_dir, edge, azure=azure)
+        try:
+            harness.get(harness_url(harness, text="hello", voice="en-US-AriaNeural", rate="+0%"))
+            self.assertEqual(edge.calls[0][0], "hello")
+            self.assertEqual(azure.calls, [])
+        finally:
+            harness.close()
+
+    def test_azure_failure_falls_back_to_edge(self):
+        azure = FakeAzureSynthesizer(key="test-key")
+        azure.fail_with = EdgeTtsError("upstream_unavailable", "azure boom")
+        edge = FakeSynthesizer()
+        harness = ServerHarness(self.static_dir, edge, azure=azure)
+        try:
+            status, _, body = harness.get(harness_url(harness, text="hello", voice="en-US-AriaNeural", rate="+0%"))
+            self.assertEqual(status, 200)
+            self.assertEqual(len(azure.calls), 1)
+            self.assertEqual(len(edge.calls), 1)
+            self.assertEqual(edge.calls[0][0], "hello")
+        finally:
+            harness.close()
+
+    def test_both_providers_failing_surfaces_edge_error(self):
+        azure = FakeAzureSynthesizer(key="test-key")
+        azure.fail_with = EdgeTtsError("upstream_timeout", "azure slow")
+        edge = FakeSynthesizer()
+        edge.fail_with = EdgeTtsError("upstream_unavailable", "edge down")
+        harness = ServerHarness(self.static_dir, edge, azure=azure)
+        try:
+            status, _, body = harness.get(harness_url(harness, text="hello", voice="en-US-AriaNeural", rate="+0%"))
+            self.assertEqual(status, 502)
+            self.assertEqual(json.loads(body)["error"], "upstream_unavailable")
+            self.assertEqual(len(azure.calls), 1)
+            self.assertEqual(len(edge.calls), 1)
+        finally:
+            harness.close()
+
+    def test_azure_receives_phoneme_ssml_body_for_japanese(self):
+        azure = FakeAzureSynthesizer(key="test-key")
+        edge = FakeSynthesizer()
+        harness = ServerHarness(self.static_dir, edge, azure=azure)
+        try:
+            harness.get(harness_url(harness, text="定める", voice="ja-JP-KeitaNeural", rate="+0%"))
+            body, voice, rate = azure.calls[0]
+            self.assertEqual(voice, "Microsoft Server Speech Text to Speech Voice (ja-JP, KeitaNeural)")
+            self.assertIn('<phoneme alphabet="sapi" ph="サダメ\'ル">定める</phoneme>', body)
+        finally:
+            harness.close()
+
+    def test_azure_needs_no_pacing(self):
+        # A 60s pace interval would serialize two Azure calls for minutes if
+        # the gate applied; Azure is primary here so both return quickly.
+        azure = FakeAzureSynthesizer(key="test-key")
+        edge = FakeSynthesizer()
+        harness = ServerHarness(self.static_dir, edge, azure=azure, pace_interval=60)
+        try:
+            start = time.monotonic()
+            harness.get(harness_url(harness, text="one", voice="en-US-AriaNeural", rate="+0%"))
+            harness.get(harness_url(harness, text="two", voice="en-US-AriaNeural", rate="+0%"))
+            elapsed = time.monotonic() - start
+            self.assertLess(elapsed, 5)
+            self.assertEqual(len(azure.calls), 2)
+            self.assertEqual(edge.calls, [])
         finally:
             harness.close()
 

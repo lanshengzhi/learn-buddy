@@ -21,22 +21,28 @@ LearnBuddy is a Web/PWA language reader for the whole family, deployed on claw: 
 
 ## Audio and TTS
 
-- **TTS API** — The backend's `GET /tts?text&voice&rate` endpoint returning MP3 bytes. The backend holds the Edge TTS connection and maintains the Edge-family User-Agent, single retry, and ~3s pacing in one place; the browser never talks to Edge directly.
-- **Edge TTS connection** — The upstream Microsoft Edge online text-to-speech WebSocket endpoint the backend speaks to. Protocol facts (Sec-MS-GEC token, UA gating) are researched and maintained in the backend.
-- **Voice** — The neural voice used for synthesis. Defaults are `en-US-AriaNeural` for English, `ja-JP-KeitaNeural` for Japanese, and `zh-CN-YunxiNeural` for Chinese. The client chooses the voice from the sentence's **Sentence voice locale**; Edge TTS does not auto-detect language.
+- **TTS API** — The backend's `GET /tts?text&voice&rate` endpoint returning MP3 bytes. The backend owns the **TTS provider** layer — provider selection, retries, and pacing — in one place; the browser never talks to an upstream provider directly.
+- **TTS provider** — The synthesis backend behind the **TTS API**. **Azure Speech** is primary when the server holds a key; **Edge TTS connection** is the automatic fallback (no key, or an Azure failure). The switch is invisible to the frontend.
+- **Azure Speech** — Microsoft's neural TTS service, the primary **TTS provider** (ADR 0005). It accepts real SSML, so `<phoneme alphabet="sapi">` can control a word's **读音** *and* **声调** at once — the dual control kana text cannot provide.
+- **Edge TTS connection** — The upstream Microsoft Edge online text-to-speech WebSocket endpoint the backend speaks to as the fallback **TTS provider**. Protocol facts (Sec-MS-GEC token, UA gating) are researched and maintained in the backend; it cannot take SSML reading hints (no `<phoneme>`), which is why the **Reading normalization** keeps a plain-text form for it.
+- **Voice** — The neural voice used for synthesis. Defaults are `en-US-AriaNeural` for English, `ja-JP-KeitaNeural` for Japanese, and `zh-CN-YunxiNeural` for Chinese. The client chooses the voice from the sentence's **Sentence voice locale**; neither provider auto-detects language.
+- **读音 (reading / yomi)** — Which kana a kanji maps to; the polyphonic (多音字) dimension of pronunciation. The TTS provider resolves readings from its own G2P and misreads some words (e.g. 定める read as ていめる instead of さだめる). Distinct from **声调**.
+- **声调 (pitch accent)** — The high/low pitch contour of a word (頭高 / 中高 / 尾高 / 平板). Kanji text lets ja voices apply dictionary accents; kana text does not, which is why kana-ized audio loses correct accents. Azure's `<phoneme>` pins both **读音** and **声调**; the Edge fallback keeps only the reading. Distinct from **读音**: homophones like 雨/飴 share a reading but differ in accent.
 - **Rate** — Optional SSML speech rate passed to the TTS API (e.g. `+0%`, `-50%`). The active **Rate preset** supplies the value.
 - **Rate preset** — One of six learner-selectable speech rates — 0.5×, 0.75×, 1×, 1.25×, 1.5×, 2× — mapped linearly to SSML rates (`-50%`, `-25%`, `+0%`, `+25%`, `+50%`, `+100%`; 2× is the upstream +100% ceiling). One global preset applies to all passages and languages and persists across sessions. Selecting a preset re-synthesizes the current sentence at that rate.
 - **Rate control** — The Reading area bottom-bar control that opens a menu of the six **Rate presets** and shows the active preset as its label (e.g. `1×`). Selecting a preset while audio is playing, loading, or paused cancels it and restarts the current sentence at the new rate; in **Loop-all mode** and **Loop-one mode** the loop continues at the new rate.
 - **Server audio cache** — The backend's cache of MP3 bytes keyed by the SHA-256 hash of `text|voice|rate` (for Japanese, the **Reading-normalized** text plus the normalization version), shared by all family devices. A speed layer only — it never carries the offline promise.
-- **Reading normalization** — The backend's G2P stage (ADR 0004) that
+- **Reading normalization** — The backend's G2P stage (ADR 0004/0005) that
   corrects confirmed Japanese mispronunciations before synthesis. **Kanji-
-  default**: the original text passes through untouched (Edge's kanji G2P
-  keeps the native pitch accent — kana input, in any form, was rejected by
-  ear: katakana triggers the loanword head-high accent, hiragana loses the
-  lexical accent), and only surfaces in the curated **replacement table**
-  (words confirmed misread, e.g. 一昨日→おととい) are rewritten to their
-  hiragana reading. Runs only for Japanese voices (en/zh pass through) and
-  never touches the displayed text.
+  default**: the original text passes through untouched (kanji keeps the
+  native pitch accent — kana input, in any form, was rejected by ear:
+  katakana triggers the loanword head-high accent, hiragana loses the lexical
+  accent), and only surfaces in the curated **replacement table** (words
+  confirmed misread, e.g. 定める) are touched — wrapped in a `<phoneme>`
+  carrying reading **and** accent for **Azure Speech**, and rewritten to
+  their hiragana reading for the **Edge TTS connection** fallback. Runs only
+  for Japanese voices (en/zh pass through) and never touches the displayed
+  text.
 - **Audio cache** — The Service Worker's device-level cache of played audio, keyed by the `text|voice|rate` request URL. It exists while at least one **History entry** references it and is purged when the last referencing entry is removed — whether the learner deletes the entry or **History trimming** evicts it.
 - **Offline replay** — Playing an audio-cached sentence without an active network connection. Only possible for sentences fetched while their History entry was alive — and only at the rate they were fetched at. Not offline TTS: no on-device synthesis exists.
 - **Playback controls** — **Previous** (select and play the sentence before the selected one), **Replay** (play the current sentence again), **Play/Pause** (start or suspend playback), **Next** (select and play the sentence after the selected one), the **Loop toggle**, and the **Rate control**. While the Loop toggle is Off, every control plays exactly one sentence.
