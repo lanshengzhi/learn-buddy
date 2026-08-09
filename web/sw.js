@@ -10,7 +10,7 @@
  * - static assets: cache-first over the precached shell.
  */
 
-const SHELL_CACHE = 'learnbuddy-shell-v3';
+const SHELL_CACHE = 'learnbuddy-shell-v4';
 const AUDIO_CACHE = 'learnbuddy-audio-v1';
 // Keep in sync with js/core/sw-config.js.
 const SHELL_ASSETS = [
