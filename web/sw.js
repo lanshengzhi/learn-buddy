@@ -7,11 +7,18 @@
  *   via the audio cache name below (audio-ownership semantics).
  * - navigations: network-first with cached fallback, so app updates flow on
  *   the LAN and the shell still opens offline.
- * - static assets: cache-first over the precached shell.
+ * - static assets: network-first with cached fallback. Cache-first here was
+ *   the bug: the SW only re-installs when sw.js itself changes, so a deploy
+ *   that left sw.js untouched kept serving stale JS/CSS until a manual cache
+ *   clear. Network-first makes the deployed code live on the next load; the
+ *   precached shell is only the offline fallback.
  */
 
-const SHELL_CACHE = 'learnbuddy-shell-v4';
+const SHELL_CACHE = 'learnbuddy-shell-v5';
 const AUDIO_CACHE = 'learnbuddy-audio-v1';
+// Replaced by scripts/deploy.sh on every deploy so the browser detects a new
+// SW (bytes changed), re-precaches the fresh shell, and purges old caches.
+const DEPLOY_STAMP = 'dev';
 // Keep in sync with js/core/sw-config.js.
 const SHELL_ASSETS = [
   '/',
@@ -105,10 +112,12 @@ async function serveNavigation(request) {
 }
 
 async function serveStatic(request) {
-  const cache = await caches.open(SHELL_CACHE);
-  const hit = await cache.match(request);
-  if (hit) return hit;
-  const response = await fetch(request);
-  if (response.ok) cache.put(request, response.clone());
-  return response;
+  try {
+    const response = await fetch(request);
+    const cache = await caches.open(SHELL_CACHE);
+    if (response.ok) cache.put(request, response.clone());
+    return response;
+  } catch {
+    return (await caches.open(SHELL_CACHE)).match(request);
+  }
 }

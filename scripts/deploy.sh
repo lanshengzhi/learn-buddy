@@ -13,6 +13,14 @@ DEST=/srv/learnbuddy
 # code live atomically.
 rsync -az --exclude 'cache/' --exclude '__pycache__/' web/ "${HOST}:${DEST}/web/"
 rsync -az --exclude 'cache/' --exclude '__pycache__/' server/ "${HOST}:${DEST}/server/"
+
+# Stamp the deployed sw.js with a fresh value so the browser detects a new
+# Service Worker on every deploy (byte change -> re-install -> fresh shell
+# precache + purge of old caches). Without this, cache-first static serving
+# keeps serving stale JS/CSS and family devices need a manual cache clear.
+STAMP="$(date +%s)"
+ssh "${HOST}" "sudo sed -i \"s/^const DEPLOY_STAMP = '[^']*';/const DEPLOY_STAMP = '${STAMP}';/\" ${DEST}/web/sw.js"
+
 ssh "${HOST}" "sudo systemctl restart learnbuddy"
 
 echo "Deployed."

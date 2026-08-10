@@ -6,7 +6,7 @@
 /** Service Worker audio cache — offline replay store, keyed by request URL. */
 export const AUDIO_CACHE_NAME = 'learnbuddy-audio-v1';
 /** App shell cache (HTML/CSS/JS/manifest/icons). Bumped whenever the shell list changes. */
-export const SHELL_CACHE_NAME = 'learnbuddy-shell-v4';
+export const SHELL_CACHE_NAME = 'learnbuddy-shell-v5';
 
 /** Same-origin paths the SW precaches at install (single-page app, ADR 0003). */
 export const SHELL_ASSETS = [
