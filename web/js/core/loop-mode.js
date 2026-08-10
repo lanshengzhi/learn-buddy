@@ -2,7 +2,8 @@
  * Loop mode — the Reading area's playback mode, switched by the Loop toggle
  * in the bottom bar. Each tap cycles Off → All → One → Off. The mode
  * persists across sessions and applies globally; restore is mode-only and
- * never auto-resumes playback.
+ * never auto-resumes playback. Loop playback (All) is the default for
+ * fresh sessions.
  */
 
 export const LoopMode = Object.freeze({
@@ -19,5 +20,5 @@ export function nextLoopMode(mode) {
 }
 
 export function loopModeByName(name) {
-  return LOOP_CYCLE.includes(name) ? name : LoopMode.Off;
+  return LOOP_CYCLE.includes(name) ? name : LoopMode.All;
 }

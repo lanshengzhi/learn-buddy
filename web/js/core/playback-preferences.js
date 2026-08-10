@@ -26,7 +26,7 @@ export class PlaybackPreferences {
   loopMode() {
     const name = this.storage.getItem(KEY_LOOP_MODE);
     const mode = loopModeByName(name);
-    return mode === null ? LoopMode.Off : mode;
+    return mode === null ? LoopMode.All : mode;
   }
 
   saveRatePreset(preset) {

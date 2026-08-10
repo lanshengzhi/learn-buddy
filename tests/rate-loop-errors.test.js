@@ -43,7 +43,7 @@ test('loop toggle cycles Off -> All -> One -> Off', () => {
   assert.equal(nextLoopMode(LoopMode.All), LoopMode.One);
   assert.equal(nextLoopMode(LoopMode.One), LoopMode.Off);
   assert.equal(loopModeByName('All'), LoopMode.All);
-  assert.equal(loopModeByName('garbage'), LoopMode.Off);
+  assert.equal(loopModeByName('garbage'), LoopMode.All);
 });
 
 test('backend error codes map to the learner-facing strings', () => {
@@ -106,12 +106,12 @@ test('playback preferences persist rate preset and loop mode', () => {
     setItem: (k, v) => storage.set(k, v),
   });
   assert.equal(prefs.ratePreset().name, 'Normal');
-  assert.equal(prefs.loopMode(), 'Off');
+  assert.equal(prefs.loopMode(), 'All');
   prefs.saveRatePreset(RATE_PRESETS[5]);
   prefs.saveLoopMode(LoopMode.One);
   assert.equal(prefs.ratePreset().label, '2×');
   assert.equal(prefs.loopMode(), 'One');
   // Corrupt values fall back to defaults.
   storage.set('loop_mode', 'bogus');
-  assert.equal(prefs.loopMode(), 'Off');
+  assert.equal(prefs.loopMode(), 'All');
 });
