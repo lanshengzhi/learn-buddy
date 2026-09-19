@@ -108,18 +108,29 @@
   #sheet .card{padding:.5rem 1rem 1rem;overflow-y:auto}
   #pop{position:absolute;z-index:19;width:min(20rem,86vw);max-height:60vh;overflow:auto;background:var(--surface);border:1px solid var(--border);
     border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.18);padding:.6rem .7rem}
-  .card .word{font-size:1.35rem;font-weight:650;line-height:1.3}
-  .card .reading{color:var(--primary);font-size:.95rem;margin-top:.1rem}
-  .card .pos{display:inline-block;font-size:.72rem;color:var(--muted);border:1px solid var(--border);border-radius:999px;
+  .lookup .word{font-size:1.35rem;font-weight:650;line-height:1.3}
+  .lookup .reading{color:var(--primary);font-size:.95rem;margin-top:.1rem}
+  .lookup .pos{display:inline-block;font-size:.72rem;color:var(--muted);border:1px solid var(--border);border-radius:999px;
     padding:.05rem .45rem;margin-left:.45rem;vertical-align:.1em}
-  .card .gloss{margin-top:.5rem;font-size:.98rem}
-  .card .ctx{margin-top:.6rem;padding:.5rem .6rem;background:var(--bg);border-left:3px solid var(--primary);
+  .lookup .tabs{display:flex;gap:.3rem;margin:.5rem 0 .45rem}
+  .lookup .tabs button[aria-pressed="true"]{background:var(--primary-soft);border-color:var(--primary)}
+  .lookup .gloss{margin-top:.4rem;font-size:.98rem}
+  .lookup .senses{margin:.4rem 0 0;padding-left:1.15rem;font-size:.95rem}
+  .lookup .senses li{margin:.16rem 0}
+  .lookup .ctx{margin-top:.6rem;padding:.5rem .6rem;background:var(--bg);border-left:3px solid var(--primary);
     border-radius:0 8px 8px 0;font-size:.92rem;color:var(--muted)}
-  .card .ctx b{color:var(--text)}
-  .card .actions{display:flex;gap:.4rem;margin-top:.7rem}
-  .card .actions .ai{border-color:var(--primary);color:var(--primary-strong)}
-  .card .aiout{margin-top:.6rem;padding:.55rem .65rem;background:var(--primary-soft);border-radius:8px;font-size:.92rem;white-space:pre-wrap}
-  .card .note{margin-top:.55rem;font-size:.72rem;color:var(--muted)}
+  .lookup .ctx b{color:var(--text)}
+  .lookup .audiorow{display:flex;gap:.4rem;margin-top:.55rem}
+  .lookup .actions{display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap}
+  .lookup .actions .ai{border-color:var(--primary);color:var(--primary-strong)}
+  .lookup .aiout{margin:.3rem 0 0;padding:.55rem .65rem;background:var(--primary-soft);border-radius:8px;font-size:.92rem;white-space:pre-wrap}
+  .lookup .meta{margin-top:.45rem;font-size:.74rem;color:var(--muted)}
+  .lookup .note{margin-top:.5rem;font-size:.72rem;color:var(--muted)}
+  .kbd{font:inherit;font-size:.7rem;border:1px solid var(--border);border-radius:4px;padding:0 .28rem;color:var(--muted)}
+  /* 词状态（借 Migaku 的 known-words 着色，简化为两态；只存本机、无账号） */
+  .w.grab{background:var(--primary-soft);outline:2px solid var(--primary)}
+  #app[data-hl="underline"] .w.w-dict:not(.k-known){box-shadow:inset 0 -2px 0 rgba(47,111,79,.38)}
+  #app[data-hl="dim"] .w.k-known{opacity:.38}
   .spinner{display:inline-block;width:.8em;height:.8em;border:2px solid var(--border);border-top-color:var(--primary);
     border-radius:50%;animation:spin .7s linear infinite;vertical-align:-.05em}
   @keyframes spin{to{transform:rotate(360deg)}}
@@ -142,7 +153,7 @@
 </style>
 </head>
 <body>
-<div id="app" data-variant="1" data-gesture="hold">
+<div id="app" data-variant="1" data-gesture="hold" data-hl="underline">
 
   <div id="proto">
     <b>原型控制</b>
@@ -150,9 +161,13 @@
       <button data-v="1">V1 沉浸</button><button data-v="2">V2 双栏</button><button data-v="3">V3 卡片</button>
     </span>
     <span class="seg" role="group" aria-label="查义手势">
-      <button data-g="hold">长按</button><button data-g="select">划选</button><button data-g="tap">点词</button>
+      <button data-g="hover">悬停</button><button data-g="hold">长按</button><button data-g="select">划选</button><button data-g="tap">点词</button>
+    </span>
+    <span class="seg" role="group" aria-label="生词提示">
+      <button data-h="underline">标生词</button><button data-h="dim">淡已认识</button><button data-h="off">关</button>
     </span>
     <button class="plain" id="resetPos">清除阅读位置</button>
+    <span id="keysHint" hidden>空格 播放 · ←/→ 换句 · <b>k</b> 我认识 · <b>n</b> 下一个生词 · <b>a</b> 问 AI · Esc 关闭</span>
     <span id="protoState"></span>
   </div>
 
@@ -215,16 +230,16 @@ Either the well was very deep, or she fell very slowly, for she had plenty of ti
     ],
     dict:{
       tired:{pos:'adj.',gloss:'疲倦的，累的',ai:'“get tired of” 是固定搭配：厌倦、厌烦。这里不是身体累，而是“坐着没事干，烦了”。'},
-      bank:{pos:'n.',gloss:'河岸',ai:'此处 bank 不是“银行”，而是“河岸/岸边”——由后面的 sister、daisies 可以判断是户外场景。'},
+      bank:{pos:'n.',gloss:'河岸',freq:3,senses:['河岸，岸边（本句用的是这个）','银行（本义另用）'],ai:'此处 bank 不是“银行”，而是“河岸/岸边”——由后面的 sister、daisies 可以判断是户外场景。'},
       peeped:{pos:'v. (past)',gloss:'偷看，瞥一眼'},
       pictures:{pos:'n.',gloss:'图画'},
       conversations:{pos:'n.',gloss:'对话，交谈'},
       sleepy:{pos:'adj.',gloss:'困倦的'},
       stupid:{pos:'adj.',gloss:'昏昏沉沉的，迟钝的'},
       pleasure:{pos:'n.',gloss:'乐趣'},
-      trouble:{pos:'n.',gloss:'麻烦，费劲'},
+      trouble:{pos:'n.',gloss:'麻烦，费劲',freq:3,senses:['麻烦、费劲（本句 the trouble of…）','in trouble = 处于困境']},
       suddenly:{pos:'adv.',gloss:'突然地'},
-      rabbit:{pos:'n.',gloss:'兔子'},
+      rabbit:{pos:'n.',gloss:'兔子',freq:3,senses:['兔子','（大写 White Rabbit）白兔先生']},
       remarkable:{pos:'adj.',gloss:'引人注目的，不寻常的'},
       late:{pos:'adj.',gloss:'迟的，晚的'},
       dear:{pos:'interj.',gloss:'哎呀（表示惊慌）'},
@@ -250,8 +265,8 @@ Either the well was very deep, or she fell very slowly, for she had plenty of ti
       '様':{reading:'さま',pos:'接尾辞',gloss:'大人，先生（敬称）'},
       '独り':{reading:'ひとり',pos:'名詞',gloss:'独自，一个人'},
       'ふち':{reading:'ふち',pos:'名詞',gloss:'边缘，池边'},
-      '極楽':{reading:'ごくらく',pos:'名詞',gloss:'极乐世界，天堂'},
-      '蓮池':{reading:'れんち',pos:'名詞',gloss:'莲池'},
+      '極楽':{reading:'ごくらく',pos:'名詞',gloss:'极乐世界，天堂',freq:2,senses:['极乐世界（佛教）','（口语）无忧无虑的境地']},
+      '蓮池':{reading:'れんち',pos:'名詞',gloss:'莲池',freq:2,senses:['莲池（本句）','〔姓氏/地名〕莲池']},
       '蓮':{reading:'はす',pos:'名詞',gloss:'莲，荷花'},
       '花':{reading:'はな',pos:'名詞',gloss:'花'},
       '金色':{reading:'こんじき',pos:'名詞',gloss:'金色'},
@@ -264,7 +279,7 @@ Either the well was very deep, or she fell very slowly, for she had plenty of ti
       '底':{reading:'そこ',pos:'名詞',gloss:'底部'},
       '犍陀多':{reading:'かんだた',pos:'固有名詞',gloss:'犍陀多（人名）',ai:'佛经故事里的人物；名字是梵语转写，不是日常词。'},
       '男':{reading:'おとこ',pos:'名詞',gloss:'男人'},
-      '蜘蛛':{reading:'くも',pos:'名詞',gloss:'蜘蛛'},
+      '蜘蛛':{reading:'くも',pos:'名詞',gloss:'蜘蛛',freq:3,senses:['蜘蛛','〔固定搭配〕蜘蛛の糸 = 蜘蛛丝（本作书名）']},
       '命':{reading:'いのち',pos:'名詞',gloss:'生命'},
       '善い':{reading:'よい',pos:'形容詞',gloss:'好的，善良的'},
       '悪い':{reading:'わるい',pos:'形容詞',gloss:'坏的，恶的'},
@@ -303,6 +318,16 @@ const S = {
 };
 function savePos(){ try{ localStorage.setItem('lb-proto-pos', JSON.stringify({book:S.book, chapter:S.chapter, top:scroller.scrollTop})); }catch{} }
 function loadPos(){ try{ return JSON.parse(localStorage.getItem('lb-proto-pos')||'null'); }catch{ return null; } }
+/* 词状态：借 Migaku 的 known-words 着色，简化为两态（我认识 / 未标记），只存本机、无账号 */
+const KNOWN_KEY = 'lb-proto-known';
+let KNOWN = {}; try{ KNOWN = JSON.parse(localStorage.getItem(KNOWN_KEY)||'{}'); }catch{}
+function saveKnown(){ try{ localStorage.setItem(KNOWN_KEY, JSON.stringify(KNOWN)); }catch{} }
+function isKnown(key){ return !!KNOWN[BOOKS[S.book].id+'|'+key]; }
+function setKnown(key, on){ const k = BOOKS[S.book].id+'|'+key; on ? KNOWN[k]=1 : delete KNOWN[k]; saveKnown(); applyKnown(); updateState(); }
+function applyKnown(){
+  const id = BOOKS[S.book].id;
+  article.querySelectorAll('.w').forEach(el=>el.classList.toggle('k-known', !!KNOWN[id+'|'+el.dataset.w]));
+}
 
 /* -------------------------------------------------------------- rendering */
 function renderChapter(restoreTop){
@@ -325,6 +350,7 @@ function renderChapter(restoreTop){
       if(w.isWordLike){
         const ws = document.createElement('span');
         ws.className = 'w'; ws.textContent = w.segment; ws.dataset.w = lookupKey(b, w.segment);
+        if(b.dict[lookupKey(b, w.segment)]) ws.classList.add('w-dict');
         sp.appendChild(ws);
       } else sp.appendChild(document.createTextNode(w.segment));
       cursor = w.index + w.segment.length;
@@ -335,6 +361,7 @@ function renderChapter(restoreTop){
   article.appendChild(p);
   scroller.scrollTop = restoreTop || 0;
   selectSentence(S.sel = 0);
+  applyKnown();
   renderTOC();
   updateState();
   updateProgress();
@@ -358,7 +385,8 @@ function updateProgress(){
 }
 function updateState(){
   const b = BOOKS[S.book], ch = b.chapters[S.chapter];
-  $('#protoState').textContent = `V${S.variant} · ${{hold:'长按',select:'划选',tap:'点词'}[S.gesture]} · ${b.title} · ${ch.title} · 句 ${S.sel+1}/${sentences().length}${S.restored?' · 已恢复位置':''}`;
+  const knownCount = Object.keys(KNOWN).filter(k=>k.startsWith(b.id+'|')).length;
+  $('#protoState').textContent = `V${S.variant} · ${{hover:'悬停',hold:'长按',select:'划选',tap:'点词'}[S.gesture]} · 已认识 ${knownCount} 词 · ${b.title} · ${ch.title} · 句 ${S.sel+1}/${sentences().length}${S.restored?' · 已恢复位置':''}`;
 }
 
 /* ------------------------------------------------------------- playback */
@@ -400,26 +428,60 @@ function contextSentence(el){ return el ? el.closest('.s') : null; }
 function entryFor(book, key){
   return book.dict[key] || null;
 }
+function cardHTML(raw, sourceEl){
+  const b = BOOKS[S.book];
+  const key = lookupKey(b, raw);
+  const e = entryFor(b, key) || {};
+  const known = isKnown(key);
+  const ctx = contextSentence(sourceEl);
+  const ctxHTML = ctx ? ctx.textContent.replace(raw, '⟨'+raw+'⟩') : '';
+  const senses = e.senses ? `<ol class="senses">${e.senses.map(s=>`<li>${s}</li>`).join('')}</ol>` : '';
+  const gloss = e.gloss ? `<div class="gloss">${e.gloss}</div>`
+    : `<div class="gloss"><span style="color:var(--muted)">未收录（真实实现走服务端词典，见 #11；查不到时怎么提示是本票要看的）</span></div>`;
+  const meta = [ e.freq ? `常见度 ${'★'.repeat(e.freq)}${'☆'.repeat(Math.max(0,3-e.freq))}（mock）` : null,
+                 b.lang==='ja' ? '声调槽位：数据源未定（JMdict 之外还要另找，暂不显示）' : null ].filter(Boolean).join(' · ');
+  return `
+  <div class="lookup">
+    <div class="word">${raw}${e.pos?`<span class="pos">${e.pos}</span>`:''}</div>
+    ${e.reading?`<div class="reading">${e.reading}</div>`:''}
+    <div class="tabs">
+      <button data-ltab="dict" aria-pressed="true">词条</button>
+      <button data-ltab="ai" aria-pressed="false">AI 解释 <span class="kbd">a</span></button>
+    </div>
+    <div data-pane="dict">${gloss}${senses}${ctxHTML?`<div class="ctx">${ctxHTML}</div>`:''}</div>
+    <div data-pane="ai" hidden>
+      <div class="aiout" data-aiout hidden></div>
+      <button class="ai" data-ai>问 AI（结合上下文）</button>
+    </div>
+    <div class="audiorow">
+      <button data-say="word">▶ 这个词</button>
+      <button data-say="sentence">▶ 整句</button>
+    </div>
+    <div class="actions">
+      <button data-known>${known?'✓ 已认识 · 点一下取消':'标记为「我认识」'}</button>
+      <button data-close>关闭</button>
+    </div>
+    ${meta?`<div class="meta">${meta}</div>`:''}
+    <div class="note">本地词典 · 离线可查（无账号，词状态只存本机）；AI 是第二层（#15 未定）。${b.lang==='ja'?'原型用 Intl.Segmenter 粗切词，真实实现是服务端 Sudachi + JMdict。':''}</div>
+  </div>`;
+}
+function setLookupTab(root, tab){
+  root.querySelectorAll('[data-ltab]').forEach(b=>b.setAttribute('aria-pressed', b.dataset.ltab===tab));
+  root.querySelectorAll('[data-pane]').forEach(p=>p.hidden = p.dataset.pane!==tab);
+}
+function askAI(root, e, raw, sourceEl){
+  const pane = root.querySelector('[data-pane="ai"]'); if(!pane) return;
+  setLookupTab(root, 'ai');
+  const out = pane.querySelector('[data-aiout]');
+  out.hidden = false; out.innerHTML = '<span class="spinner"></span> 问 AI…';
+  const ctx = contextSentence(sourceEl);
+  const ai = e.ai || `（mock）结合这一句：「${(ctx?ctx.textContent:'').slice(0,60)}…」中，「${raw}」在这里的意思是……`;
+  setTimeout(()=>{ out.textContent = ai; }, 1100);
+}
 function showCard(raw, sourceEl, anchor){
   const b = BOOKS[S.book];
   const key = lookupKey(b, raw);
-  const e = entryFor(b, key);
-  const ctx = contextSentence(sourceEl);
-  const ctxHTML = ctx ? ctx.textContent.replace(raw, '⟨'+raw+'⟩') : '';
-  const reading = e && e.reading ? `<div class="reading">${e.reading}</div>` : '';
-  const pos = e && e.pos ? `<span class="pos">${e.pos}</span>` : '';
-  const gloss = e ? e.gloss : '<span style="color:var(--muted)">未收录（真实实现走服务端词典，见 #11；查不到时怎么提示是本票要看的）</span>';
-  const ai = (e && e.ai) || `（mock）结合这一句：「${(ctx?ctx.textContent:'').slice(0,60)}…」中，「${raw}」在这里的意思是……`;
-  const html = `
-    <div class="word">${raw}${pos}</div>
-    ${reading}
-    <div class="gloss">${gloss}</div>
-    ${ctxHTML?`<div class="ctx">${ctxHTML}</div>`:''}
-    <div class="actions">
-      <button class="ai" data-ai>问 AI（结合上下文）</button>
-      <button data-close>关闭</button>
-    </div>
-    <div class="note">本地词典 · 离线可查；AI 是按需的第二层（#15 未定）。${b.lang==='ja'?'原型用 Intl.Segmenter 粗切词，真实实现是服务端 Sudachi + JMdict。':''}</div>`;
+  const html = cardHTML(raw, sourceEl);
   const wide = window.matchMedia('(min-width:820px)').matches;
   const host = (S.variant===2 && wide) ? $('#panelBody')
              : (S.variant===3 && wide) ? $('#pop')
@@ -437,18 +499,21 @@ function showCard(raw, sourceEl, anchor){
     $('#sheet').classList.toggle('modal', S.variant===3 && !wide);
     $('#sheet').classList.add('open'); $('#scrim').classList.add('open');
   }
-  (host===$('#pop') ? $('#pop') : host).querySelectorAll('[data-close]').forEach(b=>b.onclick=closeCard);
-  (host===$('#pop') ? $('#pop') : host).querySelectorAll('[data-ai]').forEach(b=>b.onclick=()=>{
-    b.outerHTML = '<span class="spinner"></span> 问 AI…';
-    setTimeout(()=>{
-      const box = (host===$('#pop') ? $('#pop') : host).querySelector('[data-ai]')?.parentElement;
-      const out = document.createElement('div'); out.className='aiout'; out.textContent = ai;
-      (box||host).appendChild(out);
-    }, 1100);
+  S.card = { raw, key, el: sourceEl, host };
+  host.querySelectorAll('[data-ltab]').forEach(x=>x.onclick=()=>setLookupTab(host, x.dataset.ltab));
+  host.querySelectorAll('[data-close]').forEach(x=>x.onclick=closeCard);
+  host.querySelectorAll('[data-known]').forEach(x=>x.onclick=()=>{
+    const on = !isKnown(key); setKnown(key, on);
+    showCard(raw, sourceEl, anchor);
+    toast(on ? `已标为「我认识」：${raw}` : `取消标记：${raw}`);
   });
+  host.querySelectorAll('[data-say]').forEach(x=>x.onclick=()=>{
+    toast(x.dataset.say==='word' ? `▶ 朗读「${raw}」— 走现有 /tts（原型只提示）` : '▶ 朗读整句 — 走现有 /tts（原型只提示）');
+  });
+  host.querySelectorAll('[data-ai]').forEach(x=>x.onclick=()=>askAI(host, entryFor(b, key)||{}, raw, sourceEl));
   updateState();
 }
-function closeCard(){ $('#sheet').classList.remove('open'); $('#scrim').classList.remove('open'); $('#pop').hidden = true; }
+function closeCard(){ $('#sheet').classList.remove('open'); $('#scrim').classList.remove('open'); $('#pop').hidden = true; S.card = null; }
 $('#scrim').onclick = closeCard;
 $('#sheet').querySelector('.handle').onclick = closeCard;
 
@@ -470,7 +535,11 @@ article.addEventListener('pointerdown', e=>{
   longFired = false;
   pressTimer = setTimeout(()=>{
     longFired = true;
-    if(wordEl){ showCard(wordEl.textContent, wordEl, {el:wordEl}); if(navigator.vibrate) navigator.vibrate(15); }
+    if(wordEl){
+      wordEl.classList.add('grab'); setTimeout(()=>wordEl.classList.remove('grab'), 700);
+      showCard(wordEl.textContent, wordEl, {el:wordEl});
+      if(navigator.vibrate) navigator.vibrate(15);
+    }
   }, 420);
 });
 article.addEventListener('pointermove', e=>{
@@ -485,6 +554,18 @@ article.addEventListener('click', e=>{
   if(S.gesture==='tap' && w){ showCard(w.textContent, w, {el:w}); return; }
   const s = e.target.closest('.s');
   if(s) play(+s.dataset.i);
+});
+/* 悬停查词（借 Migaku 的 hover lookup：停留一下才弹，扫过不触发） */
+let hoverTimer=null, hoverEl=null;
+article.addEventListener('pointerover', e=>{
+  if(S.gesture!=='hover' || e.pointerType==='touch') return;
+  const w = e.target.closest('.w');
+  if(!w || w===hoverEl) return;
+  hoverEl = w; clearTimeout(hoverTimer);
+  hoverTimer = setTimeout(()=>{ if(!(S.card && S.card.el===w)) showCard(w.textContent, w, {el:w}); }, 320);
+});
+article.addEventListener('pointerout', e=>{
+  if(e.target.closest('.w')){ clearTimeout(hoverTimer); hoverEl=null; }
 });
 document.addEventListener('mouseup', ()=>{
   if(S.gesture!=='select') return;
@@ -542,7 +623,38 @@ function setGesture(g){
 }
 document.querySelectorAll('#proto [data-v]').forEach(b=>b.onclick=()=>setVariant(+b.dataset.v));
 document.querySelectorAll('#proto [data-g]').forEach(b=>b.onclick=()=>setGesture(b.dataset.g));
+function setHL(h){
+  app.dataset.hl = h;
+  document.querySelectorAll('#proto [data-h]').forEach(b=>b.setAttribute('aria-pressed', b.dataset.h===h));
+}
+document.querySelectorAll('#proto [data-h]').forEach(b=>b.onclick=()=>setHL(b.dataset.h));
 $('#resetPos').onclick = ()=>{ localStorage.removeItem('lb-proto-pos'); toast('已清除阅读位置（刷新试试）'); };
+
+/* 快捷键：借 Migaku「hotkeys for everything」的桌面思路 */
+if(window.matchMedia('(hover:hover)').matches) $('#keysHint').hidden = false;
+function nextUnknown(){
+  const b = BOOKS[S.book];
+  const ws = [...article.querySelectorAll('.w')].filter(el=>!KNOWN[b.id+'|'+el.dataset.w]);
+  if(!ws.length){ toast('这一段没有未标记的词了'); return; }
+  const i = S.card && S.card.el ? ws.indexOf(S.card.el) : -1;
+  const el = ws[(i+1)%ws.length];
+  el.scrollIntoView({block:'center'});
+  showCard(el.textContent, el, {el});
+}
+document.addEventListener('keydown', e=>{
+  if(e.target.matches('textarea,input')) return;
+  const n = sentences().length;
+  if(e.altKey && S.card && (e.key==='1'||e.key==='2')){ setLookupTab(S.card.host, e.key==='1'?'dict':'ai'); return; }
+  switch(e.key){
+    case ' ': e.preventDefault(); play(S.sel); break;
+    case 'ArrowRight': e.preventDefault(); selectSentence(S.sel=(S.sel+1)%n); updateState(); break;
+    case 'ArrowLeft': e.preventDefault(); selectSentence(S.sel=(S.sel-1+n)%n); updateState(); break;
+    case 'Escape': closeCard(); break;
+    case 'k': if(S.card){ const on=!isKnown(S.card.key); setKnown(S.card.key, on); showCard(S.card.raw, S.card.el, {el:S.card.el}); toast(on?`已标为「我认识」：${S.card.raw}`:`取消标记：${S.card.raw}`); } break;
+    case 'a': if(S.card) askAI(S.card.host, entryFor(BOOKS[S.book], S.card.key)||{}, S.card.raw, S.card.el); break;
+    case 'n': nextUnknown(); break;
+  }
+});
 
 /* ---------------------------------------------------------------- startup */
 scroller.addEventListener('scroll', ()=>{ updateProgress(); savePos(); }, {passive:true});
@@ -554,7 +666,8 @@ scroller.addEventListener('scroll', ()=>{ updateProgress(); savePos(); }, {passi
   if(qBook){ const bi = BOOKS.findIndex(b=>b.id===qBook); if(bi>=0){ S.book=bi; S.chapter = +(q.get('ch')||0); } }
   else if(p && BOOKS[p.book]){ S.book=p.book; S.chapter=p.chapter; }
   const v = +(q.get('v')||1); setVariant([1,2,3].includes(v)?v:1);
-  setGesture(q.get('g') || (matchMedia('(hover:none)').matches ? 'hold' : 'select'));
+  setGesture(q.get('g') || (matchMedia('(hover:none)').matches ? 'hold' : 'hover'));
+  setHL(q.get('hl') || 'underline');
   renderChapter(p ? p.top : 0);
   if(p){ S.restored = true; setTimeout(()=>toast(`已回到上次阅读位置：${BOOKS[S.book].chapters[S.chapter].title}`), 400); }
   updateState();
