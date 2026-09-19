@@ -12,7 +12,7 @@ DEST=/srv/learnbuddy
 # reader.js 404 incident). Stale files are harmless; restart makes the new
 # code live atomically.
 rsync -az --exclude 'cache/' --exclude '__pycache__/' web/ "${HOST}:${DEST}/web/"
-rsync -az --exclude 'cache/' --exclude '__pycache__/' server/ "${HOST}:${DEST}/server/"
+rsync -az --exclude 'cache/' --exclude 'data/' --exclude '__pycache__/' server/ "${HOST}:${DEST}/server/"
 
 # Stamp the deployed sw.js with a fresh value so the browser detects a new
 # Service Worker on every deploy (byte change -> re-install -> fresh shell

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""LearnBuddy backend — one stdlib-only process serving:
+"""LearnBuddy backend — one process (stdlib; SudachiPy only on the
+Japanese epub-parse path) serving:
 
 - GET /tts?text&voice&rate → audio/mpeg (MP3): Azure Speech primary when
   AZURE_SPEECH_KEY is set (ADR 0005), Edge TTS as the automatic fallback
@@ -26,6 +27,7 @@ import re
 import sys
 import threading
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote_plus, urlparse
 
@@ -43,11 +45,16 @@ from edge_tts import (
     CODE_UPSTREAM_UNAVAILABLE,
     validate_request,
 )
+from library import ApiError, Library
 import reading
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_STATIC_DIR = os.path.join(REPO_ROOT, "web")
 DEFAULT_CACHE_DIR = os.path.join(REPO_ROOT, "server", "cache")
+DEFAULT_DATA_DIR = os.path.join(REPO_ROOT, "server", "data")
+
+# JSON request bodies stay small; epubs have their own (Library) limit.
+JSON_BODY_LIMIT = 1024 * 1024
 
 # Upstream throttling: research showed ~1s bursts get intermittent 403s even
 # with a legal Edge UA; ~3s spacing is stable (research/edge-tts-browser.md).
@@ -131,13 +138,41 @@ STATUS_BY_CODE = {
     CODE_NETWORK_FAILURE: 502,
     CODE_UPSTREAM_TIMEOUT: 504,
     CODE_UNKNOWN: 500,
+    # Book / Profile API (ADR 0007).
+    "bad_request": 400,
+    "profile_not_found": 404,
+    "book_not_found": 404,
+    "chapter_not_found": 404,
+    "entry_not_found": 404,
+    "not_found": 404,
+    "too_large": 413,
+    "not_epub": 415,
+    "parse_failed": 422,
 }
+
+# Hand-written routes: path says what, `?profile=` says who is asking.
+ROUTE_TABLE = (
+    ("GET", re.compile(r"^/profiles$"), "api_profiles"),
+    ("GET", re.compile(r"^/state$"), "api_get_state"),
+    ("PUT", re.compile(r"^/state$"), "api_put_state"),
+    ("GET", re.compile(r"^/history$"), "api_get_history"),
+    ("POST", re.compile(r"^/history$"), "api_post_history"),
+    ("PATCH", re.compile(r"^/history/(?P<entry>[^/]+)$"), "api_patch_history"),
+    ("DELETE", re.compile(r"^/history/(?P<entry>[^/]+)$"), "api_delete_history"),
+    ("GET", re.compile(r"^/words$"), "api_get_words"),
+    ("POST", re.compile(r"^/words$"), "api_post_words"),
+    ("GET", re.compile(r"^/books$"), "api_list_books"),
+    ("POST", re.compile(r"^/books$"), "api_add_book"),
+    ("GET", re.compile(r"^/books/(?P<book>[^/]+)$"), "api_get_book"),
+    ("GET", re.compile(r"^/books/(?P<book>[^/]+)/chapters/(?P<chapter>[^/]+)$"), "api_get_chapter"),
+    ("PUT", re.compile(r"^/books/(?P<book>[^/]+)/position$"), "api_put_position"),
+)
 
 
 class TtsServer:
     def __init__(self, static_dir=DEFAULT_STATIC_DIR, cache_dir=DEFAULT_CACHE_DIR,
                  synthesizer=None, azure=None, pace_interval=PACE_INTERVAL_SECONDS,
-                 sleep=time.sleep, normalizer=None):
+                 sleep=time.sleep, normalizer=None, data_dir=None, library=None):
         self.static_dir = os.path.abspath(static_dir)
         self.cache = AudioCache(cache_dir)
         self.synthesizer = synthesizer or EdgeTtsSynthesizer()
@@ -147,6 +182,7 @@ class TtsServer:
         self.normalizer = normalizer or reading.normalize_ja
         self.pace_gate = PaceGate(interval=pace_interval, sleep=sleep)
         self.synthesis_lock = threading.Lock()
+        self.library = library if library is not None else Library(data_dir or DEFAULT_DATA_DIR)
 
     def _use_azure(self):
         """Azure is primary exactly when it holds a subscription key."""
@@ -205,8 +241,154 @@ class TtsHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/tts":
             self._handle_tts(parsed)
-        else:
-            self._handle_static(parsed.path)
+            return
+        if self._dispatch_api("GET", parsed):
+            return
+        self._handle_static(parsed.path)
+
+    def do_POST(self):
+        self._handle_write("POST")
+
+    def do_PUT(self):
+        self._handle_write("PUT")
+
+    def do_PATCH(self):
+        self._handle_write("PATCH")
+
+    def do_DELETE(self):
+        self._handle_write("DELETE")
+
+    def _handle_write(self, method):
+        if not self._dispatch_api(method, urlparse(self.path)):
+            self._json_error(404, "not_found")
+
+    # -- Book / Profile API (ADR 0007) -------------------------------------
+
+    def _dispatch_api(self, method, parsed):
+        route = None
+        for route_method, pattern, handler_name in ROUTE_TABLE:
+            if route_method != method:
+                continue
+            match = pattern.match(parsed.path)
+            if match:
+                route = (handler_name, match.groupdict())
+                break
+        if route is None:
+            return False
+        handler_name, groups = route
+        params = _parse_query(parsed.query)
+        try:
+            getattr(self, handler_name)(params, groups)
+        except ApiError as error:
+            self._json_error(STATUS_BY_CODE.get(error.code, 500), error.code)
+        except Exception:  # pragma: no cover - unexpected bugs
+            traceback.print_exc()
+            self._json_error(500, CODE_UNKNOWN)
+        return True
+
+    def _library(self):
+        return self.server.app.library
+
+    def api_profiles(self, params, groups):
+        self._json_response(200, self._library().profiles())
+
+    def api_get_state(self, params, groups):
+        self._json_response(200, self._library().get_state(params.get("profile", "")))
+
+    def api_put_state(self, params, groups):
+        body = self._read_json()
+        self._json_response(200, self._library().put_state(params.get("profile", ""), body))
+
+    def api_get_history(self, params, groups):
+        self._json_response(200, self._library().get_history(params.get("profile", "")))
+
+    def api_post_history(self, params, groups):
+        body = self._read_json()
+        self._json_response(200, self._library().add_history(params.get("profile", ""), body.get("text")))
+
+    def api_patch_history(self, params, groups):
+        body = self._read_json()
+        self._json_response(200, self._library().patch_history(
+            params.get("profile", ""), groups["entry"], body))
+
+    def api_delete_history(self, params, groups):
+        self._library().delete_history(params.get("profile", ""), groups["entry"])
+        self._no_content()
+
+    def api_get_words(self, params, groups):
+        self._json_response(200, self._library().get_words(params.get("profile", "")))
+
+    def api_post_words(self, params, groups):
+        body = self._read_json()
+        self._json_response(200, self._library().update_words(
+            params.get("profile", ""), body.get("add"), body.get("remove")))
+
+    def api_list_books(self, params, groups):
+        self._json_response(200, self._library().list_books(params.get("profile", "")))
+
+    def api_add_book(self, params, groups):
+        # Raw epub body (no multipart), size-capped before it is read.
+        data = self._read_body(self._library().max_upload_bytes)
+        duplicate, payload = self._library().add_book(
+            params.get("profile", ""), params.get("name", ""), data)
+        if duplicate:
+            payload["duplicate"] = True
+        self._json_response(200 if duplicate else 201, payload)
+
+    def api_get_book(self, params, groups):
+        self._json_response(200, self._library().get_book(groups["book"]))
+
+    def api_get_chapter(self, params, groups):
+        self._json_response(200, self._library().get_chapter(
+            groups["book"], groups["chapter"], params.get("profile", "")))
+
+    def api_put_position(self, params, groups):
+        body = self._read_json()
+        self._library().put_position(
+            groups["book"], params.get("profile", ""), body.get("chapter"), body.get("sentence"))
+        self._no_content()
+
+    # -- request / response helpers ----------------------------------------
+
+    def _read_body(self, limit):
+        header = self.headers.get("Content-Length")
+        if header is None:
+            raise ApiError("bad_request", "Content-Length is required")
+        try:
+            length = int(header)
+        except ValueError as error:
+            raise ApiError("bad_request", "invalid Content-Length") from error
+        if length < 0:
+            raise ApiError("bad_request", "invalid Content-Length")
+        if length > limit:
+            # The unread body would desync keep-alive; close instead.
+            self.close_connection = True
+            raise ApiError("too_large", f"body exceeds {limit} bytes")
+        return self.rfile.read(length) if length else b""
+
+    def _read_json(self):
+        raw = self._read_body(JSON_BODY_LIMIT)
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as error:
+            raise ApiError("bad_request", "body is not valid JSON") from error
+        if not isinstance(body, dict):
+            raise ApiError("bad_request", "body must be a JSON object")
+        return body
+
+    def _json_response(self, status, payload):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _no_content(self):
+        self.send_response(204)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
 
     # -- /tts --------------------------------------------------------------
 
@@ -274,10 +456,11 @@ def _parse_query(query):
     return params
 
 
-def run(static_dir=DEFAULT_STATIC_DIR, cache_dir=DEFAULT_CACHE_DIR, port=8000, host="0.0.0.0"):
-    app = TtsServer(static_dir=static_dir, cache_dir=cache_dir)
+def run(static_dir=DEFAULT_STATIC_DIR, cache_dir=DEFAULT_CACHE_DIR, port=8000, host="0.0.0.0",
+        data_dir=DEFAULT_DATA_DIR):
+    app = TtsServer(static_dir=static_dir, cache_dir=cache_dir, data_dir=data_dir)
     httpd = AppServer((host, port), TtsHandler, app)
-    print(f"LearnBuddy serving {static_dir} on http://{host}:{port} (cache: {cache_dir})", flush=True)
+    print(f"LearnBuddy serving {static_dir} on http://{host}:{port} (cache: {cache_dir}, data: {data_dir})", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -290,8 +473,10 @@ def main(argv=None):
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--static", default=DEFAULT_STATIC_DIR)
     parser.add_argument("--cache-dir", default=DEFAULT_CACHE_DIR)
+    parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
     args = parser.parse_args(argv)
-    run(static_dir=args.static, cache_dir=args.cache_dir, port=args.port, host=args.host)
+    run(static_dir=args.static, cache_dir=args.cache_dir, port=args.port, host=args.host,
+        data_dir=args.data_dir)
 
 
 if __name__ == "__main__":

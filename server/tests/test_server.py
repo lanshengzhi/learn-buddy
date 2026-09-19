@@ -51,7 +51,7 @@ class FakeAzureSynthesizer:
 
 class ServerHarness:
     def __init__(self, static_dir, fake_synth, pace_interval=0.01, sleep=time.sleep,
-                 normalizer=None, azure=None):
+                 normalizer=None, azure=None, data_dir=None, library_obj=None):
         self.tmp = tempfile.mkdtemp()
         self.cache_dir = os.path.join(self.tmp, "cache")
         # Explicit fake providers so tests never depend on the developer's
@@ -65,6 +65,8 @@ class ServerHarness:
             pace_interval=pace_interval,
             sleep=sleep,
             normalizer=normalizer,
+            data_dir=data_dir or os.path.join(self.tmp, "data"),
+            library=library_obj,
         )
 
         self.httpd = AppServer(("127.0.0.1", 0), TtsHandler, server_obj)
@@ -72,13 +74,17 @@ class ServerHarness:
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
 
-    def get(self, path):
+    def request(self, method, path, body=None, headers=None):
         url = f"http://127.0.0.1:{self.port}{path}"
+        request = urllib.request.Request(url, data=body, method=method, headers=headers or {})
         try:
-            with urllib.request.urlopen(url, timeout=5) as response:
+            with urllib.request.urlopen(request, timeout=10) as response:
                 return response.status, response.headers, response.read()
         except urllib.error.HTTPError as error:
             return error.code, error.headers, error.read()
+
+    def get(self, path):
+        return self.request("GET", path)
 
     def close(self):
         self.httpd.shutdown()

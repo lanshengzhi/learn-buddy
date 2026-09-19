@@ -74,7 +74,7 @@ Learner records live **only on the server**, keyed by **Profile**: reading posit
 
 ## Books and lookup
 
-- **Library (书库)** — The family's shared set of uploaded **Books** (`/srv/learnbuddy/books/`). Not a bookshelf: no covers, categories, search, or parallel reading.
+- **Library (书库)** — The family's shared set of uploaded **Books** (`<data-dir>/books/`; the data dir defaults to `server/data/` and is set with `--data-dir`). Not a bookshelf: no covers, categories, search, or parallel reading.
 - **Book** — One uploaded epub in the **Library**, with its own **Chapter** structure and a **Reading position** per **Profile**. The app opens one Book at a time; reopening the app returns to the last one opened by the active Profile.
 - **Chapter** — A section of a **Book**, taken from the epub's own navigation; the unit of reading, playback, and progress.
 - **Reading position** — Where in a **Book** a **Profile** last stopped, stored on the server as a chapter plus sentence index (with the sentence's opening text for re-anchoring after a re-parse), so it follows that Profile across devices; the app returns there when the Book is opened again.

@@ -11,8 +11,9 @@ the design that survived real listening.
 Edge TTS cannot take reading hints: it rejects custom SSML (no `<phoneme>`,
 no `<ruby>`, no `<sub>`), and parenthesized furigana (`今日（きょう）`) is read
 as ordinary text. The only lever before synthesis is **text rewriting**:
-replace kanji with their kana reading. LearnBuddy's backend is stdlib-only
-(ADR 0001) and serves the whole family; per-request LLM calls were rejected as
+replace kanji with their kana reading. LearnBuddy's backend keeps its TTS
+path stdlib-only (ADR 0001; epub parsing adds SudachiPy, ADR 0007) and serves
+the whole family; per-request LLM calls were rejected as
 the primary path for latency, cost, privacy, and offline-replay reasons.
 
 Two rounds of deployed normalization were **rejected by ear**:
@@ -75,9 +76,11 @@ native, dictionary-accented pronunciation.
   identity — safe by default.
 - The server cache key format is versioned (normalized text + version); old
   cache files become orphans, which is harmless (speed layer only).
-- Deployment no longer requires sudachipy for the hot path (kanji-default
-  needs no analyzer); it remains a reference for future layers and may be
-  dropped from the service venv if it stays unused.
+- The TTS hot path does not require sudachipy (kanji-default needs no
+  analyzer). Upload-time epub parsing does (issue #16): `server/textseg.py`
+  feeds Japanese sentences to SudachiPy for a chapter's word lengths and ruby
+  annotations, so a deployment that parses Japanese books installs
+  `server/requirements.txt`.
 - The original mispronunciation pain is addressed by growing
   `JA_REPLACE_READINGS` from real usage, and the learner-override / BYOK
   layers (ADR "Considered Options") remain the long-term answer for proper

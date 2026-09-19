@@ -60,7 +60,7 @@ changes that calculus, and Edge stays as a zero-cost automatic fallback.
   was that reading and accent could not be fixed together; the curated list
   would keep trading accent for reading on every entry.
 - **Azure Speech SDK** (`azure-cognitiveservices-speech`) — rejected: the
-  backend is stdlib-only (ADR 0001); the REST endpoint is a POST with SSML and
+  TTS path is stdlib-only (ADR 0001); the REST endpoint is a POST with SSML and
   needs no SDK.
 - **Other commercial TTS (Google Cloud, ElevenLabs, OpenAI)** — rejected:
   Azure was chosen because it reuses the exact neural voices the family

@@ -6,6 +6,9 @@ __pycache__/
 # Server audio cache (runtime artifact)
 server/cache/
 
+# Server learner records / Library (runtime artifact)
+server/data/
+
 # Python bytecode
 server/__pycache__/
 server/tests/__pycache__/

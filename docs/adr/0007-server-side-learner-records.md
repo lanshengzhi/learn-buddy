@@ -6,14 +6,14 @@ LearnBuddy began as a device-local app: History, word states, rate/loop preferen
 
 - Four family members (爸爸 / 妈妈 / 大女儿 / 小女儿) share the same devices and the same LAN-only server (claw). The effort explicitly excludes an account system: no login, no per-user isolation, no privacy boundary inside the family.
 - Cross-device continuation is a main-line need (tablet in the evening, PC the next day), and two people reading the same book must not overwrite each other's place.
-- The book library is already server-side (`/srv/learnbuddy/books/`); the earlier decision kept per-book reading positions out of the device.
+- The book library is already server-side (a data dir on claw); the earlier decision kept per-book reading positions out of the device.
 - The device audio cache was kept alive by a reference count against History entry ids (`audio-ownership.js`). Once History moves to the server, that bookkeeping loses its local anchor.
 - PWA and Tailscale are retired: the app is plain-HTTP LAN-only, so relying on the network for every read is acceptable.
 - A real book's largest chapter measured 72k characters / 1,738 sentences / 44k tokens; a whole chapter renders in 70 ms, so the client can receive a chapter whole.
 
 ## Decisions
 
-- **The server is the only store.** Reading positions, History, word states (我认识), rate preset, loop mode and the last opened book live under `/srv/learnbuddy/state/<profile>/` and `books/<sha256>/positions/<profile>.json`. The browser keeps exactly one key — `lb.profile`, the reader using this device — plus the Service Worker's static shell cache. No IndexedDB, no learner state in `localStorage`.
+- **The server is the only store.** Reading positions, History, word states (我认识), rate preset, loop mode and the last opened book live under `<data-dir>/state/<profile>/` and `<data-dir>/books/<sha256>/positions/<profile>.json`. The data dir defaults to `server/data/` next to the deployed server (`--data-dir` overrides it; `server/data/` is gitignored and excluded from deploy, so records survive deployments). The browser keeps exactly one key — `lb.profile`, the reader using this device — plus the Service Worker's static shell cache. No IndexedDB, no learner state in `localStorage`.
 - **Profile (档案) is who is reading, not an account.** No password, no login, no authorization, no data isolation: anyone may switch to anyone. The list is a read-only server-side `profiles.json` whose structure does not assume exactly four profiles (stable slug ids, editable names). A new device must pick a Profile before entering; switching re-loads that Profile's book, position, preferences and History, and stops playback. The Profile travels per request (`?profile=<id>`), never in a session or cookie.
 - **Position is per (Book, Profile)**, stored as a chapter plus sentence index, with the sentence's opening text for re-anchoring after a re-parse — cross-device for one person, collision-free between people. Writes are debounced 1–2 s, with an immediate write on chapter change or page unload.
 - **Word states are per Profile and book-independent** — one vocabulary per person, keyed by language plus dictionary-normalized form, so a word marked 我认识 in one book is quiet in the next.
