@@ -57,7 +57,7 @@ Learner records live **only on the server**, keyed by **Profile**: reading posit
 ## TTS contract
 
 - **TTS exception** — The error vocabulary shared by backend and frontend: `empty_text`, `text_too_long`, `invalid_voice`, `invalid_rate`, `upstream_unavailable`, `upstream_timeout`, `network_failure`, `unknown`. The backend returns these as JSON error codes; the frontend maps them to learner-facing strings.
-- **API error** — The same `{"error": code}` shape for the Book and Profile endpoints: `bad_request`, `profile_not_found`, `book_not_found`, `chapter_not_found`, `entry_not_found`, `not_found`, `too_large`, `not_epub`, `parse_failed` (plus `unknown` and the **TTS exception** codes).
+- **API error** — The same `{"error": code}` shape for the Book and Profile endpoints: `bad_request`, `profile_not_found`, `book_not_found`, `chapter_not_found`, `entry_not_found`, `not_found`, `too_large`, `not_epub`, `parse_failed`, and for the lookup / AI layer `lookup_unavailable`, `ai_not_configured`, `ai_upstream_error`, `ai_timeout` (plus `network_failure` and `unknown`; ADR 0008).
 
 ## Learners and records
 
