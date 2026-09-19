@@ -1,9 +1,7 @@
 # 《红楼梦》生僻字实测：字集、字体、词典与 TTS 覆盖
 
 Ticket: [#10](https://github.com/lanshengzhi/learn-buddy/issues/10) · Part of #9 · branch `research/rare-hanzi` · file `research/rare-hanzi.md`
-Status: **all six required items measured**; item 5 is measured on **Edge TTS only** — no Azure Speech key
-exists in this environment, so the Azure half of item 5 is **documented from Microsoft's own reference, not
-empirically verified** (see §5.4 and §5.5). No application code, `CONTEXT.md` or map body was touched.
+Status: **all six required items measured**. Ticket #10 has since been **closed as out-of-scope** — the MVP was re-scoped mid-flight to **English/Japanese books only**, so the Chinese/红楼梦 work is **deferred** and this file is a forward resource (see §9, which separates what is reusable later from what is deferred). Item 5 is measured on **Edge TTS only** — no Azure Speech key exists in this environment, so the Azure half of item 5 is **documented from Microsoft's own reference, not empirically verified** (see §5.4 and §5.5). No application code, `CONTEXT.md` or map body was touched.
 
 ---
 
@@ -696,13 +694,30 @@ tone-only cases. The MP3s are on disk for that.
 
 ---
 
-## 9. Handoff note (kept separate, per supervisor instruction)
+## 9. Handoff note — reusable later vs deferred (kept separate, per supervisor instruction)
 
-This ticket is **out of scope for the current map** (MVP = English/Japanese books). The findings that are
-reusable *now* for the map are: the sentence-splitting hazards already visible in a real Chinese book
-(`．` U+FF0E as the terminator; `□` placeholders; mixed traditional/simplified text), the confirmation
-that **Edge TTS cannot take SSML hints** (so any Chinese reading fix must be a text/substitution table,
-exactly like ADR 0004/0005), and the font conclusion (subset, never ship the full CJK face).
-The Chinese-book-specific follow-ups — Azure key + `<phoneme alphabet="sapi">` verification, a `zh`
-replacement table seeded from §5.2, and an Ext B font supplement — should live on a separate
-future-Chinese-book ticket, not on #9.
+This ticket is **out of scope for the current map**: the MVP was re-scoped mid-flight to
+**English/Japanese books only**, and the Chinese/红楼梦 work is deferred to a future effort. Ticket #10
+was closed as out-of-scope; this file is a **forward resource**, not an input to the current map.
+
+**A. Reusable later regardless of the language work (do not re-derive these):**
+
+| finding | where | why it keeps its value |
+|---|---|---|
+| Font coverage + **subsetting** numbers and method | §3 | The full-face → per-book-subset result (24.5 MB → 1.09 MB WOFF2, −94 %) and the "never ship a full CJK face" conclusion generalise to any CJK content, Chinese or not. |
+| The **character-set / out-of-scope measurement method** | §1, §2 | The pipeline (block distribution with real counts, GB2312 enumeration, 规范字表 cross-check, traditional-form disambiguation) is reusable as-is for any future corpus; §2 also documents the trap of quoting "24.5 % out of scope" without the traditional-form filter. |
+| **Azure `<phoneme alphabet="sapi">` injection** (documented path + the §5.5 verification recipe) | §5.4, §5.5 | The zh-CN `sapi` pinyin phone set, the `sapi`-not-`pinyin` gotcha, the HTTP-400-on-bad-`ph` behaviour, and the 15-minute verification script are exactly what a future Chinese effort needs; ADR 0005's mechanism already supports it. |
+| **Edge TTS cannot take SSML hints** (measured: `<phoneme>` → 0 bytes, no error) | §5.3 | A hard constraint on *any* language path that uses the Edge fallback — it re-confirms ADR 0004/0005 with a reproducer, and it is not Chinese-specific. |
+| Bundled **dictionaries**: CC-CEDICT + Unihan `kMandarin` coverage | §4 | Unihan `kMandarin` is 100 % over the book; the residual CC-CEDICT gap (9 chars) is a ready-made "not found" test corpus. |
+
+**B. Deferred with the Chinese work (do not build now):**
+
+* The **生僻字 / rare-char lookup path** — dictionary cards for out-of-scope characters, the ≤14-character
+  CC-CEDICT gap handling, and the "缺字怎么告诉学习者" prompt from map #9's *Not yet specified*.
+* The **`zh` TTS replacement table** seeded from the nine measured misreads in §5.2 (Edge-side fix), and
+  the Azure key + `<phoneme alphabet="sapi">` **empirical** verification (§5.4 is documented only).
+* The **Ext B font supplement** (Plangothic subset, 904 B) — only a future Chinese edition needs it.
+* The traditional-text concerns: `zh-TW`/`zh-HK` voice choice, 繁→简 bearing, and the `．` U+FF0E
+  sentence-terminator hazard.
+* The Chinese-book-specific follow-up list should live on a **separate future-Chinese-book ticket**, not
+  on map #9.
