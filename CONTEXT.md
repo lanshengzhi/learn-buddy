@@ -62,7 +62,8 @@ Learner records live **only on the server**, keyed by **Profile**: reading posit
 ## Learners and records
 
 - **Profile (档案)** — One member of the family using the app: *who is reading*. No password, no login, no data isolation — anyone may switch to anyone. The active Profile decides whose **Reading position**, **History**, **Word state** and playback preferences apply. The list is a read-only `profiles.json` on the server; the device remembers the last choice in `lb.profile`. (ADR 0007)
-- **Word state** — A **Profile**'s mark on a word from a **Lookup**: 我认识 or unmarked, two states only. Stored per Profile and shared across all **Books**; words marked 我认识 are the ones the 标生词 underline leaves alone.
+- **Word state** — A **Profile**'s mark on a word from a **Lookup**: 我认识 or unmarked, two states only. Stored per Profile and shared across all **Books**, keyed by the resolved **Word key** (`ja:食べる`, `en:run`), so inflected forms share one state; words marked 我认识 are the ones the 生词提示 machinery leaves alone.
+- **Word key** — The storage identity of a looked-up word: the language prefix plus the **dictionary form** the lookup resolved to (`ja:食べる`, `en:run`). Inflected surfaces (食べられ, running) resolve to the same key, so a mark made on one form applies to all of them.
 
 ## History
 
@@ -78,7 +79,9 @@ Learner records live **only on the server**, keyed by **Profile**: reading posit
 - **Book** — One uploaded epub in the **Library**, with its own **Chapter** structure and a **Reading position** per **Profile**. The app opens one Book at a time; reopening the app returns to the last one opened by the active Profile.
 - **Chapter** — A section of a **Book**, taken from the epub's own navigation; the unit of reading, playback, and progress.
 - **Reading position** — Where in a **Book** a **Profile** last stopped, stored on the server as a chapter plus sentence index (with the sentence's opening text for re-anchoring after a re-parse), so it follows that Profile across devices; the app returns there when the Book is opened again.
-- **Lookup (查义)** — An on-demand query on a character or word for its reading and meaning. The AI context explanation is an optional layer *on top of* a Lookup, not a Lookup itself.
+- **Lookup (查义)** — An on-demand query on a character or word for its reading and meaning, served by the server over build-time SQLite dictionaries (`en`/`ja` + kanji fallback under `<data-dir>/dicts/`; ADR 0008). The card first shows the local dictionary entry (读音 + senses); the AI context explanation is an optional layer *on top of* it (separate tab), never part of the Lookup itself. A word missing from the dictionary is a card state (「词典里没有这个词。」), never a hidden failure.
+- **生词提示 (word highlight)** — The Reading surface's optional vocabulary cue over a **Chapter**'s word spans, in three modes: 标生词 (default; a soft underline on words present in the dictionary and not yet marked 我认识), 淡已认识 (known words dimmed), and 关. Presence is resolved by lazy batch checks for visible sentences (`POST /lookup/check`), never by baking at upload time; the mode is a per-Profile preference (`/state`'s `hl_mode`).
+- **Dictionary form resolution** — The server's lookup chain (ADR 0008): English resolves by lowercase exact match with mechanical lemma fallback (suffix strips); Japanese walks surface → normalized → dictionary form → reading (Sudachi) with a single-kanji KANJIDIC2 fallback; other languages miss for now (zh stays reserved for the future Chinese effort).
 - **生僻字 (rare character)** — A Han character outside everyday literacy, which common fonts and ordinary dictionaries may not cover. The quality bar for this project is that such characters can be *displayed*, *looked up*, and *read aloud*.
 
 ## Terms we avoid
