@@ -389,38 +389,65 @@ function updateState(){
   $('#protoState').textContent = `V${S.variant} · ${{hover:'悬停',hold:'长按',select:'划选',tap:'点词'}[S.gesture]} · 已认识 ${knownCount} 词 · ${b.title} · ${ch.title} · 句 ${S.sel+1}/${sentences().length}${S.restored?' · 已恢复位置':''}`;
 }
 
-/* ------------------------------------------------------------- playback */
+/* -------------------------------------------------- playback（真音频：同源 /tts） */
+const VOICE = { en:'en-US-AriaNeural', ja:'ja-JP-KeitaNeural', zh:'zh-CN-YunxiNeural' };
+const RATE_SSML = { '0.5×':'-50%', '0.75×':'-25%', '1×':'+0%', '1.25×':'+25%', '1.5×':'+50%', '2×':'+100%' };
+const RATE_ORDER = ['0.5×','0.75×','1×','1.25×','1.5×','2×'];
 const playbar = { play:$('#play'), prev:$('#prev'), next:$('#next'), rate:$('#rate'), loop:$('#loop') };
+function ttsURL(text){
+  return '/tts?' + new URLSearchParams({ text, voice: VOICE[BOOKS[S.book].lang] || VOICE.en, rate: RATE_SSML[S.rate] || '+0%' });
+}
+function audioAvailable(){ return location.protocol !== 'file:'; }
+/* 一次性发音（词/句）：走现有 /tts，不进播放状态机 */
+function say(text){
+  if(!audioAvailable()){ toast('原型要经 tts_server 提供才有声音（file:// 下静音）'); return; }
+  const a = new Audio(ttsURL(text));
+  a.onerror = ()=>toast('音频加载失败（/tts 不可用）');
+  a.play().catch(()=>toast('播放被浏览器拦截，再点一次'));
+}
 function play(i){
   const list = sentences();
   if(!list.length) return;
-  if(S.playing === i){ stopPlayback(); return; }
+  if(S.audio && S.playing === i && !S.audio.paused){ S.audio.pause(); S.paused = true; playbar.play.textContent = '▶'; return; }
+  if(S.audio && S.playing === i && S.paused){ S.audio.play().catch(()=>{}); S.paused = false; playbar.play.textContent = '⏸'; return; }
   stopPlayback();
   S.sel = i; selectSentence(i);
-  S.playing = i; updateState();
   const el = list[i];
-  el.classList.add('loading');
-  el.scrollIntoView({block:'center'});
-  setTimeout(()=>{
-    el.classList.remove('loading'); el.classList.add('playing');
-    playbar.play.textContent = '⏸';
-    const dur = Math.min(4200, Math.max(1100, el.textContent.length*70));
-    S._timer = setTimeout(()=>{
-      el.classList.remove('playing');
-      S.playing = null; playbar.play.textContent = '▶';
-      if(S.loop==='all' || S.loop==='one') play(S.loop==='one' ? i : (i+1)%list.length);
-    }, dur);
-  }, 650);
+  el.classList.add('loading'); el.scrollIntoView({block:'center'});
+  S.playing = i; S.paused = false; updateState();
+  if(!audioAvailable()){ /* file:// 降级为假播放，便于看版式 */
+    setTimeout(()=>{ el.classList.remove('loading'); el.classList.add('playing'); playbar.play.textContent='⏸';
+      S._timer = setTimeout(()=>{ el.classList.remove('playing'); S.playing=null; playbar.play.textContent='▶';
+        if(S.loop==='all') play((i+1)%list.length); else if(S.loop==='one') play(i); }, 1500); }, 300);
+    return;
+  }
+  const a = new Audio(ttsURL(el.textContent.trim()));
+  S.audio = a;
+  a.onplaying = ()=>{ el.classList.remove('loading'); el.classList.add('playing'); playbar.play.textContent = '⏸'; };
+  a.onended = ()=>{ const one = S.loop==='one', all = S.loop==='all';
+    el.classList.remove('playing','loading'); S.audio=null; S.playing=null; playbar.play.textContent='▶';
+    if(all) play((i+1)%list.length); else if(one) play(i); };
+  a.onerror = ()=>{ el.classList.remove('playing','loading'); S.audio=null; S.playing=null; playbar.play.textContent='▶';
+    toast('音频加载失败（/tts 不可用）'); };
+  a.play().catch(()=>{ el.classList.remove('loading'); S.audio=null; S.playing=null; playbar.play.textContent='▶';
+    toast('播放被浏览器拦截，再点一次'); });
 }
 function stopPlayback(){
   clearTimeout(S._timer);
+  if(S.audio){ S.audio.onended = null; S.audio.onerror = null; S.audio.pause(); S.audio = null; }
   sentences().forEach(el=>el.classList.remove('playing','loading'));
-  S.playing = null; playbar.play.textContent = '▶';
+  S.playing = null; S.paused = false; playbar.play.textContent = '▶';
 }
-playbar.play.onclick = ()=> S.playing!=null ? stopPlayback() : play(S.sel);
+playbar.play.onclick = ()=> play(S.sel);
 playbar.prev.onclick = ()=>{ const n=sentences().length; const i=(S.sel-1+n)%n; selectSentence(S.sel=i); play(i); };
 playbar.next.onclick = ()=>{ const n=sentences().length; const i=(S.sel+1)%n; selectSentence(S.sel=i); play(i); };
-playbar.rate.onclick = ()=>{ S.rate = {'1×':'1.25×','1.25×':'0.75×','0.75×':'1×'}[S.rate]; playbar.rate.textContent=S.rate; toast('语速 '+S.rate+'（原型：只改数值）'); };
+playbar.rate.onclick = ()=>{
+  const wasPlaying = S.playing != null;
+  const i = S.playing != null ? S.playing : S.sel;
+  S.rate = RATE_ORDER[(RATE_ORDER.indexOf(S.rate)+1) % RATE_ORDER.length];
+  playbar.rate.textContent = S.rate;
+  if(wasPlaying){ stopPlayback(); play(i); } else toast('语速 ' + S.rate);
+};
 playbar.loop.onclick = ()=>{ S.loop = {Off:'all',all:'one',one:'Off'}[S.loop]; playbar.loop.textContent=S.loop; };
 
 /* --------------------------------------------------------------- lookup */
@@ -508,7 +535,10 @@ function showCard(raw, sourceEl, anchor){
     toast(on ? `已标为「我认识」：${raw}` : `取消标记：${raw}`);
   });
   host.querySelectorAll('[data-say]').forEach(x=>x.onclick=()=>{
-    toast(x.dataset.say==='word' ? `▶ 朗读「${raw}」— 走现有 /tts（原型只提示）` : '▶ 朗读整句 — 走现有 /tts（原型只提示）');
+    const sent = contextSentence(sourceEl);
+    const text = x.dataset.say==='word' ? raw : (sent ? sent.textContent.trim() : raw);
+    say(text);
+    toast(x.dataset.say==='word' ? `▶ 朗读「${raw}」` : '▶ 朗读整句');
   });
   host.querySelectorAll('[data-ai]').forEach(x=>x.onclick=()=>askAI(host, entryFor(b, key)||{}, raw, sourceEl));
   updateState();

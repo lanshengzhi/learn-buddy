@@ -2,14 +2,16 @@
 
 **这不是产品代码。** 用来回答「一本书进到 LearnBuddy 之后长什么样、怎么用」；结论记入 ticket 后，原型留在这条 throwaway 分支上即可。
 
-## 跑起来
+## 跑起来（用真实 TTS 后端提供静态文件，这样才有声音）
 
 ```bash
-cd prototype/reader-lookup-ui
-python3 -m http.server 8099
+cd <repo root>
+python3 server/tts_server.py --port 8099 --static <this dir>
 # PC:    http://localhost:8099/
 # 平板:  http://192.168.3.15:8099/   （与本机同网时）
 ```
+
+用 `python3 -m http.server` 也能开，但那样**没有声音**（`/tts` 不在同源）。
 
 URL 参数：`?v=1|2|3` 版式、`?g=hover|hold|select|tap` 查词手势、`?hl=underline|dim|off` 生词提示、`?book=alice|kumo&ch=0` 选书。
 
@@ -27,9 +29,16 @@ URL 参数：`?v=1|2|3` 版式、`?g=hover|hold|select|tap` 查词手势、`?hl=
 - **快捷键（PC）**：`空格` 播放 · `←/→` 换句 · `k` 我认识 · `n` 下一个生词 · `a` 问 AI · `Esc` 关闭。
 - **续读**：滚动后刷新回到原位（localStorage）；「清除阅读位置」重置。
 
-## 已知的假东西（别当真）
+## 声音（真的，不是 mock）
 
-- 播放是假的：只有高亮、加载圈与计时，没有音频；▶这个词/▶整句只弹提示。
+- 点句子 = 真朗读：前端按 `text|voice|rate` 打 `/tts`（Edge TTS；claw 上还没配 Azure key，`azure_tts.py` 那条路未启用）。
+- 语速六档 0.5×–2× 映射 SSML rate，换档会重新合成当前句；Loop（Off / 全部 / 单句）真的续播；暂停/继续是真的。
+- 卡片上的 ▶这个词 / ▶整句 也是真合成（词级音频）。
+- 第一次请求 1–3 秒（上游 ~3s 节奏），之后命中服务端缓存会很快；`X-Cache` 头能看到 hit/miss。
+- `file://` 打开时没有声音，退回假播放，只为看版式。
+
+## 其他已知的假东西
+
 - 词典是内嵌样例词条（英/日两个样本），未收录的词显示「未收录」——有意暴露的状态。
 - 日文切词用 `Intl.Segmenter` 粗切；真实实现应为服务端 Sudachi + JMdict（见 #11）。
 - 常见度是 mock；日文声调暂无数据源，只留槽位。
