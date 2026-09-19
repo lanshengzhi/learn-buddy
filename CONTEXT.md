@@ -66,6 +66,14 @@ LearnBuddy is a Web/PWA language reader for the whole family, deployed on claw: 
 - **Delete history entry** — The learner-initiated removal of a History entry from the History list. The entry disappears immediately; its audio cache entries are purged except those still referenced by other live entries.
 - **History trimming** — Automatic removal of the oldest non-favorite History entries when the 50-entry maximum is exceeded, without learner action. **Favorite** entries are never trimmed. A trimmed entry's audio is purged exactly as if the entry had been deleted.
 
+## Books and lookup
+
+- **Book** — One uploaded epub, with its own **Chapter** structure and **Reading position**. The app opens one Book at a time; reopening the app returns to the last one opened.
+- **Chapter** — A section of a **Book**, taken from the epub's own navigation; the unit of reading, playback, and progress.
+- **Reading position** — Where in a **Book** the learner last stopped; the app returns there when the Book is opened again.
+- **Lookup (查义)** — An on-demand query on a character or word for its reading and meaning. The AI context explanation is an optional layer *on top of* a Lookup, not a Lookup itself.
+- **生僻字 (rare character)** — A Han character outside everyday literacy, which common fonts and ordinary dictionaries may not cover. The quality bar for this project is that such characters can be *displayed*, *looked up*, and *read aloud*.
+
 ## Terms we avoid
 
 | Avoid | Use instead | Why |
