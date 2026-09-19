@@ -63,7 +63,7 @@ class TestState(LibraryTestCase):
     def test_defaults(self):
         self.assertEqual(
             self.library.get_state("dad"),
-            {"rate_preset": "Normal", "loop_mode": "All", "lastBook": None},
+            {"rate_preset": "Normal", "loop_mode": "All", "lastBook": None, "hl_mode": "underline"},
         )
 
     def test_partial_update_merges_and_persists(self):
@@ -75,12 +75,12 @@ class TestState(LibraryTestCase):
         self.assertEqual(response["loop_mode"], "One")
         self.assertEqual(
             self.read_json("state", "dad", "prefs.json"),
-            {"rate_preset": "Half", "loop_mode": "One", "lastBook": "abc"},
+            {"rate_preset": "Half", "loop_mode": "One", "lastBook": "abc", "hl_mode": "underline"},
         )
 
     def test_unknown_keys_are_ignored(self):
         response = self.library.put_state("dad", {"nonsense": 1})
-        self.assertEqual(response, {"rate_preset": "Normal", "loop_mode": "All", "lastBook": None})
+        self.assertEqual(response, {"rate_preset": "Normal", "loop_mode": "All", "lastBook": None, "hl_mode": "underline"})
 
     def test_wrong_types_are_bad_request(self):
         for patch in ({"rate_preset": 1}, {"loop_mode": []}, {"lastBook": 3}):

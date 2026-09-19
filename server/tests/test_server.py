@@ -57,6 +57,7 @@ class ServerHarness:
         # Explicit fake providers so tests never depend on the developer's
         # AZURE_SPEECH_KEY; default = no key → Edge primary.
         azure_synth = azure if azure is not None else FakeAzureSynthesizer(key=None)
+        self.data_dir = data_dir or os.path.join(self.tmp, "data")
         server_obj = TtsServer(
             static_dir=static_dir,
             cache_dir=self.cache_dir,
@@ -65,7 +66,7 @@ class ServerHarness:
             pace_interval=pace_interval,
             sleep=sleep,
             normalizer=normalizer,
-            data_dir=data_dir or os.path.join(self.tmp, "data"),
+            data_dir=self.data_dir,
             library=library_obj,
         )
 

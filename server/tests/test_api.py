@@ -99,12 +99,12 @@ class TestStateEndpoint(ApiTestCase):
     def test_defaults_then_partial_update(self):
         status, _, body = self.get("/state?profile=dad")
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body), {"rate_preset": "Normal", "loop_mode": "All", "lastBook": None})
+        self.assertEqual(json.loads(body), {"rate_preset": "Normal", "loop_mode": "All", "lastBook": None, "hl_mode": "underline"})
 
         status, headers, body = self.json_request("PUT", "/state?profile=dad", {"rate_preset": "Half"})
         self.assertEqual(status, 200)
         self.assertEqual(headers["Cache-Control"], "no-store")
-        self.assertEqual(json.loads(body), {"rate_preset": "Half", "loop_mode": "All", "lastBook": None})
+        self.assertEqual(json.loads(body), {"rate_preset": "Half", "loop_mode": "All", "lastBook": None, "hl_mode": "underline"})
 
     def test_missing_and_unknown_profiles(self):
         status, _, body = self.get("/state")
@@ -317,3 +317,113 @@ class TestRouting(ApiTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLookupEndpoints(ApiTestCase):
+    """Lookup dictionary endpoints (ADR 0008). The harness's data dir has no
+    dicts by default — the degrade path is tested first, then fixture dbs."""
+
+    def get_url(self, path, params):
+        from urllib.parse import urlencode
+
+        return self.get(f"{path}?{urlencode(params)}")
+
+    def test_lookup_without_dicts_degrades(self):
+        status, _, body = self.get_url("/lookup", {"lang": "ja", "word": "何か"})
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body)["error"], "lookup_unavailable")
+
+    def test_check_without_dicts_reports_all_misses(self):
+        status, _, body = self.json_request("POST", "/lookup/check", {"lang": "ja", "words": ["何か"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["words"], {"何か": None})
+
+    def test_check_rejects_bad_bodies(self):
+        status, _, body = self.json_request("POST", "/lookup/check", {"lang": "ja", "words": "not-a-list"})
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "bad_request")
+        status, _, body = self.json_request("POST", "/lookup/check", {"lang": "ja", "words": ["w"] * 201})
+        self.assertEqual(status, 413)
+        self.assertEqual(json.loads(body)["error"], "too_large")
+
+    def _with_fixture_dicts(self):
+        try:
+            from test_dicts import _write_db
+        except ImportError:  # `python -m unittest tests.test_api` from server/
+            from tests.test_dicts import _write_db
+
+        dicts_dir = os.path.join(self.harness.data_dir, "dicts")
+        os.makedirs(dicts_dir, exist_ok=True)
+        _write_db(
+            os.path.join(dicts_dir, "en.sqlite"),
+            [
+                "CREATE TABLE ecdict (word TEXT PRIMARY KEY, phonetic TEXT, translation TEXT, definition TEXT)",
+                "INSERT INTO ecdict VALUES ('run', 'rʌn', '跑', 'move fast')",
+            ],
+        )
+        _write_db(
+            os.path.join(dicts_dir, "ja.sqlite"),
+            [
+                "CREATE TABLE forms (text TEXT NOT NULL, entry INTEGER NOT NULL)",
+                "CREATE TABLE entries (id INTEGER PRIMARY KEY, reading TEXT)",
+                "CREATE TABLE senses (entry INTEGER NOT NULL, ord INTEGER NOT NULL, pos TEXT, gloss TEXT)",
+                "INSERT INTO entries VALUES (1, 'たべる')",
+                "INSERT INTO forms VALUES ('食べる', 1), ('たべる', 1)",
+                "INSERT INTO senses VALUES (1, 0, 'v1', 'to eat')",
+            ],
+        )
+
+    def test_lookup_resolves_en_and_ja(self):
+        self._with_fixture_dicts()
+        status, _, body = self.get_url("/lookup", {"lang": "en", "word": "run"})
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["key"], "en:run")
+        self.assertEqual(payload["reading"], "rʌn")
+        self.assertEqual(payload["senses"][0]["gloss"], "跑")
+
+        status, _, body = self.get_url("/lookup", {"lang": "ja", "word": "食べる"})
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["key"], "ja:食べる")
+        self.assertEqual(payload["reading"], "たべる")
+
+    def test_lookup_misses_are_404(self):
+        self._with_fixture_dicts()
+        status, _, body = self.get_url("/lookup", {"lang": "en", "word": "qwertyuiop"})
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body)["error"], "entry_not_found")
+        status, _, body = self.get_url("/lookup", {"lang": "fr", "word": "bonjour"})
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body)["error"], "entry_not_found")
+
+
+class TestAiEndpoint(ApiTestCase):
+    def test_not_configured_degrades(self):
+        self.harness.httpd.app.ai.url = ""
+        status, _, body = self.json_request("POST", "/ai", {"word": "run", "sentence": "I run.", "language": "en"})
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body)["error"], "ai_not_configured")
+
+    def test_bad_request(self):
+        status, _, body = self.json_request("POST", "/ai", {"sentence": "I run.", "language": "en"})
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "bad_request")
+
+    def test_upstream_answer_is_proxied(self):
+        class FakeResponse:
+            def read(self):
+                return json.dumps({"text": "to run fast"}).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        proxy = self.harness.httpd.app.ai
+        proxy.url = "http://ai.test"
+        proxy._urlopen = lambda request, timeout: {"text": "to run fast"}
+        status, _, body = self.json_request("POST", "/ai", {"word": "run", "sentence": "I run.", "language": "en"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"text": "to run fast"})

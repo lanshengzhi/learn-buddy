@@ -31,7 +31,9 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote_plus, urlparse
 
+from ai import AiProxy
 from azure_tts import AzureTtsSynthesizer
+from dicts import Dicts, LookupUnavailable, MAX_CHECK_WORDS
 from edge_tts import (
     EdgeTtsError,
     EdgeTtsSynthesizer,
@@ -148,6 +150,11 @@ STATUS_BY_CODE = {
     "too_large": 413,
     "not_epub": 415,
     "parse_failed": 422,
+    # Lookup / AI layer (ADR 0008).
+    "lookup_unavailable": 503,
+    "ai_not_configured": 503,
+    "ai_upstream_error": 502,
+    "ai_timeout": 504,
 }
 
 # Hand-written routes: path says what, `?profile=` says who is asking.
@@ -166,6 +173,9 @@ ROUTE_TABLE = (
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)$"), "api_get_book"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/chapters/(?P<chapter>[^/]+)$"), "api_get_chapter"),
     ("PUT", re.compile(r"^/books/(?P<book>[^/]+)/position$"), "api_put_position"),
+    ("GET", re.compile(r"^/lookup$"), "api_lookup"),
+    ("POST", re.compile(r"^/lookup/check$"), "api_lookup_check"),
+    ("POST", re.compile(r"^/ai$"), "api_ai"),
 )
 
 
@@ -183,6 +193,8 @@ class TtsServer:
         self.pace_gate = PaceGate(interval=pace_interval, sleep=sleep)
         self.synthesis_lock = threading.Lock()
         self.library = library if library is not None else Library(data_dir or DEFAULT_DATA_DIR)
+        self.dicts = Dicts(os.path.join(data_dir or DEFAULT_DATA_DIR, "dicts"))
+        self.ai = AiProxy(os.path.join(data_dir or DEFAULT_DATA_DIR, "ai-cache"))
 
     def _use_azure(self):
         """Azure is primary exactly when it holds a subscription key."""
@@ -348,6 +360,55 @@ class TtsHandler(BaseHTTPRequestHandler):
             groups["book"], params.get("profile", ""), body.get("chapter"), body.get("sentence"))
         self._no_content()
 
+    # -- lookup / AI (ADR 0008) --------------------------------------------
+
+    def api_lookup(self, params, groups):
+        word = params.get("word", "")
+        lang = _lookup_lang(params.get("lang", ""))
+        try:
+            entry = self._lookup(lang, word)
+        except LookupUnavailable as error:
+            self._json_error(503, "lookup_unavailable")
+            return
+        if entry is None:
+            self._json_error(404, "entry_not_found")
+            return
+        self._json_response(200, {"lang": lang, "word": word, **entry})
+
+    def api_lookup_check(self, params, groups):
+        body = self._read_json()
+        lang = _lookup_lang(body.get("lang", ""))
+        words = body.get("words")
+        if not isinstance(words, list) or any(not isinstance(word, str) for word in words):
+            raise ApiError("bad_request", "words must be a list of strings")
+        if len(words) > MAX_CHECK_WORDS:
+            raise ApiError("too_large", f"check accepts at most {MAX_CHECK_WORDS} words")
+        self._json_response(200, {"words": self.server.app.dicts.check(lang, words)})
+
+    def api_ai(self, params, groups):
+        body = self._read_json()
+        word, sentence, language = body.get("word"), body.get("sentence"), body.get("language")
+        if not isinstance(word, str) or not isinstance(language, str) \
+                or (sentence is not None and not isinstance(sentence, str)):
+            raise ApiError("bad_request", "word and language must be strings")
+        try:
+            answer = self.server.app.ai.explain(word, sentence or "", language)
+        except ValueError as error:
+            raise ApiError("bad_request", str(error)) from error
+        except LookupError as error:
+            code = str(error)
+            self._json_error(STATUS_BY_CODE.get(code, 502), code)
+            return
+        self._json_response(200, answer)
+
+    def _lookup(self, lang, word):
+        dicts = self.server.app.dicts
+        if lang == "en":
+            return dicts.lookup_en(word)
+        if lang == "ja":
+            return dicts.lookup_ja(word)
+        return None
+
     # -- request / response helpers ----------------------------------------
 
     def _read_body(self, limit):
@@ -444,6 +505,14 @@ class TtsHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):  # quieter logs
         sys.stderr.write("%s - - [%s] %s\n" % (self.address_string(), time.strftime("%Y-%m-%d %H:%M:%S"), fmt % args))
+
+
+def _lookup_lang(lang):
+    """MVP lookup languages; zh stays reserved for the future Chinese effort."""
+    lang = (lang or "").strip().lower()
+    if lang.startswith("zh"):
+        return "zh"
+    return lang
 
 
 def _parse_query(query):
