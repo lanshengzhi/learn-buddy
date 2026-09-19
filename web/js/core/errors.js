@@ -35,3 +35,53 @@ const ERROR_MESSAGES = {
 export function ttsErrorToMessage(code) {
   return ERROR_MESSAGES[code] ?? ERROR_MESSAGES[TTS_ERROR_CODES.UNKNOWN];
 }
+
+/**
+ * API error — the same `{"error": code}` shape for the Book and Profile
+ * endpoints (ADR 0007) and the lookup / AI layer (ADR 0008):
+ * `bad_request`, `profile_not_found`, `book_not_found`, `chapter_not_found`,
+ * `entry_not_found`, `not_found`, `too_large`, `not_epub`, `parse_failed`,
+ * `lookup_unavailable`, `ai_not_configured`, `ai_upstream_error`, `ai_timeout`
+ * (plus `unknown` and the TTS exception codes).
+ */
+export const API_ERROR_CODES = Object.freeze({
+  BAD_REQUEST: 'bad_request',
+  PROFILE_NOT_FOUND: 'profile_not_found',
+  BOOK_NOT_FOUND: 'book_not_found',
+  CHAPTER_NOT_FOUND: 'chapter_not_found',
+  ENTRY_NOT_FOUND: 'entry_not_found',
+  NOT_FOUND: 'not_found',
+  TOO_LARGE: 'too_large',
+  NOT_EPUB: 'not_epub',
+  PARSE_FAILED: 'parse_failed',
+  LOOKUP_UNAVAILABLE: 'lookup_unavailable',
+  AI_NOT_CONFIGURED: 'ai_not_configured',
+  AI_UPSTREAM_ERROR: 'ai_upstream_error',
+  AI_TIMEOUT: 'ai_timeout',
+});
+
+/** Learner-facing wording per API error code. */
+const API_ERROR_MESSAGES = {
+  [API_ERROR_CODES.BAD_REQUEST]: '请求格式不对。',
+  [API_ERROR_CODES.PROFILE_NOT_FOUND]: '找不到这个档案——刷新后重新选择。',
+  [API_ERROR_CODES.BOOK_NOT_FOUND]: '书不存在或已失效。',
+  [API_ERROR_CODES.CHAPTER_NOT_FOUND]: '章节不存在。',
+  [API_ERROR_CODES.ENTRY_NOT_FOUND]: '词典里没有这个词。',
+  [API_ERROR_CODES.NOT_FOUND]: '请求的内容不存在。',
+  [API_ERROR_CODES.TOO_LARGE]: '文件太大（epub 上限 100MB）。',
+  [API_ERROR_CODES.NOT_EPUB]: '这不是一个 epub 文件。',
+  [API_ERROR_CODES.PARSE_FAILED]: '这本 epub 无法解析。',
+  [API_ERROR_CODES.LOOKUP_UNAVAILABLE]: '词典还没有就绪。',
+  [API_ERROR_CODES.AI_NOT_CONFIGURED]: '未配置 AI 解释。',
+  [API_ERROR_CODES.AI_UPSTREAM_ERROR]: 'AI 服务暂时不可用。',
+  [API_ERROR_CODES.AI_TIMEOUT]: 'AI 响应超时，可在本卡内重试。',
+};
+
+/**
+ * Maps a backend error code to the learner-facing string.
+ * @param {string} code — one of API_ERROR_CODES
+ * @returns {string}
+ */
+export function apiErrorToMessage(code) {
+  return API_ERROR_MESSAGES[code] ?? API_ERROR_MESSAGES[API_ERROR_CODES.NOT_FOUND] ?? '请求的内容不存在。';
+}

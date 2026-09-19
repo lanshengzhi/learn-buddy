@@ -54,7 +54,9 @@ class Dicts:
                 path = os.path.join(self.dicts_dir, filename)
                 connection = None
                 if os.path.isfile(path):
-                    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+                    # check_same_thread=False: the HTTP server serves requests
+                    # on rotating threads; queries are serialized by self._lock.
+                    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
                     connection.execute("PRAGMA mmap_size=134217728")
                 self._connections[filename] = connection
             return self._connections[filename]
@@ -76,10 +78,11 @@ class Dicts:
         if db is None:
             raise LookupUnavailable("en dictionary is not built")
         for candidate in [word] + _en_lemma_candidates(word):
-            row = db.execute(
-                "SELECT word, phonetic, translation, definition FROM ecdict WHERE word = ?",
-                (candidate,),
-            ).fetchone()
+            with _QUERY_LOCK:
+                row = db.execute(
+                    "SELECT word, phonetic, translation, definition FROM ecdict WHERE word = ?",
+                    (candidate,),
+                ).fetchone()
             if row is not None:
                 return {
                     "key": f"en:{row[0]}",
@@ -99,9 +102,10 @@ class Dicts:
         if db is None:
             raise LookupUnavailable("ja dictionary is not built")
         for key in _ja_keys(text):
-            hit = db.execute(
-                "SELECT entry FROM forms WHERE text = ? LIMIT 1", (key,)
-            ).fetchone()
+            with _QUERY_LOCK:
+                hit = db.execute(
+                    "SELECT entry FROM forms WHERE text = ? LIMIT 1", (key,)
+                ).fetchone()
             if hit is None:
                 continue
             entry = _ja_entry(db, hit[0])
@@ -118,9 +122,10 @@ class Dicts:
         db = self._db("kanji.sqlite")
         if db is None:
             return None
-        row = db.execute(
-            "SELECT onyomi, kunyomi, meanings FROM kanji WHERE kanji = ?", (text,)
-        ).fetchone()
+        with _QUERY_LOCK:
+            row = db.execute(
+                "SELECT onyomi, kunyomi, meanings FROM kanji WHERE kanji = ?", (text,)
+            ).fetchone()
         if row is None:
             return None
         onyomi, kunyomi, meanings = row
@@ -159,6 +164,8 @@ class Dicts:
 
 _KANJI_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _EN_WORD_RE = re.compile(r"[a-z][a-z'’\-]*")
+# Module-level query lock: _ja_entry is a free function (no Dicts self).
+_QUERY_LOCK = threading.Lock()
 
 
 def _gloss_senses(block):
@@ -216,12 +223,13 @@ def _ja_keys(surface):
 
 
 def _ja_entry(db, entry_id):
-    rows = db.execute(
-        "SELECT pos, gloss FROM senses WHERE entry = ? ORDER BY ord", (entry_id,)
-    ).fetchall()
+    with _QUERY_LOCK:
+        rows = db.execute(
+            "SELECT pos, gloss FROM senses WHERE entry = ? ORDER BY ord", (entry_id,)
+        ).fetchall()
+        reading = db.execute("SELECT reading FROM entries WHERE id = ?", (entry_id,)).fetchone()
     if not rows:
         return None
-    reading = db.execute("SELECT reading FROM entries WHERE id = ?", (entry_id,)).fetchone()
     return {
         "key": None,  # filled by the caller: the matched chain key
         "matched": None,

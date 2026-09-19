@@ -1,15 +1,18 @@
 /**
  * Browser smoke test (dev machine only — needs the backend running and
  * Playwright's chromium installed). Exercises the real single-page UI flow
- * (ADR 0003): the reading-on-top / editor-at-the-bottom layout at every
- * width, the touch focus takeover with the one-line collapsed band, the
- * collapsible editor with a mouse, history favorites, and offline replay.
+ * (ADR 0003): the profile gate, the reading-on-top / editor-at-the-bottom
+ * layout at every width, the touch focus takeover with the one-line
+ * collapsed band, the collapsible editor with a mouse, history favorites,
+ * and — for the book surface (ticket #19) — upload → read → lookup → resume
+ * where you left off.
  *
- * Usage:  python3 server/tts_server.py --port 8123 &
+ * Usage:  LEARNBUDDY_DATA=$(mktemp -d) python3 server/tts_server.py --port 8123 --data-dir $LEARNBUDDY_DATA &
  *         node scripts/browser-smoke.mjs
  */
 
 import { createRequire } from 'module';
+import { readFileSync } from 'fs';
 
 let chromium;
 try {
@@ -23,9 +26,10 @@ try {
 
 const BASE = process.env.LEARNBUDDY_BASE ?? 'http://127.0.0.1:8123';
 const PASSAGE = 'Hello world. This is a test sentence. How are you today?';
+const FIXTURE = process.env.LEARNBUDDY_EPUB ?? 'server/tests/fixtures/nav.epub';
 
 const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_PATH ?? '/home/lansy/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome',
+  executablePath: process.env.CHROMIUM_PATH ?? '/usr/bin/google-chrome-stable',
 });
 const errors = [];
 function watch(page) {
@@ -35,7 +39,39 @@ function watch(page) {
   page.on('pageerror', (err) => errors.push(String(err)));
 }
 
-// ==== Mobile (touch) flow: single page, focus takeover, one-line band ======
+/** Boots a page through the profile gate (or skips it when already chosen). */
+async function open(context, url = BASE + '/') {
+  const page = await context_page(context);
+  async function context_page(context) {
+    const page = await context.newPage();
+    watch(page);
+    await page.goto(url, { waitUntil: 'networkidle' });
+    await page.waitForSelector('#text-input');
+    return page;
+  }
+  return page;
+}
+
+async function passGate(page, name = '爸爸') {
+  const gateVisible = await page.locator('#profile-gate').isVisible().catch(() => false);
+  if (!gateVisible) return;
+  await page.locator('.gate-choice', { hasText: name }).first().click();
+  await page.waitForFunction(() => document.getElementById('profile-gate').hidden);
+  await page.waitForFunction(() => document.body.dataset.ready === '1');
+}
+
+
+/** Cycles the loop toggle until 关 (the server default is loop-all). */
+async function loopToOff(page) {
+  for (let i = 0; i < 3; i++) {
+    const label = await page.getAttribute('#loop-button', 'aria-label');
+    if (label === '循环：关') return;
+    await page.click('#loop-button');
+  }
+  throw new Error('loop toggle did not reach 关 within three clicks');
+}
+
+// ==== Mobile (touch) flow: profile gate, single page, focus takeover ========
 // Touch emulation makes `(pointer: coarse)` match, so the takeover path runs.
 const mobileCtx = await browser.newContext({
   viewport: { width: 390, height: 844 },
@@ -46,8 +82,16 @@ const page = await mobileCtx.newPage();
 watch(page);
 
 try {
-  // 1. One page at phone size: reading area on top, editor expanded on empty text.
+  // 0. First run on a fresh device: the profile gate asks 谁在读？
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await page.waitForSelector('#profile-gate:not([hidden])');
+  console.log('profile gate shown on first run');
+  await page.click('.gate-choice');
+  await page.waitForFunction(() => document.getElementById('profile-gate').hidden);
+  await page.waitForFunction(() => document.body.dataset.ready === '1');
+  console.log('gate resolved, app booted');
+
+  // 1. One page at phone size: reading area on top, editor expanded on empty text.
   await page.waitForSelector('#text-input');
   console.log('update disabled on empty:', await page.isDisabled('#update-button'));
   console.log('reading area visible at 390px:', await page.locator('#reading-area').isVisible());
@@ -82,7 +126,9 @@ try {
 
   // 4. Tap a sentence → audio plays; the play icon toggles via the hidden
   //    ATTRIBUTE contract (SVGElement has no hidden IDL; CSS matches the
-  //    attribute), and returns to play when playback ends.
+  //    attribute), and returns to play when playback ends. Loop starts at the
+  //    server default (loop-all); the sentence must END here, so go to 关 first.
+  await loopToOff(page);
   await page.locator('.sentence-list li').nth(1).click();
   await page.waitForFunction(() => document.querySelector('.sentence-list li.playing') !== null, { timeout: 15000 });
   const iconAttrs = await page.evaluate(() => ({
@@ -101,7 +147,7 @@ try {
   console.log('play icon back to play after ended:', iconRestored);
   if (!iconRestored) throw new Error(`icon did not restore: ${JSON.stringify(endedAttrs)}`);
 
-  // 5. Loop toggle cycles to Loop-all; rate set to 2×.
+  // 5. Loop toggle cycles to Loop-all (from 关); rate set to 2×.
   await page.click('#loop-button');
   console.log('loop after one toggle:', await page.getAttribute('#loop-button', 'aria-label'));
   const loopAttrs = await page.evaluate(() => ({
@@ -155,40 +201,19 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.history-list li').length === 0);
   console.log('history entry deleted');
 
-  // 10. Service worker registers (localhost is a secure context).
-  await page.goto(BASE + '/', { waitUntil: 'networkidle' });
+  // 10. Service worker registers (localhost is a secure context); it caches
+  //     only the app shell — no audio cache exists (ADR 0007).
+  await page.reload({ waitUntil: 'networkidle' });
   await page.waitForFunction(async () => {
     if (!('serviceWorker' in navigator)) return false;
     const reg = await navigator.serviceWorker.getRegistration();
     return reg?.active != null;
   }, { timeout: 10000 });
-  console.log('service worker active');
-
-  // 11. Offline replay: play a sentence, go offline, reload, replay from cache.
-  await page.fill('#text-input', 'Offline replay sentence.');
-  await page.click('#update-button');
-  await page.waitForSelector('.sentence-list li');
-  // Loop persists and step 5 left it on 全部; cycle back to 关 (Off → All →
-  // One → Off) so the sentence ends naturally.
-  for (let i = 0; i < 3; i++) {
-    const label = await page.getAttribute('#loop-button', 'aria-label');
-    if (label === '循环：关') break;
-    await page.click('#loop-button');
+  const cacheNames = await page.evaluate(async () => (await caches.keys()));
+  console.log('service worker active; caches:', JSON.stringify(cacheNames));
+  if (cacheNames.some((name) => name.includes('audio'))) {
+    throw new Error(`audio cache should be retired (ADR 0007): ${JSON.stringify(cacheNames)}`);
   }
-  await page.locator('.sentence-list li').first().click();
-  await page.waitForFunction(() => document.querySelector('.sentence-list li.playing') !== null, { timeout: 15000 });
-  await page.waitForFunction(() => document.querySelector('.sentence-list li.playing') === null, { timeout: 30000 });
-  console.log('online replay finished');
-
-  await page.context().setOffline(true);
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.fill('#text-input', 'Offline replay sentence.');
-  await page.click('#update-button');
-  await page.waitForSelector('.sentence-list li');
-  await page.locator('.sentence-list li').first().click();
-  await page.waitForFunction(() => document.querySelector('.sentence-list li.playing') !== null, { timeout: 15000 });
-  console.log('offline replay OK (audio served from SW cache)');
-  await page.context().setOffline(false);
 } finally {
   await mobileCtx.close();
 }
@@ -200,6 +225,10 @@ watch(dpage);
 
 try {
   await dpage.goto(BASE + '/', { waitUntil: 'networkidle' });
+  // The desktop context shares no storage with the mobile one → gate again.
+  // Server-side records are per-Profile, so each context gets its own —
+  // browser contexts no longer isolate History the way IndexedDB did.
+  await passGate(dpage, '妈妈');
 
   // 12. Same one page at 1440px: editor expanded on empty text, reading visible.
   await dpage.waitForFunction(() => document.body.classList.contains('editor-expanded'));
@@ -291,6 +320,7 @@ async function waitFollowed(page, tag) {
 
 try {
   await fpage.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await passGate(fpage, '大女儿');
   await fpage.fill('#text-input', longPassage);
   await fpage.click('#update-button');
   await fpage.waitForSelector('.sentence-list li');
@@ -298,7 +328,9 @@ try {
   console.log(`follow: ${cardCount} sentences rendered`);
   if (cardCount < 25) throw new Error(`expected a long passage, got ${cardCount} sentences`);
 
-  // Loop-all at 2× so the loop advances quickly.
+  // Loop-all at 2× so the loop advances quickly (from the loop-all default,
+  // cycle back to 关 first so the single click lands on 全部).
+  await loopToOff(fpage);
   await fpage.click('#loop-button');
   if ((await fpage.getAttribute('#loop-button', 'aria-label')) !== '循环：全部') {
     throw new Error('loop did not reach Loop-all after one toggle');
@@ -350,11 +382,14 @@ async function scrollPlayingOutOfView(page) {
 
 try {
   await qpage.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await passGate(qpage, '小女儿');
   await qpage.fill('#text-input', longPassage);
   await qpage.click('#update-button');
   await qpage.waitForSelector('.sentence-list li');
 
-  // Loop-one at 2×, play the first sentence, then pause mid-playback.
+  // Loop-one at 2× (from the loop-all default: cycle to 关, then two clicks),
+  // play the first sentence, then pause mid-playback.
+  await loopToOff(qpage);
   await qpage.click('#loop-button');
   await qpage.click('#loop-button');
   if ((await qpage.getAttribute('#loop-button', 'aria-label')) !== '循环：单句') {
@@ -390,7 +425,106 @@ try {
   await followDesktopCtx.close();
 }
 
-console.log('console errors:', errors.length);
+// ==== Book surface (ticket #19): upload → read → lookup → resume ===========
+// Uploads the tiny nav-epub fixture (English), opens it, resumes at the
+// server-side position after a reload, hover-looks a word up, and marks it
+// 我认识 — which must land in the server's /words for the Profile.
+const bookCtx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+const bpage = await bookCtx.newPage();
+watch(bpage);
+
+try {
+  await bpage.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await passGate(bpage, '大女儿');
+
+  // 20. The profile chip re-opens the gate (a switch would reload — close it).
+  await bpage.click('#profile-chip');
+  await bpage.waitForSelector('#profile-gate:not([hidden])');
+  console.log('profile chip reopens the gate');
+  await bpage.evaluate(() => { document.getElementById('profile-gate').hidden = true; });
+
+  // 21. Upload through the library overlay (XHR progress path). The entry
+  //     point differs by surface: the bookbar's 书库 when a book is already
+  //     open (warm server), the empty state's button on a fresh server.
+  const epub = readFileSync(FIXTURE);
+  const startView = await bpage.evaluate(() => document.body.dataset.view);
+  await bpage.click(startView === 'book' ? '#library-btn' : '#empty-library-btn');
+  await bpage.waitForSelector('#library-overlay:not([hidden])');
+  await bpage.evaluate((bytes) => {
+    const file = new File([new Uint8Array(bytes)], 'nav.epub', { type: 'application/epub+zip' });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const input = document.getElementById('upload-input');
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, Array.from(epub));
+  await bpage.waitForFunction(() => document.querySelectorAll('.library-list li').length > 0, { timeout: 20000 });
+  console.log('library shows the uploaded book');
+
+  // 22. Open the book → the chapter renders as sentences of word spans.
+  await bpage.locator('.library-entry').first().click();
+  await bpage.waitForFunction(() => document.body.dataset.view === 'book', { timeout: 10000 });
+  await bpage.waitForSelector('#chapter-body .sent .w', { timeout: 15000 });
+  console.log('book view open, sentences:', await bpage.locator('#chapter-body .sent').count());
+
+  // 23. Tap a sentence → it becomes the selected (playing) sentence; the
+  //     debounced write-back persists it server-side. (At 2× the short
+  //     chapter can play through and stop before we check — selected is the
+  //     stable signal.)
+  await bpage.locator('#chapter-body .sent').nth(1).click();
+  await bpage.waitForFunction(
+    () => document.querySelector('#chapter-body .sent.selected')?.dataset.sentence === '1',
+    { timeout: 15000 },
+  );
+  console.log('sentence tap selects + plays (book mode)');
+  await bpage.waitForTimeout(1900); // position debounce (1.2s) + margin
+
+  // 24. Reload → the app returns to the same book and the same sentence.
+  await bpage.reload({ waitUntil: 'networkidle' });
+  await bpage.waitForFunction(() => document.body.dataset.view === 'book', { timeout: 10000 });
+  await bpage.waitForSelector('#chapter-body .sent.selected', { timeout: 15000 });
+  const selected = await bpage.evaluate(() => document.querySelector('#chapter-body .sent.selected')?.dataset.sentence);
+  console.log('reopened to the server-side reading position, sentence', selected);
+  if (selected !== '1') throw new Error(`expected sentence 1 after reopen, got ${selected}`);
+
+  // 25. Hover-lookup: dwell on a word, the card opens in the (wide) aside.
+  const word = bpage.locator('#chapter-body .sent .w').first();
+  await word.hover();
+  await bpage.waitForTimeout(600); // hover dwell (320ms) + request
+  const cardVisible = await bpage.locator('.book-aside .card').isVisible().catch(() => false);
+  console.log('hover lookup card visible in aside:', cardVisible);
+  if (!cardVisible) throw new Error('lookup card did not appear on hover');
+
+  // 26. 我认识 writes /words: click 标记认识 → the Profile's word list gains the key.
+  const mark = bpage.locator('.book-aside .mark-known').first();
+  await mark.click();
+  await bpage.waitForTimeout(600);
+  const words = await bpage.evaluate(async () => {
+    const profile = localStorage.getItem('lb.profile');
+    return (await (await fetch(`/words?profile=${profile}`)).json()).words;
+  });
+  console.log('words after 标记认识:', JSON.stringify(words));
+  if (words.length === 0) throw new Error('我认识 did not reach /words');
+
+  // 27. Offline: the server is the only truth (ADR 0007) — the shell still
+  //     opens via the SW navigation fallback and degrades to the empty paste
+  //     state with a learner-facing message, not a crash.
+  await bpage.context().setOffline(true);
+  await bpage.reload({ waitUntil: 'domcontentloaded' });
+  await bpage.waitForSelector('#text-input', { timeout: 10000 });
+  console.log('shell opens offline, degrades to the paste surface');
+  await bpage.context().setOffline(false);
+} finally {
+  await bookCtx.close();
+}
+
+// Expected network noise from the deliberate offline step (ADR 0007: the
+// server is the only truth — offline degrades by design).
+const offlineNoise = (error) =>
+  /Failed to load resource|net::ERR_INTERNET_DISCONNECTED|Failed to fetch/i.test(error);
+const fatalErrors = errors.filter((error) => !offlineNoise(error));
+console.log('console errors:', errors.length, '(fatal:', fatalErrors.length, ')');
+for (const error of fatalErrors) console.log('  ERROR:', error);
 await browser.close();
 
-process.exit(errors.length > 0 ? 1 : 0);
+process.exit(fatalErrors.length > 0 ? 1 : 0);

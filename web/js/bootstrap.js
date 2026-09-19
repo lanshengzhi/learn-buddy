@@ -1,24 +1,22 @@
 /**
- * Bootstrap — shared browser wiring: history repository with audio-ownership
- * cleanup, IndexedDB stores, and Service Worker
- * registration (secure contexts only; the plain-HTTP LAN origin simply runs
- * without offline replay — see the PWA ticket).
+ * Bootstrap — browser wiring: the server API client, the History repository
+ * over the API store, the Service Worker shell registration (secure contexts
+ * only; the plain-HTTP LAN origin simply runs without a precached shell).
+ * Learner records live only on the server (ADR 0007): no IndexedDB stores,
+ * no audio ownership — the browser keeps just `lb.profile` (profile.js).
  */
 
 import { HistoryRepository } from './core/history-repository.js';
-import { IndexedDbHistoryStore } from './browser/history-idb.js';
-import { AudioOwnershipStore } from './browser/ownership-store.js';
+import { ApiHistoryStore } from './browser/history-api.js';
 
-export const audioOwnership = new AudioOwnershipStore();
-
-export const historyRepository = new HistoryRepository(new IndexedDbHistoryStore(), {
-  onEntriesRemoved: (removedIds) => audioOwnership.forgetEntries(removedIds),
-});
+export function createHistoryRepository(api) {
+  return new HistoryRepository(new ApiHistoryStore(api));
+}
 
 export function registerServiceWorker() {
   if ('serviceWorker' in navigator && window.isSecureContext) {
     navigator.serviceWorker.register('/sw.js').catch(() => {
-      // Registration failure is non-fatal; the app works without offline replay.
+      // Registration failure is non-fatal; the shell cache is a nicety.
     });
   }
 }

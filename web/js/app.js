@@ -6,21 +6,27 @@
  * above the virtual keyboard while focused. No view switching: narrowing the
  * window changes nothing.
  *
- * The playback state machine lives in core/reader-controller.js (node-tested);
- * this file is the DOM binding plus the browser-only adapters (audio player,
- * blob URLs, audio ownership refs, history favorites).
+ * The Reading area shows one of two surfaces over the same playback bar
+ * (ticket #19): the Book chapter body (BookView, book.js) or the pasted
+ * passage's sentence cards. One ReaderController drives both — the
+ * segmentation adapter delegates to the chapter's baked sentences or to
+ * Intl.Segmenter — and the active mode decides where progress goes: the
+ * server's Reading position (ADR 0007) or the History entry.
  */
 
 import { segmentationService } from './core/segmentation.js';
 import { ReaderController } from './core/reader-controller.js';
-import { TtsClient, ttsUrl } from './core/tts-client.js';
-import { PlaybackPreferences } from './core/playback-preferences.js';
+import { TtsClient } from './core/tts-client.js';
 import { RATE_PRESETS } from './core/rate-presets.js';
 import { LoopMode } from './core/loop-mode.js';
 import { computeFollowAction } from './core/visual-follow.js';
 import { HtmlAudioPlayer } from './player.js';
-import { historyRepository, audioOwnership, registerServiceWorker } from './bootstrap.js';
+import { createHistoryRepository, registerServiceWorker } from './bootstrap.js';
+import { ServerApi } from './core/api.js';
 import { detectLanguage } from './core/language.js';
+import { storedProfile, switchProfile, storeProfile } from './browser/profile.js';
+import { ServerPlaybackPreferences } from './browser/server-playback-preferences.js';
+import { BookView } from './book.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -33,6 +39,8 @@ const errorEl = $('reader-error');
 const emptyEl = $('reader-empty');
 const listEl = $('sentence-list');
 const readerBody = $('reader-body');
+const cardsView = $('cards-view');
+const bookViewEl = $('book-view');
 const bottomBar = $('bottom-bar');
 const prevButton = $('prev-button');
 const replayButton = $('replay-button');
@@ -67,6 +75,11 @@ const collapsedStatus = $('collapsed-status');
 const collapsedInfo = $('collapsed-info');
 const historyButton = $('history-button');
 const collapseButton = $('collapse-button');
+const backToBook = $('back-to-book');
+const profileChip = $('profile-chip');
+const profileGate = $('profile-gate');
+const profileChoices = $('profile-choices');
+const toastEl = $('toast');
 
 const LANGUAGE_LABELS = { en: '英语', ja: '日语', 'zh-CN': '中文' };
 
@@ -80,42 +93,229 @@ function languageLabel(locale) {
 const COARSE_POINTER = window.matchMedia('(pointer: coarse)');
 let isCoarse = COARSE_POINTER.matches;
 
-// --- state -----------------------------------------------------------------
+// --- shared state ------------------------------------------------------------
 
 let text = '';
-let activeEntryId = null; // History entry id backing offline replay ownership
+let activeEntryId = null; // History entry id backing the current pasted passage
 let favFilter = 'all';
 let editorTab = 'edit';
 let editorCollapsed = true;
 let debounceTimer = null;
 let cards = [];
 
-// --- reader controller (the Reading area's playback state machine) ---------
+let mode = 'cards'; // 'cards' (pasted passage) | 'book' (open Book)
+let controller = null;
+let prefs = null;
+let historyRepository = null;
+let bookView = null;
+let knownWords = new Set();
+let chapterSentences = null; // the open chapter's baked sentences
 
+const api = new ServerApi();
+const player = new HtmlAudioPlayer();
 const ttsClient = new TtsClient();
-const recordingTts = {
-  speak: async (request) => {
-    const blob = await ttsClient.speak(request);
-    // Offline replay lives exactly as long as its History entry (ownership rule):
-    // an uncommitted passage (auto re-segment) gets its entry on first play.
-    if (activeEntryId == null) await ensureHistoryEntry();
-    if (activeEntryId != null) {
-      await audioOwnership.record(ttsUrl(request), activeEntryId);
-    }
-    return blob;
-  },
+
+// The segmentation adapter delegates: book chapters arrive pre-segmented from
+// the server (ADR 0007 — the browser does no segmentation of book text);
+// pasted passages go through Intl.Segmenter as before.
+const activeSegmentation = {
+  segment: (value, locale) =>
+    mode === 'book' && chapterSentences
+      ? chapterSentences.map((sentence) => sentence.t)
+      : segmentationService.segment(value, locale),
 };
 
-const controller = new ReaderController({
-  segmentation: segmentationService,
-  tts: recordingTts,
-  player: new HtmlAudioPlayer(),
-  prefs: new PlaybackPreferences(localStorage),
-  onHistoryProgress: (index) => historyRepository.updateLastSelectedIndex(text, index),
-  onStateChange: applyState,
-});
+// --- boot ----------------------------------------------------------------------
 
-// --- history ---------------------------------------------------------------
+registerServiceWorker();
+bindControls();
+void boot();
+
+async function boot() {
+  let profiles;
+  try {
+    profiles = await api.profiles();
+  } catch (error) {
+    showFatal(error.message ?? '无法连接服务器。');
+    return;
+  }
+  let profileId = storedProfile();
+  if (!profileId || !profiles.some((profile) => profile.id === profileId)) {
+    profileId = await chooseProfile(profiles);
+  }
+  api.profile = profileId;
+
+  let state;
+  try {
+    state = (await api.getState()) ?? {};
+  } catch (error) {
+    fatal(error.message ?? '无法读取阅读状态。');
+    return;
+  }
+  prefs = new ServerPlaybackPreferences(api, state);
+  try {
+    knownWords = new Set(await api.getWords());
+  } catch {
+    knownWords = new Set();
+  }
+  historyRepository = createHistoryRepository(api);
+
+  controller = new ReaderController({
+    segmentation: activeSegmentation,
+    tts: { speak: (request) => ttsClient.speak(request) },
+    player,
+    prefs,
+    onHistoryProgress: onProgress,
+    onStateChange: applyState,
+    wrapLoopAll: false, // book chapters end at the last sentence; the paste
+    // flow re-enables wrap when it owns the surface (#16 vs the paste loop)
+  });
+
+  bookView = new BookView({
+    api,
+    isWide: () => window.matchMedia('(min-width: 820px)').matches,
+    onView: setMode,
+    loadChapter: loadChapter,
+    followPlaying,
+    toast: showToast,
+    onSentenceTap: (index) => controller.onSentenceClicked(index),
+    knownWords,
+    rateSsml: () => controller.state.ratePreset.ssmlRate,
+  });
+
+  bindProfileChip(profiles, profileId);
+  void renderHistory();
+  applyState();
+
+  const lastBook = state.lastBook;
+  if (lastBook) {
+    try {
+      await bookView.openBook(lastBook);
+      setEditorCollapsed(true);
+      document.body.dataset.ready = '1';
+      return;
+    } catch {
+      // The book is gone from the library — fall back to the paste surface.
+    }
+  }
+  showCardsEmpty();
+  document.body.dataset.ready = '1';
+}
+
+/** First-run (or stale-device) profile gate; resolves with the chosen id. */
+function chooseProfile(profiles) {
+  return new Promise((resolve) => {
+    profileChoices.replaceChildren(
+      ...profiles.map((profile) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn gate-choice';
+        button.textContent = profile.name;
+        button.addEventListener('click', () => {
+          profileGate.hidden = true;
+          storeProfile(profile.id);
+          resolve(profile.id);
+        });
+        return button;
+      }),
+    );
+    profileGate.hidden = false;
+  });
+}
+
+/** The header chip: tap → the same gate, but switching reloads the app. */
+function bindProfileChip() {
+  const chip = $('profile-chip');
+  chip.hidden = api.profile == null;
+  chip.textContent = `${api.profile ?? '档案'} ▾`;
+  chip.onclick = () => {
+    void (async () => {
+      let profiles = [];
+      try {
+        profiles = await api.profiles();
+      } catch {
+        showToast('取不到档案清单。');
+        return;
+      }
+      profileChoices.replaceChildren(
+        ...profiles.map((profile) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'btn gate-choice';
+          button.textContent = `${profile.name}${profile.id === api.profile ? '（当前）' : ''}`;
+          button.addEventListener('click', () => {
+            if (profile.id === api.profile) {
+              profileGate.hidden = true;
+              return;
+            }
+            void (async () => {
+              // Persist the pending position before the reload wipes context.
+              bookView?.flushPosition();
+              switchProfile(profile.id);
+            })();
+          });
+          return button;
+        }),
+      );
+      profileGate.hidden = false;
+    })();
+  };
+}
+
+function fatal(message) {
+  showCardsEmpty();
+  emptyEl.hidden = false;
+  emptyEl.classList.add('error');
+  emptyEl.textContent = message;
+}
+
+// --- surfaces -------------------------------------------------------------------
+
+function setMode(next) {
+  mode = next;
+  if (controller) controller.wrapLoopAll = mode !== 'book';
+  document.body.dataset.view = mode;
+  cardsView.hidden = mode === 'book';
+  bookViewEl.hidden = mode !== 'book';
+  backToBook.hidden = mode === 'book';
+  applyState();
+}
+
+/** Empty paste surface: invites paste or upload (no book open yet). */
+function showCardsEmpty() {
+  if (!controller) return; // boot may fail before the controller exists — fatal() shows the message
+  setMode('cards');
+  setText('');
+  void controller.loadText('');
+  renderSentences(controller.state.sentences);
+  applyState();
+  emptyEl.textContent = '在书库选一本书开始阅读，或在下方粘贴文本。';
+  emptyEl.hidden = false;
+  $('empty-library-btn').hidden = false;
+  setEditorCollapsed(false);
+}
+
+/** The BookView→controller bridge: a chapter's baked sentences take over. */
+async function loadChapter(sentences, reading, locale, restored) {
+  chapterSentences = sentences;
+  setMode('book');
+  await controller.loadText(
+    sentences.map((sentence) => sentence.t).join('\n'),
+    reading,
+    locale,
+  );
+  applyState();
+}
+
+function onProgress(index) {
+  if (mode === 'book') {
+    bookView?.reportPosition(index);
+    return;
+  }
+  historyRepository.updateLastSelectedIndex(text, index);
+}
+
+// --- history ---------------------------------------------------------------------
 
 function formatTime(createdAt) {
   const date = new Date(createdAt);
@@ -182,7 +382,7 @@ async function ensureHistoryEntry() {
   return activeEntryId;
 }
 
-// --- passage loading -------------------------------------------------------
+// --- passage loading -----------------------------------------------------------
 
 function setText(value) {
   text = value;
@@ -195,13 +395,15 @@ function setText(value) {
 /**
  * Re-segments `text`, keeping the selected sentence when its exact text still
  * exists; otherwise the first sentence is selected. Stops any playback first.
- * `commit` records the passage in History (dedupe) so offline replay works.
+ * Switches the surface to the pasted passage (the Book stays open in the
+ * background — 回到书 brings it back).
  */
 async function resegment({ commit = false, initialIndex = -1 } = {}) {
+  setMode('cards');
   const current = controller.state.sentences[controller.state.selectedSentenceIndex];
   controller.dispose();
   let index = initialIndex;
-  if (index < 0 && current) {
+  if (index < 0 && current && mode === 'cards') {
     const locale = detectLanguage(text);
     index = segmentationService.segment(text, locale).indexOf(current.text);
   }
@@ -219,7 +421,7 @@ async function openHistoryEntry(entry) {
   setEditorCollapsed(true);
 }
 
-// --- the collapsible editor ------------------------------------------------
+// --- the collapsible editor ------------------------------------------------------
 
 function applyLayout() {
   const collapsed = editorCollapsed;
@@ -261,7 +463,7 @@ function showPasteError(message) {
   pasteError.hidden = false;
 }
 
-// --- rendering -------------------------------------------------------------
+// --- rendering -------------------------------------------------------------------
 
 function renderSentences(sentences) {
   cards = [];
@@ -281,6 +483,13 @@ function renderSentences(sentences) {
 }
 
 function updateStatus() {
+  if (mode === 'book' && bookView?.book) {
+    const summary = `《${bookView.book.title || '未命名'}》 第 ${(bookView.chapterIndex ?? 0) + 1} 章 · 选中第 ${(controller.state.selectedSentenceIndex ?? -1) + 1} 句`;
+    editorStatus.textContent = summary;
+    collapsedInfo.textContent = summary;
+    langBadge.hidden = true;
+    return;
+  }
   const n = controller.state.sentences.length;
   const selected = controller.state.selectedSentenceIndex;
   const summary =
@@ -293,22 +502,10 @@ function updateStatus() {
 }
 
 function applyState() {
+  if (!controller) return;
   const s = controller.state;
-  loadingEl.hidden = !s.isLoading;
-  errorEl.hidden = !s.errorMessage;
-  if (s.errorMessage) errorEl.textContent = s.errorMessage;
-  emptyEl.hidden = s.isLoading || s.sentences.length > 0;
-  bottomBar.hidden = s.sentences.length === 0;
-
-  for (const card of cards) {
-    const index = Number(card.dataset.index);
-    card.classList.toggle('selected', s.selectedSentenceIndex === index);
-    const isPlaying =
-      s.playingSentenceIndex === index ||
-      (s.isAudioLoading && s.selectedSentenceIndex === index);
-    card.classList.toggle('playing', isPlaying);
-    card.classList.toggle('loading', s.isAudioLoading && s.selectedSentenceIndex === index);
-  }
+  if (mode === 'book') applyBookState(s);
+  else applyCardsState(s);
 
   const selected = s.selectedSentenceIndex;
   prevButton.disabled = selected == null || selected <= 0;
@@ -327,8 +524,8 @@ function applyState() {
   const loopLabel =
     s.loopMode === LoopMode.Off ? '关' : s.loopMode === LoopMode.All ? '全部' : '单句';
   loopButton.setAttribute('aria-label', `循环：${loopLabel}`);
-  for (const [mode, icon] of Object.entries(loopIcons)) {
-    icon.toggleAttribute('hidden', mode !== s.loopMode);
+  for (const [iconMode, icon] of Object.entries(loopIcons)) {
+    icon.toggleAttribute('hidden', iconMode !== s.loopMode);
   }
   loopButton.classList.toggle('tinted', s.loopMode !== LoopMode.Off);
 
@@ -336,21 +533,56 @@ function applyState() {
   updateStatus();
 }
 
+function applyCardsState(s) {
+  loadingEl.hidden = !s.isLoading;
+  errorEl.hidden = !s.errorMessage;
+  if (s.errorMessage) errorEl.textContent = s.errorMessage;
+  emptyEl.hidden = s.isLoading || s.sentences.length > 0;
+  bottomBar.hidden = s.sentences.length === 0;
+
+  for (const card of cards) {
+    const index = Number(card.dataset.index);
+    card.classList.toggle('selected', s.selectedSentenceIndex === index);
+    const isPlaying =
+      s.playingSentenceIndex === index ||
+      (s.isAudioLoading && s.selectedSentenceIndex === index);
+    card.classList.toggle('playing', isPlaying);
+    card.classList.toggle('loading', s.isAudioLoading && s.selectedSentenceIndex === index);
+  }
+}
+
+function applyBookState(s) {
+  bottomBar.hidden = s.sentences.length === 0;
+  const sentences = bookView?.chapterBody?.querySelectorAll('.sent') ?? [];
+  for (const sentence of sentences) {
+    const index = Number(sentence.dataset.sentence);
+    sentence.classList.toggle('selected', s.selectedSentenceIndex === index);
+    const isPlaying =
+      s.playingSentenceIndex === index ||
+      (s.isAudioLoading && s.selectedSentenceIndex === index);
+    sentence.classList.toggle('playing', isPlaying);
+  }
+}
+
 // Visual follow (page-turn style, ported from ReaderScreen.kt): stay still
 // while the playing card is fully visible; scroll it to the top of the list
 // viewport otherwise. Downward (forward) page-turns animate; targets above
 // the viewport (loop wrap, upward retargeting) jump instantly. The geometry
 // decision lives in core/visual-follow.js (node-tested); this binding only
-// executes the returned action. The viewport is #reader-body — the list's
-// scroll container — never #sentence-list, whose rect spans the whole
-// content, not the visible area.
+// executes the returned action. The viewport is #reader-body or #book-scroll
+// — the list's scroll container — never the content element itself.
 function followPlaying() {
+  if (!controller) return;
   const playing = controller.state.playingSentenceIndex;
   if (playing == null) return;
-  const card = cards.find((c) => Number(c.dataset.index) === playing);
+  const container = mode === 'book' ? $('book-scroll') : readerBody;
+  const selector = mode === 'book' ? '.sent' : '.sentence-list li';
+  const card = [...document.querySelectorAll(selector)].find(
+    (el) => Number(el.dataset.sentence ?? el.dataset.index) === playing,
+  );
   if (!card) return;
   const action = computeFollowAction(
-    readerBody.getBoundingClientRect(),
+    container.getBoundingClientRect(),
     card.getBoundingClientRect(),
   );
   if (action === 'jump-top-instant') {
@@ -379,124 +611,169 @@ readingArea.addEventListener('transitionend', (e) => {
   if (e.propertyName === 'flex-grow') followPlaying();
 });
 
-// --- controls --------------------------------------------------------------
+// --- controls ----------------------------------------------------------------------
 
-for (const preset of RATE_PRESETS) {
-  const option = document.createElement('option');
-  option.value = preset.name;
-  option.textContent = preset.label;
-  rateSelect.append(option);
+function bindControls() {
+  for (const preset of RATE_PRESETS) {
+    const option = document.createElement('option');
+    option.value = preset.name;
+    option.textContent = preset.label;
+    rateSelect.append(option);
+  }
+
+  prevButton.addEventListener('click', () => controller?.onPreviousClicked());
+  replayButton.addEventListener('click', () => controller?.onReplayClicked());
+  nextButton.addEventListener('click', () => controller?.onNextClicked());
+  playButton.addEventListener('click', () => {
+    if (!controller) return;
+    if (controller.state.playingSentenceIndex != null || controller.state.isAudioLoading) {
+      controller.onPauseClicked();
+    } else {
+      controller.onPlayClicked();
+    }
+  });
+  loopButton.addEventListener('click', () => controller?.onLoopToggleClicked());
+  rateSelect.addEventListener('change', () => {
+    const preset = RATE_PRESETS.find((p) => p.name === rateSelect.value);
+    if (preset) controller?.onRateSelected(preset);
+  });
+
+  // --- editor ----------------------------------------------------------------
+
+  textInput.addEventListener('input', () => {
+    setText(textInput.value);
+    if (autoToggle.checked && controller && text.trim() !== '') {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => void resegment(), 800);
+    }
+  });
+
+  textInput.addEventListener('focus', () => {
+    if (editorCollapsed) setEditorCollapsed(false);
+    if (isCoarse) document.body.classList.add('editor-takeover');
+  });
+
+  textInput.addEventListener('blur', (e) => {
+    if (!isCoarse || !document.body.classList.contains('editor-takeover')) return;
+    // Tapping a control inside the editor (更新, tabs, 收起, paste) moves focus
+    // to it — keep the takeover so that control's click still lands; the
+    // control's own handler collapses. Tapping outside retreats the takeover.
+    if (e.relatedTarget && editorRegion.contains(e.relatedTarget)) return;
+    setEditorCollapsed(true);
+  });
+
+  pasteButton.addEventListener('click', async () => {
+    try {
+      if (!navigator.clipboard?.readText) {
+        showPasteError('无法访问剪贴板——请手动粘贴。');
+        textInput.focus();
+        return;
+      }
+      const clipboardText = await navigator.clipboard.readText();
+      if (!clipboardText || clipboardText.trim() === '') {
+        showPasteError('剪贴板中没有文本。');
+        return;
+      }
+      setText(clipboardText);
+      pasteError.hidden = true;
+    } catch {
+      showPasteError('无法读取剪贴板——请手动粘贴。');
+      textInput.focus();
+    }
+  });
+
+  updateButton.addEventListener('click', () => {
+    if (text.trim() === '' || !controller) return;
+    void resegment({ commit: true }).then(() => setEditorCollapsed(true));
+  });
+
+  autoToggle.addEventListener('change', () => {
+    if (autoToggle.checked && text.trim() !== '' && controller) void resegment();
+  });
+
+  tabEdit.addEventListener('click', () => setEditorTab('edit'));
+  tabHistory.addEventListener('click', () => setEditorTab('history'));
+
+  historyButton.addEventListener('click', () => {
+    void renderHistory();
+    setEditorCollapsed(false);
+    setEditorTab('history');
+  });
+
+  collapseButton.addEventListener('click', () => setEditorCollapsed(true));
+
+  filterAll.addEventListener('click', () => {
+    favFilter = 'all';
+    filterAll.classList.add('active');
+    filterFav.classList.remove('active');
+    void renderHistory();
+  });
+  filterFav.addEventListener('click', () => {
+    favFilter = 'fav';
+    filterFav.classList.add('active');
+    filterAll.classList.remove('active');
+    void renderHistory();
+  });
+
+  // --- book surface -----------------------------------------------------------
+
+  $('empty-library-btn').addEventListener('click', () => bookView?.openLibrary());
+  backToBook.addEventListener('click', () => {
+    if (!bookView) return;
+    if (bookView.book) void bookView.openChapter(bookView.chapterIndex ?? 0);
+    else void bookView.openLibrary();
+  });
+
+  bindProfileChip();
+
+  // --- keyboard (PC) ------------------------------------------------------------
+
+  document.addEventListener('keydown', handleKeydown);
+
+  COARSE_POINTER.addEventListener('change', (e) => {
+    isCoarse = e.matches;
+    if (!isCoarse && document.body.classList.contains('editor-takeover')) {
+      setEditorCollapsed(true);
+    }
+  });
 }
 
-prevButton.addEventListener('click', () => controller.onPreviousClicked());
-replayButton.addEventListener('click', () => controller.onReplayClicked());
-nextButton.addEventListener('click', () => controller.onNextClicked());
-playButton.addEventListener('click', () => {
-  if (controller.state.playingSentenceIndex != null || controller.state.isAudioLoading) {
-    controller.onPauseClicked();
-  } else {
-    controller.onPlayClicked();
+function handleKeydown(e) {
+  if (!controller) return;
+  if (e.key === 'Escape') {
+    bookView?.closeOverlays();
+    if (!editorCollapsed) setEditorCollapsed(true);
+    return;
   }
-});
-loopButton.addEventListener('click', () => controller.onLoopToggleClicked());
-rateSelect.addEventListener('change', () => {
-  const preset = RATE_PRESETS.find((p) => p.name === rateSelect.value);
-  if (preset) controller.onRateSelected(preset);
-});
-
-// --- editor ----------------------------------------------------------------
-
-textInput.addEventListener('input', () => {
-  setText(textInput.value);
-  if (autoToggle.checked && text.trim() !== '') {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => void resegment(), 800);
+  if (e.target === textInput) return;
+  if (e.key === ' ') {
+    e.preventDefault();
+    playButton.click();
+    return;
   }
-});
-
-textInput.addEventListener('focus', () => {
-  if (editorCollapsed) setEditorCollapsed(false);
-  if (isCoarse) document.body.classList.add('editor-takeover');
-});
-
-textInput.addEventListener('blur', (e) => {
-  if (!isCoarse || !document.body.classList.contains('editor-takeover')) return;
-  // Tapping a control inside the editor (更新, tabs, 收起, paste) moves focus
-  // to it — keep the takeover so that control's click still lands; the
-  // control's own handler collapses. Tapping outside retreats the takeover.
-  if (e.relatedTarget && editorRegion.contains(e.relatedTarget)) return;
-  setEditorCollapsed(true);
-});
-
-pasteButton.addEventListener('click', async () => {
-  try {
-    if (!navigator.clipboard?.readText) {
-      showPasteError('无法访问剪贴板——请手动粘贴。');
-      textInput.focus();
-      return;
-    }
-    const clipboardText = await navigator.clipboard.readText();
-    if (!clipboardText || clipboardText.trim() === '') {
-      showPasteError('剪贴板中没有文本。');
-      return;
-    }
-    setText(clipboardText);
-    pasteError.hidden = true;
-  } catch {
-    showPasteError('无法读取剪贴板——请手动粘贴。');
-    textInput.focus();
+  if (e.key === 'ArrowRight') nextButton.click();
+  if (e.key === 'ArrowLeft') prevButton.click();
+  if (mode !== 'book') return;
+  if (e.key === 'k') void bookView.markCurrentKnown();
+  if (e.key === 'n') {
+    const from =
+      controller.state.playingSentenceIndex ?? controller.state.selectedSentenceIndex ?? 0;
+    const hit = bookView.nextUnknown(from);
+    if (hit) bookView.openWord(hit.sentenceIndex, hit.token.text);
+    else showToast('这一章没有未标记的生词了。');
   }
-});
+  if (e.key === 'a') bookView.openAiTab();
+}
 
-updateButton.addEventListener('click', () => {
-  if (text.trim() === '') return;
-  void resegment({ commit: true }).then(() => setEditorCollapsed(true));
-});
+// --- toast ---------------------------------------------------------------------
 
-autoToggle.addEventListener('change', () => {
-  if (autoToggle.checked && text.trim() !== '') void resegment();
-});
+let toastTimer = null;
 
-tabEdit.addEventListener('click', () => setEditorTab('edit'));
-tabHistory.addEventListener('click', () => setEditorTab('history'));
-
-historyButton.addEventListener('click', () => {
-  setEditorCollapsed(false);
-  setEditorTab('history');
-});
-
-collapseButton.addEventListener('click', () => setEditorCollapsed(true));
-
-filterAll.addEventListener('click', () => {
-  favFilter = 'all';
-  filterAll.classList.add('active');
-  filterFav.classList.remove('active');
-  void renderHistory();
-});
-filterFav.addEventListener('click', () => {
-  favFilter = 'fav';
-  filterFav.classList.add('active');
-  filterAll.classList.remove('active');
-  void renderHistory();
-});
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !editorCollapsed) setEditorCollapsed(true);
-});
-
-// --- pointer handling ------------------------------------------------------
-
-COARSE_POINTER.addEventListener('change', (e) => {
-  isCoarse = e.matches;
-  if (!isCoarse && document.body.classList.contains('editor-takeover')) {
-    setEditorCollapsed(true);
-  }
-});
-
-// --- boot ------------------------------------------------------------------
-
-renderHistory();
-registerServiceWorker();
-// Empty text has nothing to read — invite the paste/edit surface. Once there
-// is text, rest collapsed so the reading area owns the screen.
-setEditorCollapsed(text.trim() !== '');
+function showToast(message) {
+  toast.textContent = message;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.hidden = true;
+  }, 3000);
+}

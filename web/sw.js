@@ -1,10 +1,8 @@
 /**
- * Service Worker — app shell caching + offline replay audio cache.
+ * Service Worker — static app shell only (ADR 0007): the browser keeps no
+ * learner state and no audio. Audio requests are never intercepted; replays
+ * need the LAN and the server's audio cache.
  *
- * - /tts requests (audio, keyed by the text|voice|rate request URL):
- *   cache-first with network store on miss. A sentence is replayable offline
- *   exactly while its History entry lives; the page purges orphaned entries
- *   via the audio cache name below (audio-ownership semantics).
  * - navigations: network-first with cached fallback, so app updates flow on
  *   the LAN and the shell still opens offline.
  * - static assets: network-first with cached fallback. Cache-first here was
@@ -14,8 +12,10 @@
  *   precached shell is only the offline fallback.
  */
 
-const SHELL_CACHE = 'learnbuddy-shell-v5';
-const AUDIO_CACHE = 'learnbuddy-audio-v1';
+// The shell list is duplicated from js/core/sw-config.js (classic worker: no
+// module imports). Keep the two in sync; the cache name is bumped whenever
+// the shell list changes.
+const SHELL_CACHE = 'learnbuddy-shell-v6';
 // Replaced by scripts/deploy.sh on every deploy so the browser detects a new
 // SW (bytes changed), re-precaches the fresh shell, and purges old caches.
 const DEPLOY_STAMP = 'dev';
@@ -26,21 +26,25 @@ const SHELL_ASSETS = [
   '/css/style.css',
   '/js/app.js',
   '/js/bootstrap.js',
+  '/js/book.js',
   '/js/player.js',
+  '/js/core/api.js',
   '/js/core/segmentation.js',
   '/js/core/language.js',
+  '/js/core/words.js',
   '/js/core/history-store.js',
   '/js/core/history-repository.js',
-  '/js/core/audio-ownership.js',
   '/js/core/rate-presets.js',
   '/js/core/loop-mode.js',
   '/js/core/errors.js',
   '/js/core/tts-client.js',
   '/js/core/playback-preferences.js',
   '/js/core/reader-controller.js',
+  '/js/core/visual-follow.js',
   '/js/core/sw-config.js',
-  '/js/browser/history-idb.js',
-  '/js/browser/ownership-store.js',
+  '/js/browser/profile.js',
+  '/js/browser/history-api.js',
+  '/js/browser/server-playback-preferences.js',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
@@ -60,11 +64,7 @@ self.addEventListener('activate', (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => key !== SHELL_CACHE && key !== AUDIO_CACHE)
-            .map((key) => caches.delete(key)),
-        ),
+        Promise.all(keys.filter((key) => key !== SHELL_CACHE).map((key) => caches.delete(key))),
       )
       .then(() => self.clients.claim()),
   );
@@ -75,9 +75,8 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-
-  if (url.pathname === '/tts') {
-    event.respondWith(serveAudio(request));
+  // /tts and the learner-records API are network-only.
+  if (url.pathname === '/tts' || url.pathname === '/lookup' || url.pathname === '/lookup/check' || url.pathname === '/state') {
     return;
   }
   if (request.mode === 'navigate') {
@@ -86,19 +85,6 @@ self.addEventListener('fetch', (event) => {
   }
   event.respondWith(serveStatic(request));
 });
-
-async function serveAudio(request) {
-  const cache = await caches.open(AUDIO_CACHE);
-  const hit = await cache.match(request);
-  if (hit) return hit;
-  try {
-    const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone());
-    return response;
-  } catch {
-    return new Response('', { status: 503, statusText: 'Offline and not cached' });
-  }
-}
 
 async function serveNavigation(request) {
   try {

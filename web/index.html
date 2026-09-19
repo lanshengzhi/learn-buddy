@@ -10,19 +10,63 @@
   <meta name="theme-color" content="#2f6f4f">
   <link rel="stylesheet" href="/css/style.css">
 </head>
-<body>
+<body data-view="cards">
   <header class="app-header">
+    <button id="profile-chip" class="chip" type="button" hidden aria-haspopup="menu">档案 ▾</button>
     <h1>LearnBuddy</h1>
     <span id="lang-badge" class="lang-badge" hidden></span>
   </header>
 
-  <main id="reading-area" class="reading-area">
-    <div id="reader-body" class="reader-body">
-      <div id="reader-loading" class="loading-indicator" hidden></div>
-      <p id="reader-error" class="error" role="alert" hidden></p>
-      <p id="reader-empty" class="muted" hidden>还没有句子，先在下方粘贴文本。</p>
-      <ul id="sentence-list" class="sentence-list"></ul>
+  <div id="profile-gate" class="overlay" hidden>
+    <div class="gate-card">
+      <h2>谁在读？</h2>
+      <p class="muted">选择一个档案开始（换设备会再问一次）。</p>
+      <div id="profile-choices" class="gate-list"></div>
     </div>
+  </div>
+
+  <main id="reading-area" class="reading-area">
+    <!-- 粘贴流程（句子卡片） -->
+    <div id="cards-view" class="cards-view">
+      <div id="reader-body" class="reader-body">
+        <div id="reader-loading" class="loading-indicator" hidden></div>
+        <p id="reader-error" class="error" role="alert" hidden></p>
+        <p id="reader-empty" class="muted" hidden>还没有句子，先在下方粘贴文本。</p>
+        <button id="empty-library-btn" class="btn" type="button" hidden>打开书库</button>
+        <ul id="sentence-list" class="sentence-list"></ul>
+      </div>
+    </div>
+
+    <!-- 书籍阅读面（#12：一套版式两种形状） -->
+    <section id="book-view" class="book-view" hidden>
+      <div class="bookbar">
+        <button id="toc-btn" class="plain" type="button" aria-label="目录">☰ 目录</button>
+        <div class="titles">
+          <b id="book-title">—</b>
+          <span id="chapter-title">—</span>
+        </div>
+        <button id="hl-toggle" class="plain" type="button" aria-label="生词提示">标生词</button>
+        <button id="library-btn" class="plain" type="button">书库 ▾</button>
+      </div>
+      <div id="book-scroll" class="book-scroll">
+        <div class="book-column">
+          <article id="chapter-body" aria-live="off"></article>
+          <p id="book-error" class="error" role="alert" hidden></p>
+          <div class="chapter-nav">
+            <button id="prev-chapter" class="btn secondary" type="button" disabled>上一章</button>
+            <button id="next-chapter" class="btn secondary" type="button" disabled>下一章</button>
+          </div>
+        </div>
+      </div>
+      <aside id="book-aside" class="book-aside">
+        <div class="tabs">
+          <button id="tab-lookup" class="active" type="button">查义</button>
+          <button id="tab-toc" type="button">目录</button>
+        </div>
+        <div id="aside-body" class="aside-body"></div>
+      </aside>
+    </section>
+
     <nav id="bottom-bar" class="bottom-bar" hidden>
       <button id="prev-button" class="icon-button" type="button" aria-label="上一句" disabled>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
@@ -80,11 +124,39 @@
 
     <div id="collapsed-status" class="collapsed-status" hidden>
       <span id="collapsed-info"></span>
+      <button id="back-to-book" class="plain back-book" type="button" hidden>回到书 ▸</button>
       <span class="collapsed-right">
         <span class="muted">点击文本框展开编辑</span>
       </span>
     </div>
   </section>
+
+  <div id="scrim" hidden></div>
+  <div id="lookup-drawer" class="sheet" hidden>
+    <div class="handle"></div>
+    <div class="card" id="lookup-card"></div>
+  </div>
+  <div id="toc-drawer" class="drawer" hidden>
+    <h3>目录</h3>
+    <div id="toc-list" class="toc-list"></div>
+  </div>
+  <div id="library-overlay" class="overlay" hidden>
+    <div class="gate-card library-card">
+      <div class="library-head">
+        <h2>书库</h2>
+        <button id="library-close" class="btn secondary" type="button">关闭</button>
+      </div>
+      <div class="library-upload">
+        <label class="btn" id="upload-button">上传 epub<input id="upload-input" type="file"
+          accept=".epub,application/epub+zip" hidden></label>
+        <div class="upload-progress" id="upload-progress" hidden><i></i></div>
+        <span id="upload-status" class="muted"></span>
+      </div>
+      <p id="library-empty" class="muted" hidden>还没有书——上传一本 epub 开始阅读。</p>
+      <ul id="library-list" class="library-list"></ul>
+    </div>
+  </div>
+  <div id="toast" class="toast" hidden></div>
 
   <script type="module" src="/js/app.js"></script>
 </body>

@@ -88,6 +88,13 @@ body {
   border-radius: 999px;
 }
 
+/* The app is inert until boot resolves (profile → state → controller):
+   no clicking into a half-wired page. body[data-ready] flips it live. */
+body:not([data-ready]) .editor-region,
+body:not([data-ready]) .reading-area {
+  pointer-events: none;
+}
+
 /* ---- reading area ---- */
 
 .reading-area {
@@ -605,4 +612,495 @@ button.icon-button.tinted {
   .bottom-bar {
     justify-content: space-between;
   }
+}
+
+/* ---- book view (ticket #19, layout per #12: one layout, two shapes) ---- */
+
+.cards-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#book-view {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  grid-template-columns: 1fr;
+}
+
+.bookbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.bookbar .titles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.bookbar .titles b {
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bookbar .titles span {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plain {
+  border: none;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-size: 14px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.plain:hover {
+  background: var(--primary-soft);
+}
+
+.book-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px 32px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.book-column {
+  max-width: 44em;
+  margin: 0 auto;
+}
+
+#chapter-body {
+  font-size: 17px;
+  line-height: 2;
+  color: var(--text);
+}
+
+#chapter-body p.sent {
+  margin: 0.35em 0;
+  padding: 2px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+#chapter-body p.sent.selected {
+  background: var(--primary-soft);
+}
+
+#chapter-body p.sent.playing {
+  background: var(--primary-soft);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.w {
+  cursor: pointer;
+  border-radius: 3px;
+  touch-action: manipulation;
+}
+
+/* 标生词 modes (hl-mode data attribute, #12 decision) */
+#chapter-body[data-hl='underline'] .w.unknown,
+#chapter-body[data-hl='dim'] .w.unknown {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--primary) 55%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 5px;
+}
+
+#chapter-body[data-hl='dim'] .w.known {
+  opacity: 0.45;
+}
+
+.w.held {
+  background: var(--primary-soft);
+}
+
+.chapter-nav {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin: 24px 0 8px;
+}
+
+/* Wide layout (≥820px, PC / landscape tablet): the aside docks right (#12). */
+@media (min-width: 820px) {
+  #book-view {
+    grid-template-columns: 1fr 320px;
+  }
+
+  #book-view .book-scroll {
+    grid-row: 2;
+    grid-column: 1;
+    border-right: 1px solid var(--border);
+  }
+
+  .book-aside {
+    grid-row: 2;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--surface);
+  }
+}
+
+@media (max-width: 819px) {
+  .book-aside {
+    display: none;
+  }
+}
+
+.book-aside .tabs {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.aside-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+/* ---- lookup card (#12: 4 actions, two tabs) ---- */
+
+.card.lookup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-word {
+  font-size: 18px;
+}
+
+.card-matched {
+  font-size: 13px;
+}
+
+.card-reading {
+  font-size: 14px;
+  color: var(--primary-strong);
+}
+
+.card-senses {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.card-pos {
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.card-context {
+  font-size: 13px;
+  line-height: 1.7;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  margin: 0;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-actions .btn {
+  flex: none;
+}
+
+.btn.tiny {
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
+.card-ai-text {
+  font-size: 14px;
+  line-height: 1.75;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* ---- overlays: scrim / drawers / sheet / gate ---- */
+
+#scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 40;
+}
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 70vh;
+  background: var(--surface);
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 50;
+  overflow-y: auto;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.sheet .handle {
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+  margin: 8px auto 0;
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(320px, 84vw);
+  background: var(--surface);
+  z-index: 50;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25);
+  overflow-y: auto;
+  padding: 16px;
+  padding-top: calc(16px + env(safe-area-inset-top));
+}
+
+.drawer h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.toc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toc-entry {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toc-entry:hover {
+  background: var(--primary-soft);
+}
+
+.toc-entry.current {
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  font-weight: 600;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.gate-card {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 20px;
+  width: min(340px, 100%);
+  box-shadow: var(--card-shadow), 0 8px 32px rgba(0, 0, 0, 0.25);
+  text-align: center;
+}
+
+.gate-card h2 {
+  margin: 4px 0 4px;
+  font-size: 18px;
+}
+
+.gate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.library-card {
+  width: min(560px, 100%);
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.library-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.library-head h2 {
+  margin: 0;
+}
+
+.library-upload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+
+.upload-progress {
+  flex: 1;
+  min-width: 120px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  overflow: hidden;
+}
+
+.upload-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--primary);
+  transition: width 0.2s ease;
+}
+
+.library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.library-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.library-entry:hover {
+  background: var(--primary-soft);
+}
+
+.library-titles {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.library-titles b {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.library-titles span {
+  font-size: 12px;
+}
+
+.library-progress {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chip:hover {
+  border-color: var(--primary);
+  color: var(--primary-strong);
+}
+
+.back-book {
+  font-size: 13px;
+}
+
+/* ---- toast ---- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--bg);
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  z-index: 70;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  max-width: 84vw;
 }

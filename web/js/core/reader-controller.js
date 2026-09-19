@@ -29,11 +29,14 @@ export class ReaderController {
    * @param {(index: number) => void} [deps.onHistoryProgress]
    * @param {(state: object) => void} [deps.onStateChange] — fired after every state mutation
    */
-  constructor({ segmentation, tts, player, prefs, makeObjectUrl, revokeObjectUrl, onHistoryProgress, onStateChange }) {
+  constructor({ segmentation, tts, player, prefs, makeObjectUrl, revokeObjectUrl, onHistoryProgress, onStateChange, wrapLoopAll = true }) {
     this.segmentation = segmentation;
     this.tts = tts;
     this.player = player;
     this.prefs = prefs;
+    // The paste flow wraps Loop-all back to the first sentence; the book
+    // reader sets this false so a chapter ends at its last sentence (#16).
+    this.wrapLoopAll = wrapLoopAll;
     this.makeObjectUrl = makeObjectUrl ?? ((blob) => URL.createObjectURL(blob));
     this.revokeObjectUrl = revokeObjectUrl ?? ((url) => URL.revokeObjectURL(url));
     this.onHistoryProgress = onHistoryProgress ?? (() => {});
@@ -59,18 +62,18 @@ export class ReaderController {
 
   /**
    * Segments text into sentences; the first sentence (or a valid initial
-   * index, e.g. restored from History) becomes the selected sentence.
-   * Detects the passage locale once and keeps it for Voice selection:
-   * kana-less sentences inherit it (see detectLanguage).
+   * index, e.g. restored from History or the server's reading position)
+   * becomes the selected sentence. Detects the passage locale once and keeps
+   * it for Voice selection: kana-less sentences inherit it (see
+   * detectLanguage). A book chapter passes its own locale instead.
    */
-  async loadText(text, initialSelectedIndex = -1) {
+  async loadText(text, initialSelectedIndex = -1, locale = null) {
     this.currentText = text;
-    const locale = detectLanguage(text);
-    this.passageLocale = locale;
+    this.passageLocale = locale ?? detectLanguage(text);
     this.#set({ isLoading: true, errorMessage: null });
     try {
       const sentences = this.segmentation
-        .segment(text, locale)
+        .segment(text, this.passageLocale)
         .map((sentenceText, index) => ({ index, text: sentenceText }));
       const selectedIndex = sentences.some((s) => s.index === initialSelectedIndex)
         ? initialSelectedIndex
@@ -265,11 +268,14 @@ export class ReaderController {
     }
   }
 
-  /** Advances the loop; null ends playback (Loop Off). */
+  /** Advances the loop; null ends playback (Loop Off, or a book chapter's end). */
   #nextTarget(justPlayed) {
     switch (this.state.loopMode) {
       case LoopMode.All:
-        return this.#sentenceAfter(justPlayed);
+        if (this.wrapLoopAll) return this.#sentenceAfter(justPlayed);
+        // Book chapters stop at the chapter end instead of wrapping (#16).
+        if (this.#positionOf(justPlayed.index) >= this.state.sentences.length - 1) return null;
+        return this.state.sentences[this.#positionOf(justPlayed.index) + 1];
       case LoopMode.One:
         return justPlayed;
       default:
