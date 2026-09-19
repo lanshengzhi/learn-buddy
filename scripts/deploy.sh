@@ -10,9 +10,21 @@ DEST=/srv/learnbuddy
 # No --delete here: removing old files before the service restarts creates a
 # window where a freshly loaded page references JS that is already gone (the
 # reader.js 404 incident). Stale files are harmless; restart makes the new
-# code live atomically.
-rsync -az --exclude 'cache/' --exclude '__pycache__/' web/ "${HOST}:${DEST}/web/"
+# code live atomically. server/data/ is the live learner-records/Library
+# store on claw — never overwritten from a dev machine; dictionaries are
+# synced separately below.
+rsync -az --exclude 'cache/' --exclude 'data/' --exclude '__pycache__/' web/ "${HOST}:${DEST}/web/"
 rsync -az --exclude 'cache/' --exclude 'data/' --exclude '__pycache__/' server/ "${HOST}:${DEST}/server/"
+
+# Lookup dictionaries (~130 MB build artifacts, ADR 0008). Synced once —
+# rebuilt only when a local rebuild changes them; absent locally, the
+# builder can run on claw (sudachipy lives in claw's venv).
+if [ -f server/data/dicts/en.sqlite ]; then
+  ssh "${HOST}" "mkdir -p ${DEST}/server/data"
+  rsync -az server/data/dicts/ "${HOST}:${DEST}/server/data/dicts/"
+else
+  ssh "${HOST}" "test -f ${DEST}/server/data/dicts/en.sqlite || sudo -u learnbuddy ${DEST}/.venv/bin/python3 ${DEST}/server/tools/build_dicts.py --only en,ja,kanji" || true
+fi
 
 # Stamp the deployed sw.js with a fresh value so the browser detects a new
 # Service Worker on every deploy (byte change -> re-install -> fresh shell
