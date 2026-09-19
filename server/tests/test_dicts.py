@@ -209,6 +209,10 @@ class AiProxyTestCase(unittest.TestCase):
         def raise_timeout(req, timeout):
             raise urllib.error.URLError(TimeoutError("timed out"))
 
+        def raise_bare_timeout(req, timeout):
+            # A read timeout: socket.timeout has no .reason (Python 3.10+ alias).
+            raise TimeoutError("timed out")
+
         def raise_refused(req, timeout):
             raise urllib.error.URLError(ConnectionRefusedError())
 
@@ -221,6 +225,7 @@ class AiProxyTestCase(unittest.TestCase):
         for urlopen, expected in (
             (raise_http, "ai_upstream_error"),
             (raise_timeout, "ai_timeout"),
+            (raise_bare_timeout, "ai_timeout"),
             (raise_refused, "ai_upstream_error"),
             (bad_json, "ai_upstream_error"),
             (bad_shape, "ai_upstream_error"),

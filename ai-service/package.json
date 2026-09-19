@@ -1,0 +1,12 @@
+{
+  "name": "learnbuddy-ai",
+  "private": true,
+  "type": "module",
+  "description": "AI context-explanation service behind LearnBuddy's /ai proxy (pi SDK wrapper)",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1"
+  }
+}

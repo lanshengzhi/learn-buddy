@@ -92,8 +92,14 @@ def _default_urlopen(request, timeout, urlopen=None):
     except urllib.error.HTTPError as error:
         raise LookupError("ai_upstream_error") from error
     except (TimeoutError, urllib.error.URLError, ValueError) as error:
+        # A read timeout surfaces as a bare TimeoutError (no .reason); a connect
+        # timeout arrives wrapped in URLError. Both mean the 20 s budget is out.
         reason = getattr(error, "reason", None)
-        timed_out = isinstance(reason, TimeoutError) or "timed out" in str(reason).lower()
+        timed_out = (
+            isinstance(error, TimeoutError)
+            or isinstance(reason, TimeoutError)
+            or "timed out" in str(reason).lower()
+        )
         raise LookupError("ai_timeout" if timed_out else "ai_upstream_error") from error
     if not isinstance(answer, dict) or not isinstance(answer.get("text"), str):
         raise LookupError("ai_upstream_error")

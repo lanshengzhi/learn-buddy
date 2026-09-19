@@ -1,0 +1,22 @@
+[Unit]
+Description=LearnBuddy AI context-explanation service (pi SDK behind /ai proxy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/learnbuddy/ai
+User=learnbuddy
+Group=learnbuddy
+Environment=LEARNBUDDY_AI_AGENT_DIR=/srv/learnbuddy/ai/agent
+ExecStart=/usr/bin/node /srv/learnbuddy/ai/index.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/srv/learnbuddy/ai/agent
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

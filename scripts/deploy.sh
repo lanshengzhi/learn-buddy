@@ -33,6 +33,22 @@ fi
 STAMP="$(date +%s)"
 ssh "${HOST}" "sudo sed -i \"s/^const DEPLOY_STAMP = '[^']*';/const DEPLOY_STAMP = '${STAMP}';/\" ${DEST}/web/sw.js"
 
+# --- learnbuddy-ai (Node + pi SDK explainer behind the /ai proxy, #20) ---
+# agent/ holds pi auth (auth.json, settings.json, models-store.json) and is
+# never synced from a dev machine; node_modules is installed on claw only.
+rsync -az --delete --exclude 'node_modules/' --exclude 'agent/' ai-service/ "${HOST}:${DEST}/ai/"
+# (Re)install deps when node_modules is missing or the lockfile changed.
+ssh "${HOST}" "cd ${DEST}/ai && if [ ! -d node_modules/@earendil-works/pi-coding-agent ] || ! cmp -s package-lock.json .lock-installed; then npm install --omit=dev --no-audit --no-fund && cp package-lock.json .lock-installed; fi"
+# Unit file is managed from the repo; enable once, restart every deploy.
+ssh "${HOST}" "sudo cp ${DEST}/ai/learnbuddy-ai.service /etc/systemd/system/learnbuddy-ai.service"
+ssh "${HOST}" "systemctl is-enabled --quiet learnbuddy-ai 2>/dev/null || sudo systemctl enable --now learnbuddy-ai"
+ssh "${HOST}" "sudo systemctl restart learnbuddy-ai"
+# Point the Python backend at it (idempotent); it reads the env at startup.
+ssh "${HOST}" "grep -q '^Environment=LEARNBUDDY_AI_URL=' /etc/systemd/system/learnbuddy.service || sudo sed -i '/^ExecStart=/a Environment=LEARNBUDDY_AI_URL=http://127.0.0.1:8123' /etc/systemd/system/learnbuddy.service"
+ssh "${HOST}" "sudo systemctl daemon-reload"
+# The AI service must answer before learnbuddy restarts so the tab lights up.
+ssh "${HOST}" "for i in \$(seq 1 20); do curl -sf http://127.0.0.1:8123/health >/dev/null 2>&1 && break || sleep 1; done; curl -sf http://127.0.0.1:8123/health"
+
 ssh "${HOST}" "sudo systemctl restart learnbuddy"
 
 echo "Deployed."
