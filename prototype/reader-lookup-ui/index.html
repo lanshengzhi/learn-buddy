@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>原型 · LearnBuddy 阅读与查义</title>
+<!--
+  一次性原型（throwaway）：用来回答 issue #12 的界面问题，不是产品代码。
+  三个变体：?v=1 沉浸式 / ?v=2 双栏 / ?v=3 卡片列表
+  手势三选一：长按 / 划选 / 点词
+-->
+<style>
+  :root{
+    --bg:#f7f6f3; --surface:#fff; --text:#1f2328; --muted:#6a737d; --border:#d8d6d1;
+    --primary:#2f6f4f; --primary-strong:#24563e; --primary-soft:#e4efe8; --shadow:0 1px 2px rgba(0,0,0,.06);
+    --proto:#8a6d3b; --proto-bg:#fdf6e3;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#17191c; --surface:#202327; --text:#e8e6e3; --muted:#9aa0a6; --border:#3a3f45;
+      --primary:#5aa37e; --primary-strong:#6fb692; --primary-soft:#23382c; --shadow:0 1px 2px rgba(0,0,0,.4);
+      --proto:#d9c07a; --proto-bg:#2c2a22; }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans CJK JP","Noto Sans SC",sans-serif;
+    display:flex;flex-direction:column;height:100dvh;overflow:hidden}
+  #app{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
+  button{font:inherit;color:inherit;background:none;border:1px solid var(--border);border-radius:8px;padding:.35rem .6rem;cursor:pointer}
+  button:hover{background:var(--primary-soft)}
+  button.plain{border-color:transparent}
+  [hidden]{display:none!important}
+
+  /* ---------- prototype control strip (not part of the design) ---------- */
+  #proto{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:.4rem .7rem;align-items:center;padding:.35rem .6rem;
+    background:var(--proto-bg);border-bottom:1px dashed var(--proto);font-size:.78rem;color:var(--proto)}
+  #proto b{font-weight:600}
+  #proto .seg{display:flex;gap:.25rem}
+  #proto .seg button{padding:.15rem .45rem;border-radius:999px;font-size:.78rem;border-color:var(--proto)}
+  #proto .seg button[aria-pressed="true"]{background:var(--proto);color:var(--proto-bg)}
+  #protoState{margin-left:auto;opacity:.85;font-variant-numeric:tabular-nums}
+
+  /* ---------- book bar ---------- */
+  .bookbar{flex:0 0 auto;display:flex;align-items:center;gap:.5rem;padding:.45rem .6rem;background:var(--surface);
+    border-bottom:1px solid var(--border);position:relative;z-index:6}
+  .bookbar .titles{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.15}
+  .bookbar .titles b{font-size:.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bookbar .titles span{font-size:.72rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #progress{flex:0 0 auto;height:2px;background:var(--border)}
+  #progress i{display:block;height:100%;width:0;background:var(--primary)}
+
+  /* ---------- reading stage ---------- */
+  #scroll{flex:1 1 auto;overflow-y:auto;position:relative;scroll-behavior:smooth}
+  #article{padding:1.1rem 1.15rem 1.5rem;max-width:40rem;margin:0 auto;font-size:1.06rem;line-height:1.95}
+  #article p{margin:0 0 1.1rem}
+  .s{cursor:pointer;border-radius:6px;padding:1px 2px;transition:background .15s}
+  #app[data-variant="1"] .s:hover, #app[data-variant="2"] .s:hover{background:var(--primary-soft)}
+  .s.sel{background:var(--primary-soft);box-shadow:inset 0 -2px 0 var(--primary)}
+  .s.playing{background:var(--primary-soft);box-shadow:inset 0 -2px 0 var(--primary);outline:2px solid var(--primary);outline-offset:1px}
+  .s.loading{outline:2px dashed var(--primary);outline-offset:1px;animation:pulse 1s infinite}
+  @keyframes pulse{50%{outline-color:transparent}}
+  .w{border-radius:4px}
+  .w:hover{background:var(--primary-soft)}
+  #app[data-gesture="select"] .s, #app[data-gesture="select"] .w{user-select:text;-webkit-user-select:text}
+  #app[data-gesture="hold"] .s, #app[data-gesture="hold"] .w,
+  #app[data-gesture="tap"] .s, #app[data-gesture="tap"] .w{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+  #app[data-gesture="hold"] .s{cursor:default}
+
+  /* ---------- variant 3: sentence cards ---------- */
+  #app[data-variant="3"] #article{max-width:44rem}
+  #app[data-variant="3"] p{display:contents}
+  #app[data-variant="3"] .s{display:block;background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    padding:.75rem .85rem;margin:0 0 .6rem;box-shadow:var(--shadow);line-height:1.8}
+
+  /* ---------- variant 2: side panel ---------- */
+  #stage{flex:1 1 auto;display:flex;min-height:0}
+  #aside{display:none}
+  @media (min-width:820px){
+    #app[data-variant="2"] #article{margin:0;max-width:36rem}
+    #app[data-variant="2"] #aside{display:flex;flex-direction:column;flex:0 0 21rem;border-left:1px solid var(--border);
+      background:var(--surface);position:sticky;top:0;height:100%;overflow-y:auto}
+    #aside .tabs{display:flex;gap:.3rem;padding:.5rem;border-bottom:1px solid var(--border)}
+    #aside .tabs button[aria-pressed="true"]{background:var(--primary-soft);border-color:var(--primary)}
+    #aside .body{padding:.8rem}
+  }
+
+  /* ---------- playback bar + editor band ---------- */
+  #playbar{flex:0 0 auto;display:flex;align-items:center;gap:.35rem;padding:.4rem .5rem;background:var(--surface);
+    border-top:1px solid var(--border);justify-content:center;position:relative;z-index:5}
+  #playbar button{min-width:2.6rem}
+  #playbar #rate{font-variant-numeric:tabular-nums;font-size:.85rem}
+  #playbar .spacer{flex:1}
+  #editorband{flex:0 0 auto;background:var(--surface);border-top:1px solid var(--border)}
+  #editorband .band{display:flex;align-items:center;gap:.5rem;padding:.35rem .6rem;color:var(--muted);font-size:.82rem}
+  #editorband textarea{width:100%;min-height:7.5rem;resize:vertical;font:inherit;padding:.5rem;background:var(--bg);
+    color:var(--text);border:1px solid var(--border);border-radius:8px}
+  #editorband .body{padding:0 .6rem .6rem}
+  #editorband .body .row{display:flex;gap:.4rem;margin-top:.4rem}
+
+  /* ---------- lookup card ---------- */
+  #sheet{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:1px solid var(--border);
+    border-radius:16px 16px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,.18);transform:translateY(102%);transition:transform .22s ease;
+    max-height:70dvh;display:flex;flex-direction:column}
+  #sheet.open{transform:translateY(0)}
+  #sheet.modal{top:50%;bottom:auto;left:50%;right:auto;transform:translate(-50%,-50%) scale(.96);opacity:0;
+    border-radius:14px;border:1px solid var(--border);width:min(92vw,26rem)}
+  #sheet.modal.open{transform:translate(-50%,-50%) scale(1);opacity:1}
+  #sheet .handle{width:2.6rem;height:4px;border-radius:2px;background:var(--border);margin:.45rem auto .1rem}
+  #sheet .card{padding:.5rem 1rem 1rem;overflow-y:auto}
+  #pop{position:absolute;z-index:19;width:min(20rem,86vw);max-height:60vh;overflow:auto;background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.18);padding:.6rem .7rem}
+  .card .word{font-size:1.35rem;font-weight:650;line-height:1.3}
+  .card .reading{color:var(--primary);font-size:.95rem;margin-top:.1rem}
+  .card .pos{display:inline-block;font-size:.72rem;color:var(--muted);border:1px solid var(--border);border-radius:999px;
+    padding:.05rem .45rem;margin-left:.45rem;vertical-align:.1em}
+  .card .gloss{margin-top:.5rem;font-size:.98rem}
+  .card .ctx{margin-top:.6rem;padding:.5rem .6rem;background:var(--bg);border-left:3px solid var(--primary);
+    border-radius:0 8px 8px 0;font-size:.92rem;color:var(--muted)}
+  .card .ctx b{color:var(--text)}
+  .card .actions{display:flex;gap:.4rem;margin-top:.7rem}
+  .card .actions .ai{border-color:var(--primary);color:var(--primary-strong)}
+  .card .aiout{margin-top:.6rem;padding:.55rem .65rem;background:var(--primary-soft);border-radius:8px;font-size:.92rem;white-space:pre-wrap}
+  .card .note{margin-top:.55rem;font-size:.72rem;color:var(--muted)}
+  .spinner{display:inline-block;width:.8em;height:.8em;border:2px solid var(--border);border-top-color:var(--primary);
+    border-radius:50%;animation:spin .7s linear infinite;vertical-align:-.05em}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---------- drawers/menus/toast ---------- */
+  .drawer{position:fixed;top:0;bottom:0;left:0;width:min(78vw,20rem);z-index:30;background:var(--surface);
+    border-right:1px solid var(--border);transform:translateX(-102%);transition:transform .2s ease;overflow-y:auto}
+  .drawer.open{transform:translateX(0)}
+  .drawer h3{margin:.9rem .9rem .4rem;font-size:.85rem;color:var(--muted);font-weight:600}
+  .drawer button.ch{display:block;width:100%;text-align:left;border:0;border-radius:0;padding:.6rem .9rem;font-size:.92rem}
+  .drawer button.ch[aria-current="true"]{background:var(--primary-soft);color:var(--primary-strong)}
+  #scrim{position:fixed;inset:0;z-index:15;background:rgba(0,0,0,.28);opacity:0;pointer-events:none;transition:opacity .2s}
+  #scrim.open{opacity:1;pointer-events:auto}
+  #bookmenu{position:absolute;right:.5rem;top:100%;z-index:25;background:var(--surface);border:1px solid var(--border);
+    border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.18);min-width:15rem;overflow:hidden}
+  #bookmenu button{display:block;width:100%;text-align:left;border:0;border-radius:0;padding:.55rem .7rem}
+  #toast{position:fixed;left:50%;bottom:6.5rem;transform:translateX(-50%) translateY(1rem);z-index:40;background:#222;color:#fff;
+    padding:.5rem .8rem;border-radius:999px;font-size:.85rem;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none}
+  #toast.show{opacity:.95;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div id="app" data-variant="1" data-gesture="hold">
+
+  <div id="proto">
+    <b>原型控制</b>
+    <span class="seg" role="group" aria-label="版式">
+      <button data-v="1">V1 沉浸</button><button data-v="2">V2 双栏</button><button data-v="3">V3 卡片</button>
+    </span>
+    <span class="seg" role="group" aria-label="查义手势">
+      <button data-g="hold">长按</button><button data-g="select">划选</button><button data-g="tap">点词</button>
+    </span>
+    <button class="plain" id="resetPos">清除阅读位置</button>
+    <span id="protoState"></span>
+  </div>
+
+  <header class="bookbar">
+    <button id="tocBtn" class="plain">☰ 目录</button>
+    <div class="titles"><b id="bookTitle">—</b><span id="chapTitle">—</span></div>
+    <button id="bookBtn" class="plain">换书 ▾</button>
+    <div id="bookmenu" hidden></div>
+  </header>
+  <div id="progress"><i></i></div>
+
+  <div id="stage">
+    <main id="scroll"><article id="article" lang="en"></article></main>
+    <aside id="aside">
+      <div class="tabs">
+        <button data-tab="lookup" aria-pressed="true">查义</button>
+        <button data-tab="toc" aria-pressed="false">目录</button>
+      </div>
+      <div class="body" id="panelBody"><p style="color:var(--muted);font-size:.85rem">划选/长按/点词一个词，查义卡会停在这里（宽屏）。窄屏时改用底部抽屉。</p></div>
+    </aside>
+  </div>
+
+  <div id="playbar">
+    <button id="prev" title="上一句">⏮</button>
+    <button id="play" title="播放/暂停">▶</button>
+    <button id="next" title="下一句">⏭</button>
+    <button id="rate" title="语速">1×</button>
+    <button id="loop" title="循环">Off</button>
+  </div>
+
+  <div id="editorband">
+    <div class="band"><button id="editorToggle" class="plain">粘贴文本 · 历史</button><span>（读书模式下，编辑器默认收成一条）</span></div>
+    <div class="body" id="editorBody" hidden>
+      <textarea placeholder="粘贴文本…（原型里不真的重排，只看版式）"></textarea>
+      <div class="row"><button>更新</button><button>历史</button><button id="editorClose">收起</button></div>
+    </div>
+  </div>
+</div>
+
+<div id="scrim"></div>
+<div id="sheet"><div class="handle"></div><div class="card" id="sheetBody"></div></div>
+<div id="pop" hidden></div>
+<div id="toast"></div>
+<div class="drawer" id="tocDrawer"><h3>目录</h3><div id="tocList"></div></div>
+
+<script>
+'use strict';
+/* ------------------------------------------------------------------ data */
+const BOOKS = [
+  {
+    id:'alice', lang:'en', locale:'en', title:"Alice's Adventures in Wonderland", author:'Lewis Carroll',
+    chapters:[
+      { title:'Chapter I. Down the Rabbit-Hole', text:
+`Alice was beginning to get very tired of sitting by her sister on the bank, and of having nothing to do: once or twice she had peeped into the book her sister was reading, but it had no pictures or conversations in it, and what is the use of a book, thought Alice, without pictures or conversations?
+So she was considering in her own mind, as well as she could, for the hot day made her feel very sleepy and stupid, whether the pleasure of making a daisy-chain would be worth the trouble of getting up and picking the daisies, when suddenly a White Rabbit with pink eyes ran close by her.
+There was nothing so very remarkable in that; nor did Alice think it so very much out of the way to hear the Rabbit say to itself, Oh dear! Oh dear! I shall be late!` },
+      { title:'Chapter II. The Pool of Tears', text:
+`Curiouser and curiouser! cried Alice, she was so much surprised, that for the moment she quite forgot how to speak good English.
+Either the well was very deep, or she fell very slowly, for she had plenty of time as she went down to look about her.` }
+    ],
+    dict:{
+      tired:{pos:'adj.',gloss:'疲倦的，累的',ai:'“get tired of” 是固定搭配：厌倦、厌烦。这里不是身体累，而是“坐着没事干，烦了”。'},
+      bank:{pos:'n.',gloss:'河岸',ai:'此处 bank 不是“银行”，而是“河岸/岸边”——由后面的 sister、daisies 可以判断是户外场景。'},
+      peeped:{pos:'v. (past)',gloss:'偷看，瞥一眼'},
+      pictures:{pos:'n.',gloss:'图画'},
+      conversations:{pos:'n.',gloss:'对话，交谈'},
+      sleepy:{pos:'adj.',gloss:'困倦的'},
+      stupid:{pos:'adj.',gloss:'昏昏沉沉的，迟钝的'},
+      pleasure:{pos:'n.',gloss:'乐趣'},
+      trouble:{pos:'n.',gloss:'麻烦，费劲'},
+      suddenly:{pos:'adv.',gloss:'突然地'},
+      rabbit:{pos:'n.',gloss:'兔子'},
+      remarkable:{pos:'adj.',gloss:'引人注目的，不寻常的'},
+      late:{pos:'adj.',gloss:'迟的，晚的'},
+      dear:{pos:'interj.',gloss:'哎呀（表示惊慌）'},
+      curiouser:{pos:'adj.',gloss:'（curious 的错用比较级）“越来越奇怪”',ai:'这是作者故意造的错英文，用来表现 Alice 的童言童语；“Curiouser and curiouser!” 是全书名句。'},
+      surprised:{pos:'adj.',gloss:'惊讶的'},
+      forgot:{pos:'v. (past)',gloss:'忘记了'},
+      speak:{pos:'v.',gloss:'说（语言）'},
+      english:{pos:'n.',gloss:'英语'},
+      slowly:{pos:'adv.',gloss:'缓慢地'}
+    }
+  },
+  {
+    id:'kumo', lang:'ja', locale:'ja', title:'蜘蛛の糸', author:'芥川龍之介',
+    chapters:[
+      { title:'前半', text:
+`ある日の事でございます。御釈迦様は極楽の蓮池のふちを、独りでぶらぶら御歩きになっていらっしゃいました。池の中に咲いている蓮の花は、みんな玉のようにまっ白で、そのまん中にある金色の蕊からは、何とも云えない好い匂が、絶間なくあたりへ溢れて居ります。極楽は丁度朝なのでございましょう。` },
+      { title:'後半', text:
+`やがて御釈迦様はその池のふちに立って、ふとその水の面を御覧になりますと、ちょうど地獄の底まで見えます。そこで御釈迦様は、地獄の底にいる犍陀多という男の事を思い出されました。この男は、人を殺したり、家に火をつけたり、いろいろ悪い事ばかりした奴でございますが、ただ一度だけ善い事をした事がありました。それは、森の中を歩いて居ります時に、小さい蜘蛛を踏み殺そうと致しましたのを、いやいや、これも又命のあるものだと思って、殺さずに助けてやったというのでございます。` }
+    ],
+    dict:{
+      '御釈迦様':{reading:'おしゃかさま',pos:'名詞',gloss:'释迦牟尼佛（敬称）',ai:'“御”是敬语接头词；这里指佛陀本人，不是泛称。注意：Intl 把本词切成 御/釈迦/様，真实实现要按词典最长匹配（见 #11）。'},
+      '釈迦':{reading:'しゃか',pos:'名詞',gloss:'释迦（佛）'},
+      '様':{reading:'さま',pos:'接尾辞',gloss:'大人，先生（敬称）'},
+      '独り':{reading:'ひとり',pos:'名詞',gloss:'独自，一个人'},
+      'ふち':{reading:'ふち',pos:'名詞',gloss:'边缘，池边'},
+      '極楽':{reading:'ごくらく',pos:'名詞',gloss:'极乐世界，天堂'},
+      '蓮池':{reading:'れんち',pos:'名詞',gloss:'莲池'},
+      '蓮':{reading:'はす',pos:'名詞',gloss:'莲，荷花'},
+      '花':{reading:'はな',pos:'名詞',gloss:'花'},
+      '金色':{reading:'こんじき',pos:'名詞',gloss:'金色'},
+      '蕊':{reading:'ずい',pos:'名詞',gloss:'花蕊'},
+      '匂':{reading:'におい',pos:'名詞',gloss:'香气，气味'},
+      '池':{reading:'いけ',pos:'名詞',gloss:'池塘'},
+      '水':{reading:'みず',pos:'名詞',gloss:'水'},
+      '面':{reading:'おもて',pos:'名詞',gloss:'表面，水面'},
+      '地獄':{reading:'じごく',pos:'名詞',gloss:'地狱'},
+      '底':{reading:'そこ',pos:'名詞',gloss:'底部'},
+      '犍陀多':{reading:'かんだた',pos:'固有名詞',gloss:'犍陀多（人名）',ai:'佛经故事里的人物；名字是梵语转写，不是日常词。'},
+      '男':{reading:'おとこ',pos:'名詞',gloss:'男人'},
+      '蜘蛛':{reading:'くも',pos:'名詞',gloss:'蜘蛛'},
+      '命':{reading:'いのち',pos:'名詞',gloss:'生命'},
+      '善い':{reading:'よい',pos:'形容詞',gloss:'好的，善良的'},
+      '悪い':{reading:'わるい',pos:'形容詞',gloss:'坏的，恶的'},
+      '森':{reading:'もり',pos:'名詞',gloss:'森林'},
+      '殺し':{reading:'ころし',pos:'動詞',gloss:'杀（连用形）'},
+      '助け':{reading:'たすけ',pos:'動詞',gloss:'救，帮助（连用形）'},
+      '思い出さ':{reading:'おもいださ',pos:'動詞',gloss:'想起（未然形）'},
+      '歩き':{reading:'あるき',pos:'動詞',gloss:'走（连用形）'},
+      '立って':{reading:'たって',pos:'動詞',gloss:'站（て形）'},
+      '見え':{reading:'みえ',pos:'動詞',gloss:'看得见（连用形）'},
+      '咲い':{reading:'さい',pos:'動詞',gloss:'开（花）'},
+      '溢れ':{reading:'あふれ',pos:'動詞',gloss:'溢出，充满'},
+      '殺さ':{reading:'ころさ',pos:'動詞',gloss:'杀（未然形）'},
+      '踏み殺そう':{reading:'ふみころそう',pos:'動詞',gloss:'想踩死（意志形）'}
+    }
+  }
+];
+
+/* ------------------------------------------------------------- utilities */
+const $ = s => document.querySelector(s);
+const app = $('#app'), article = $('#article'), scroller = $('#scroll');
+const segCache = {};
+function segments(locale, text, granularity){
+  const key = locale+'|'+granularity;
+  if(!segCache[key]) segCache[key] = new Intl.Segmenter(locale, {granularity});
+  return [...segCache[key].segment(text)];
+}
+const normalize = raw => raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu,'');
+const lookupKey = (book, raw) => book.lang==='en' ? normalize(raw).toLowerCase() : normalize(raw);
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'),2600); }
+
+/* --------------------------------------------------------------- state */
+const S = {
+  variant: 1, gesture:'hold', book:0, chapter:0,
+  sel:0, playing:null, rate:'1×', loop:'Off', restored:false
+};
+function savePos(){ try{ localStorage.setItem('lb-proto-pos', JSON.stringify({book:S.book, chapter:S.chapter, top:scroller.scrollTop})); }catch{} }
+function loadPos(){ try{ return JSON.parse(localStorage.getItem('lb-proto-pos')||'null'); }catch{ return null; } }
+
+/* -------------------------------------------------------------- rendering */
+function renderChapter(restoreTop){
+  const b = BOOKS[S.book], ch = b.chapters[S.chapter];
+  $('#bookTitle').textContent = b.title;
+  $('#chapTitle').textContent = ch.title;
+  article.lang = b.locale;
+  article.innerHTML = '';
+  const p = document.createElement('p');
+  let idx = 0;
+  for(const sent of segments(b.locale, ch.text, 'sentence')){
+    const raw = sent.segment.trim();
+    if(!raw) continue;
+    const sp = document.createElement('span');
+    sp.className = 's'; sp.dataset.i = idx++;
+    const words = segments(b.locale, sent.segment, 'word');
+    let cursor = 0;
+    for(const w of words){
+      if(w.index > cursor) sp.appendChild(document.createTextNode(sent.segment.slice(cursor, w.index)));
+      if(w.isWordLike){
+        const ws = document.createElement('span');
+        ws.className = 'w'; ws.textContent = w.segment; ws.dataset.w = lookupKey(b, w.segment);
+        sp.appendChild(ws);
+      } else sp.appendChild(document.createTextNode(w.segment));
+      cursor = w.index + w.segment.length;
+    }
+    if(cursor < sent.segment.length) sp.appendChild(document.createTextNode(sent.segment.slice(cursor)));
+    p.appendChild(sp);
+  }
+  article.appendChild(p);
+  scroller.scrollTop = restoreTop || 0;
+  selectSentence(S.sel = 0);
+  renderTOC();
+  updateState();
+  updateProgress();
+}
+function renderTOC(){
+  const b = BOOKS[S.book], list = $('#tocList');
+  list.innerHTML = '';
+  b.chapters.forEach((c,i)=>{
+    const btn = document.createElement('button');
+    btn.className='ch'; btn.textContent = c.title; btn.setAttribute('aria-current', i===S.chapter);
+    btn.onclick = ()=>{ closeDrawer(); S.chapter=i; S.sel=0; renderChapter(); savePos(); };
+    list.appendChild(btn);
+  });
+}
+function sentences(){ return [...article.querySelectorAll('.s')]; }
+function selectSentence(i){ sentences().forEach((el,n)=>el.classList.toggle('sel', n===i)); }
+function updateProgress(){
+  const max = scroller.scrollHeight - scroller.clientHeight;
+  const pct = max>0 ? Math.min(100, Math.round(scroller.scrollTop/max*100)) : 100;
+  $('#progress i').style.width = pct+'%';
+}
+function updateState(){
+  const b = BOOKS[S.book], ch = b.chapters[S.chapter];
+  $('#protoState').textContent = `V${S.variant} · ${{hold:'长按',select:'划选',tap:'点词'}[S.gesture]} · ${b.title} · ${ch.title} · 句 ${S.sel+1}/${sentences().length}${S.restored?' · 已恢复位置':''}`;
+}
+
+/* ------------------------------------------------------------- playback */
+const playbar = { play:$('#play'), prev:$('#prev'), next:$('#next'), rate:$('#rate'), loop:$('#loop') };
+function play(i){
+  const list = sentences();
+  if(!list.length) return;
+  if(S.playing === i){ stopPlayback(); return; }
+  stopPlayback();
+  S.sel = i; selectSentence(i);
+  S.playing = i; updateState();
+  const el = list[i];
+  el.classList.add('loading');
+  el.scrollIntoView({block:'center'});
+  setTimeout(()=>{
+    el.classList.remove('loading'); el.classList.add('playing');
+    playbar.play.textContent = '⏸';
+    const dur = Math.min(4200, Math.max(1100, el.textContent.length*70));
+    S._timer = setTimeout(()=>{
+      el.classList.remove('playing');
+      S.playing = null; playbar.play.textContent = '▶';
+      if(S.loop==='all' || S.loop==='one') play(S.loop==='one' ? i : (i+1)%list.length);
+    }, dur);
+  }, 650);
+}
+function stopPlayback(){
+  clearTimeout(S._timer);
+  sentences().forEach(el=>el.classList.remove('playing','loading'));
+  S.playing = null; playbar.play.textContent = '▶';
+}
+playbar.play.onclick = ()=> S.playing!=null ? stopPlayback() : play(S.sel);
+playbar.prev.onclick = ()=>{ const n=sentences().length; const i=(S.sel-1+n)%n; selectSentence(S.sel=i); play(i); };
+playbar.next.onclick = ()=>{ const n=sentences().length; const i=(S.sel+1)%n; selectSentence(S.sel=i); play(i); };
+playbar.rate.onclick = ()=>{ S.rate = {'1×':'1.25×','1.25×':'0.75×','0.75×':'1×'}[S.rate]; playbar.rate.textContent=S.rate; toast('语速 '+S.rate+'（原型：只改数值）'); };
+playbar.loop.onclick = ()=>{ S.loop = {Off:'all',all:'one',one:'Off'}[S.loop]; playbar.loop.textContent=S.loop; };
+
+/* --------------------------------------------------------------- lookup */
+function contextSentence(el){ return el ? el.closest('.s') : null; }
+function entryFor(book, key){
+  return book.dict[key] || null;
+}
+function showCard(raw, sourceEl, anchor){
+  const b = BOOKS[S.book];
+  const key = lookupKey(b, raw);
+  const e = entryFor(b, key);
+  const ctx = contextSentence(sourceEl);
+  const ctxHTML = ctx ? ctx.textContent.replace(raw, '⟨'+raw+'⟩') : '';
+  const reading = e && e.reading ? `<div class="reading">${e.reading}</div>` : '';
+  const pos = e && e.pos ? `<span class="pos">${e.pos}</span>` : '';
+  const gloss = e ? e.gloss : '<span style="color:var(--muted)">未收录（真实实现走服务端词典，见 #11；查不到时怎么提示是本票要看的）</span>';
+  const ai = (e && e.ai) || `（mock）结合这一句：「${(ctx?ctx.textContent:'').slice(0,60)}…」中，「${raw}」在这里的意思是……`;
+  const html = `
+    <div class="word">${raw}${pos}</div>
+    ${reading}
+    <div class="gloss">${gloss}</div>
+    ${ctxHTML?`<div class="ctx">${ctxHTML}</div>`:''}
+    <div class="actions">
+      <button class="ai" data-ai>问 AI（结合上下文）</button>
+      <button data-close>关闭</button>
+    </div>
+    <div class="note">本地词典 · 离线可查；AI 是按需的第二层（#15 未定）。${b.lang==='ja'?'原型用 Intl.Segmenter 粗切词，真实实现是服务端 Sudachi + JMdict。':''}</div>`;
+  const wide = window.matchMedia('(min-width:820px)').matches;
+  const host = (S.variant===2 && wide) ? $('#panelBody')
+             : (S.variant===3 && wide) ? $('#pop')
+             : $('#sheetBody');
+  if(host === $('#pop')){
+    $('#pop').hidden = false; $('#pop').innerHTML = html;
+    const r = anchor && anchor.el ? anchor.el.getBoundingClientRect() : {left:60,top:80,width:80,bottom:110};
+    const top = scroller.scrollTop + r.bottom + 8;
+    $('#pop').style.top = Math.max(8, top) + 'px';
+    $('#pop').style.left = Math.min(window.innerWidth-330, Math.max(8, r.left-20)) + 'px';
+  } else if(host === $('#panelBody')){
+    host.innerHTML = html; setTab('lookup');
+  } else {
+    $('#sheetBody').innerHTML = html;
+    $('#sheet').classList.toggle('modal', S.variant===3 && !wide);
+    $('#sheet').classList.add('open'); $('#scrim').classList.add('open');
+  }
+  (host===$('#pop') ? $('#pop') : host).querySelectorAll('[data-close]').forEach(b=>b.onclick=closeCard);
+  (host===$('#pop') ? $('#pop') : host).querySelectorAll('[data-ai]').forEach(b=>b.onclick=()=>{
+    b.outerHTML = '<span class="spinner"></span> 问 AI…';
+    setTimeout(()=>{
+      const box = (host===$('#pop') ? $('#pop') : host).querySelector('[data-ai]')?.parentElement;
+      const out = document.createElement('div'); out.className='aiout'; out.textContent = ai;
+      (box||host).appendChild(out);
+    }, 1100);
+  });
+  updateState();
+}
+function closeCard(){ $('#sheet').classList.remove('open'); $('#scrim').classList.remove('open'); $('#pop').hidden = true; }
+$('#scrim').onclick = closeCard;
+$('#sheet').querySelector('.handle').onclick = closeCard;
+
+function nearestWord(sentenceEl, x){
+  const ws = [...sentenceEl.querySelectorAll('.w')];
+  if(!ws.length) return null;
+  let best = ws[0], d = Infinity;
+  for(const w of ws){ const r=w.getBoundingClientRect(); const c=r.left+r.width/2; const dd=Math.abs(c-x); if(dd<d){d=dd;best=w;} }
+  return best;
+}
+
+/* ------------------------------------------------------------- gestures */
+let pressTimer=null, longFired=false, startPt=null;
+article.addEventListener('pointerdown', e=>{
+  const s = e.target.closest('.s'); if(!s) return;
+  startPt = {x:e.clientX, y:e.clientY};
+  if(S.gesture!=='hold') return;
+  const wordEl = e.target.closest('.w') || nearestWord(s, e.clientX);
+  longFired = false;
+  pressTimer = setTimeout(()=>{
+    longFired = true;
+    if(wordEl){ showCard(wordEl.textContent, wordEl, {el:wordEl}); if(navigator.vibrate) navigator.vibrate(15); }
+  }, 420);
+});
+article.addEventListener('pointermove', e=>{
+  if(!startPt) return;
+  if(Math.abs(e.clientX-startPt.x)>12 || Math.abs(e.clientY-startPt.y)>12){ clearTimeout(pressTimer); startPt=null; }
+}, {passive:true});
+['pointerup','pointercancel'].forEach(t=>article.addEventListener(t, ()=>{ clearTimeout(pressTimer); startPt=null; }, {passive:true}));
+
+article.addEventListener('click', e=>{
+  if(longFired){ longFired=false; return; }
+  const w = e.target.closest('.w');
+  if(S.gesture==='tap' && w){ showCard(w.textContent, w, {el:w}); return; }
+  const s = e.target.closest('.s');
+  if(s) play(+s.dataset.i);
+});
+document.addEventListener('mouseup', ()=>{
+  if(S.gesture!=='select') return;
+  const sel = window.getSelection();
+  const raw = normalize(sel ? sel.toString() : '');
+  if(!raw || raw.length>16) return;
+  const r = sel.getRangeAt(0).getBoundingClientRect();
+  const node = sel.anchorNode && sel.anchorNode.parentElement;
+  showCard(raw, node, {el:node, rect:r});
+  sel.removeAllRanges();
+});
+
+/* -------------------------------------------------- chrome: toc, books, editor */
+function openDrawer(){ $('#tocDrawer').classList.add('open'); $('#scrim').classList.add('open'); }
+function closeDrawer(){ $('#tocDrawer').classList.remove('open'); if(!$('#sheet').classList.contains('open')) $('#scrim').classList.remove('open'); }
+$('#tocBtn').onclick = ()=>{ renderTOC(); openDrawer(); };
+$('#scrim').addEventListener('click', closeDrawer);
+$('#bookBtn').onclick = ()=>{
+  const m = $('#bookmenu');
+  if(!m.hidden){ m.hidden = true; return; }
+  m.innerHTML='';
+  BOOKS.forEach((b,i)=>{
+    const btn=document.createElement('button');
+    btn.textContent = `${b.title} — ${b.author}`;
+    btn.onclick = ()=>{ S.book=i; S.chapter=0; S.sel=0; S.restored=false; m.hidden=true; renderChapter(); savePos(); };
+    m.appendChild(btn);
+  });
+  m.hidden = false;
+};
+document.addEventListener('click', e=>{ if(!e.target.closest('#bookBtn,#bookmenu')) $('#bookmenu').hidden = true; });
+$('#editorToggle').onclick = ()=>{ const b=$('#editorBody'); b.hidden=!b.hidden; };
+$('#editorClose').onclick = ()=>{ $('#editorBody').hidden = true; };
+function setTab(t){
+  document.querySelectorAll('#aside .tabs button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.tab===t));
+  if(t==='toc'){
+    const b=BOOKS[S.book];
+    $('#panelBody').innerHTML = '<div>'+b.chapters.map((c,i)=>`<button class="ch" style="display:block;width:100%;text-align:left;border:0;padding:.5rem .2rem" data-ch="${i}">${i===S.chapter?'▸ ':''}${c.title}</button>`).join('')+'</div>';
+    $('#panelBody').querySelectorAll('[data-ch]').forEach(b2=>b2.onclick=()=>{ S.chapter=+b2.dataset.ch; S.sel=0; renderChapter(); savePos(); });
+  }
+}
+document.querySelectorAll('#aside .tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
+
+/* ------------------------------------------------------- variant switching */
+function setVariant(v){
+  S.variant = v; app.dataset.variant = String(v);
+  document.querySelectorAll('#proto [data-v]').forEach(b=>b.setAttribute('aria-pressed', +b.dataset.v===v));
+  closeCard();
+  const url = new URL(location.href); url.searchParams.set('v', v); history.replaceState(null,'',url);
+  updateState();
+}
+function setGesture(g){
+  S.gesture = g; app.dataset.gesture = g;
+  document.querySelectorAll('#proto [data-g]').forEach(b=>b.setAttribute('aria-pressed', b.dataset.g===g));
+  updateState();
+}
+document.querySelectorAll('#proto [data-v]').forEach(b=>b.onclick=()=>setVariant(+b.dataset.v));
+document.querySelectorAll('#proto [data-g]').forEach(b=>b.onclick=()=>setGesture(b.dataset.g));
+$('#resetPos').onclick = ()=>{ localStorage.removeItem('lb-proto-pos'); toast('已清除阅读位置（刷新试试）'); };
+
+/* ---------------------------------------------------------------- startup */
+scroller.addEventListener('scroll', ()=>{ updateProgress(); savePos(); }, {passive:true});
+/* 原型：窗口尺寸变化不关查义卡（headless 截图时会触发 resize，曾把浮层关掉） */
+(function start(){
+  const q = new URLSearchParams(location.search);
+  const p = q.get('book') ? null : loadPos();
+  const qBook = q.get('book');
+  if(qBook){ const bi = BOOKS.findIndex(b=>b.id===qBook); if(bi>=0){ S.book=bi; S.chapter = +(q.get('ch')||0); } }
+  else if(p && BOOKS[p.book]){ S.book=p.book; S.chapter=p.chapter; }
+  const v = +(q.get('v')||1); setVariant([1,2,3].includes(v)?v:1);
+  setGesture(q.get('g') || (matchMedia('(hover:none)').matches ? 'hold' : 'select'));
+  renderChapter(p ? p.top : 0);
+  if(p){ S.restored = true; setTimeout(()=>toast(`已回到上次阅读位置：${BOOKS[S.book].chapters[S.chapter].title}`), 400); }
+  updateState();
+  const demoWord = q.get('word');
+  if(demoWord) setTimeout(()=>{
+    const el = [...article.querySelectorAll('.w')].find(x=>x.textContent.toLowerCase().includes(demoWord.toLowerCase()));
+    if(el) showCard(el.textContent, el, {el});
+  }, 600);
+})();
+</script>
+</body>
+</html>
