@@ -407,6 +407,8 @@ class TtsHandler(BaseHTTPRequestHandler):
             return dicts.lookup_en(word)
         if lang == "ja":
             return dicts.lookup_ja(word)
+        if lang == "zh":
+            return dicts.lookup_zh(word)
         return None
 
     # -- request / response helpers ----------------------------------------
@@ -508,7 +510,7 @@ class TtsHandler(BaseHTTPRequestHandler):
 
 
 def _lookup_lang(lang):
-    """MVP lookup languages; zh stays reserved for the future Chinese effort."""
+    """Canonical lookup language code: zh-CN / zh-TW all resolve to zh."""
     lang = (lang or "").strip().lower()
     if lang.startswith("zh"):
         return "zh"

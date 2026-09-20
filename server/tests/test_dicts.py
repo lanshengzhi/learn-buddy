@@ -56,6 +56,18 @@ def _fixture_dicts(dir):
             "INSERT INTO kanji VALUES ('食', 'ショク', 'く.う', 'eat|food')",
         ],
     )
+    _write_db(
+        os.path.join(dir, "zh.sqlite"),
+        [
+            "CREATE TABLE cedict (traditional TEXT, simplified TEXT, pinyin TEXT, glosses TEXT)",
+            "CREATE INDEX cedict_simplified ON cedict(simplified)",
+            "CREATE INDEX cedict_traditional ON cedict(traditional)",
+            "INSERT INTO cedict VALUES ('寶玉', '宝玉', 'bao3 yu4', '/precious jade/')",
+            "INSERT INTO cedict VALUES ('紅樓夢', '红楼梦', 'Hong2 lou2 Meng4', '/A Dream of Red Mansions/')",
+            "CREATE TABLE hanzi (hanzi TEXT PRIMARY KEY, pinyin TEXT, definition TEXT)",
+            "INSERT INTO hanzi VALUES ('薵', 'chou2', 'a kind of water plant')",
+        ],
+    )
 
 
 class DictsTestCase(unittest.TestCase):
@@ -119,8 +131,58 @@ class DictsTestCase(unittest.TestCase):
         self.assertEqual(found["食べる"], "ja:食べる")
         self.assertIsNone(found["存在しない語"])
 
+    def test_zh_simplified_hit(self):
+        entry = self.dicts.lookup_zh("宝玉")
+        self.assertEqual(entry["key"], "zh:宝玉")
+        self.assertEqual(entry["matched"], "宝玉")
+        self.assertEqual(entry["reading"], "bǎo yù")
+        self.assertEqual(entry["senses"][0]["gloss"], "precious jade")
+
+    def test_zh_traditional_form_resolves_to_the_same_key(self):
+        # CC-CEDICT stores both traditions in one row; the key is the
+        # simplified form so marks share across traditions.
+        self.assertEqual(self.dicts.lookup_zh("寶玉")["key"], "zh:宝玉")
+
+    def test_zh_single_character_falls_back_to_unihan(self):
+        # 薵 is one of the 9 CC-CEDICT misses measured in issue #10.
+        entry = self.dicts.lookup_zh("薵")
+        self.assertEqual(entry["key"], "zh:薵")
+        self.assertEqual(entry["reading"], "chóu")
+        self.assertEqual(entry["senses"][0]["gloss"], "a kind of water plant")
+
+    def test_zh_misses_are_none(self):
+        self.assertIsNone(self.dicts.lookup_zh("甄士隐"))
+        self.assertIsNone(self.dicts.lookup_zh("123"))
+
+    def test_zh_without_dict_file_raises(self):
+        self.dicts.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+        os.makedirs(self.dir)
+        empty = Dicts(self.dir)
+        try:
+            with self.assertRaises(LookupUnavailable):
+                empty.lookup_zh("宝玉")
+        finally:
+            empty.close()
+
+    def test_check_zh_reports_keys(self):
+        found = self.dicts.check("zh", ["宝玉", "寶玉", "甄士隐"])
+        self.assertEqual(found["宝玉"], "zh:宝玉")
+        self.assertEqual(found["寶玉"], "zh:宝玉")
+        self.assertIsNone(found["甄士隐"])
+
+    def test_pinyin_tone_marks(self):
+        from dicts import _pinyin_tone_marks
+
+        self.assertEqual(_pinyin_tone_marks("Bao3 yu4"), "Bǎo yù")
+        self.assertEqual(_pinyin_tone_marks("ni3 hao3"), "nǐ hǎo")
+        self.assertEqual(_pinyin_tone_marks("yi1"), "yī")
+        self.assertEqual(_pinyin_tone_marks("er5"), "er")
+        self.assertEqual(_pinyin_tone_marks("lu:3"), "lǚ")
+        self.assertEqual(_pinyin_tone_marks("Hong2 lou2 Meng4"), "Hóng lóu Mèng")
+
     def test_check_unknown_language_all_miss(self):
-        found = self.dicts.check("zh", ["红楼梦"])
+        found = self.dicts.check("fr", ["红楼梦"])
         self.assertEqual(found, {"红楼梦": None})
 
 

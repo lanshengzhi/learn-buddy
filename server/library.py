@@ -123,10 +123,11 @@ class Library:
     """File-backed learner records and Books under `root`."""
 
     def __init__(self, root, max_upload_bytes=DEFAULT_MAX_UPLOAD_BYTES,
-                 ja_tokenizer=None, now=None):
+                 ja_tokenizer=None, zh_tokenizer=None, now=None):
         self.root = os.path.abspath(root)
         self.max_upload_bytes = max_upload_bytes
         self.ja_tokenizer = ja_tokenizer or textseg.tokenize_ja
+        self.zh_tokenizer = zh_tokenizer or textseg.tokenize_zh
         self.now = now or time.time
         os.makedirs(self.root, exist_ok=True)
 
@@ -310,7 +311,7 @@ class Library:
             manifest = _read_json(manifest_path, {})
             return True, {"book": self._book_summary(manifest, profile_id)}
         try:
-            parsed = epub.parse_epub(data, ja_tokenizer=self.ja_tokenizer)
+            parsed = epub.parse_epub(data, ja_tokenizer=self.ja_tokenizer, zh_tokenizer=self.zh_tokenizer)
         except epub.ParseError as error:
             raise ApiError(error.code, error.message) from error
 

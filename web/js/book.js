@@ -661,23 +661,30 @@ export class BookView {
     } else if (this.cardState === 'missing') {
       card.append(paragraph('词典里没有这个词。', 'muted'));
     } else if (entry) {
+      const markButton = () => {
+        const mark = document.createElement('button');
+        mark.type = 'button';
+        mark.className = 'btn tiny mark-known';
+        const known = this.knownWords.has(entry.key);
+        mark.textContent = known ? '✓ 已认识' : '标记认识';
+        mark.addEventListener('click', () => void this.markKnown(entry.key));
+        return mark;
+      };
       const senses = document.createElement('ol');
       senses.className = 'card-senses';
       entry.senses.slice(0, 8).forEach((sense, index) => {
         const li = document.createElement('li');
         li.append(span(sense.gloss));
         if (sense.pos) li.append(span(sense.pos, 'muted card-pos'));
-        if (index === 0 && entry.key && !selected) {
-          const known = this.knownWords.has(entry.key);
-          const mark = document.createElement('button');
-          mark.type = 'button';
-          mark.className = 'btn tiny mark-known';
-          mark.textContent = known ? '✓ 已认识' : '标记认识';
-          mark.addEventListener('click', () => void this.markKnown(entry.key));
-          li.append(mark);
-        }
+        if (index === 0 && entry.key && !selected) li.append(markButton());
         senses.append(li);
       });
+      if (entry.senses.length === 0 && entry.key && !selected) {
+        // Unihan reading-only card (rare characters): still markable 我认识.
+        const li = document.createElement('li');
+        li.append(markButton());
+        senses.append(li);
+      }
       card.append(senses);
     }
 
@@ -796,4 +803,4 @@ function isFinePointer() {
   return window.matchMedia('(pointer: fine)').matches;
 }
 
-const LANG_LABELS = { en: '英语', ja: '日语', 'zh-CN': '中文' };
+const LANG_LABELS = { en: '英语', ja: '日语', zh: '中文', 'zh-CN': '中文' };

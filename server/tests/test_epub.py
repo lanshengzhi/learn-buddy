@@ -183,6 +183,60 @@ class TestLanguageDetection(unittest.TestCase):
         self.assertEqual(book["lang"], "ja")
 
 
+class TestChineseBook(unittest.TestCase):
+    """Chinese books: zh sentence splitting + the jieba word annotation
+    (issue #21). The zh_tokenizer seam keeps tests independent of jieba."""
+
+    _OPF = """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="pub-id">urn:uuid:test</dc:identifier>
+    <dc:title>Honglou</dc:title>
+    <dc:language>zh</dc:language>
+  </metadata>
+  <manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="c1"/></spine>
+</package>
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        doc = (
+            '<html><head><title>C</title></head><body>'
+            '<p>甄士隐梦幻识通灵，贾雨村风尘怀闺秀。此开卷第一回也。</p>'
+            '</body></html>'
+        )
+        cls.book = epub.parse_epub(_zip({
+            "META-INF/container.xml": CONTAINER,
+            "OEBPS/content.opf": cls._OPF,
+            "OEBPS/c1.xhtml": doc,
+        }), zh_tokenizer=textseg.tokenize_rule)
+
+    def test_zh_sentences_are_split_on_terminators(self):
+        self.assertEqual(
+            [s["t"] for s in self.book["chapters"][0]["sentences"]],
+            ["甄士隐梦幻识通灵，贾雨村风尘怀闺秀。", "此开卷第一回也。"],
+        )
+
+    def test_zh_word_lengths_partition_the_sentence(self):
+        sentence = self.book["chapters"][0]["sentences"][0]
+        self.assertEqual(sum(sentence["w"]), len(sentence["t"]))
+        self.assertEqual(sentence["ruby"], [])
+
+    def test_missing_zh_tokenizer_is_a_parse_failure(self):
+        def broken(text):
+            raise textseg.TokenizerUnavailable("jieba missing")
+
+        doc = '<html><head><title>C</title></head><body><p>甄士隐梦幻识通灵。</p></body></html>'
+        with self.assertRaises(epub.ParseError) as caught:
+            epub.parse_epub(_zip({
+                "META-INF/container.xml": CONTAINER,
+                "OEBPS/content.opf": self._OPF,
+                "OEBPS/c1.xhtml": doc,
+            }), zh_tokenizer=broken)
+        self.assertEqual(caught.exception.code, "parse_failed")
+
+
 class TestParseErrors(unittest.TestCase):
     def _code(self, data, **kwargs):
         with self.assertRaises(epub.ParseError) as caught:

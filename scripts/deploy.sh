@@ -16,14 +16,18 @@ DEST=/srv/learnbuddy
 rsync -az --exclude 'cache/' --exclude 'data/' --exclude '__pycache__/' web/ "${HOST}:${DEST}/web/"
 rsync -az --exclude 'cache/' --exclude 'data/' --exclude '__pycache__/' server/ "${HOST}:${DEST}/server/"
 
-# Lookup dictionaries (~130 MB build artifacts, ADR 0008). Synced once —
+# Python backend deps (jieba joined with ADR 0009; sudachipy was already
+# provisioned). Install only when something is missing — pip is slow offline.
+ssh "${HOST}" "${DEST}/.venv/bin/python3 -c 'import jieba, sudachipy' 2>/dev/null || sudo -u learnbuddy ${DEST}/.venv/bin/pip install -q -r ${DEST}/server/requirements.txt"
+
+# Lookup dictionaries (~150 MB build artifacts, ADR 0008/0009). Synced once —
 # rebuilt only when a local rebuild changes them; absent locally, the
 # builder can run on claw (sudachipy lives in claw's venv).
 if [ -f server/data/dicts/en.sqlite ]; then
   ssh "${HOST}" "mkdir -p ${DEST}/server/data"
   rsync -az server/data/dicts/ "${HOST}:${DEST}/server/data/dicts/"
 else
-  ssh "${HOST}" "test -f ${DEST}/server/data/dicts/en.sqlite || sudo -u learnbuddy ${DEST}/.venv/bin/python3 ${DEST}/server/tools/build_dicts.py --only en,ja,kanji" || true
+  ssh "${HOST}" "test -f ${DEST}/server/data/dicts/en.sqlite || sudo -u learnbuddy ${DEST}/.venv/bin/python3 ${DEST}/server/tools/build_dicts.py --only en,ja,kanji,zh" || true
 fi
 
 # Stamp the deployed sw.js with a fresh value so the browser detects a new

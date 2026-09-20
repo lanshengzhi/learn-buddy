@@ -54,9 +54,10 @@ class ParseError(Exception):
         self.message = message
 
 
-def parse_epub(data, ja_tokenizer=None):
+def parse_epub(data, ja_tokenizer=None, zh_tokenizer=None):
     """Parse epub bytes into `{title, author, lang, chapters}`."""
     ja_tokenizer = ja_tokenizer or textseg.tokenize_ja
+    zh_tokenizer = zh_tokenizer or textseg.tokenize_zh
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except (zipfile.BadZipFile, OSError) as error:
@@ -67,7 +68,7 @@ def parse_epub(data, ja_tokenizer=None):
         docs = _load_documents(archive, opf)
         lang = _book_language(opf, docs)
         destinations = _load_destinations(archive, opf, docs)
-        chapters = _build_chapters(docs, destinations, lang, ja_tokenizer)
+        chapters = _build_chapters(docs, destinations, lang, ja_tokenizer, zh_tokenizer)
         if not chapters:
             raise ParseError("parse_failed", "no readable text chapters")
         return {
@@ -484,7 +485,7 @@ def _load_ncx_links(archive, opf):
 # -- chapters --------------------------------------------------------------
 
 
-def _build_chapters(documents, destinations, lang, ja_tokenizer):
+def _build_chapters(documents, destinations, lang, ja_tokenizer, zh_tokenizer):
     if destinations:
         starts = destinations
     else:
@@ -503,7 +504,7 @@ def _build_chapters(documents, destinations, lang, ja_tokenizer):
         sentences = []
         try:
             for sentence in textseg.split_sentences(text, lang):
-                sentences.append(_annotate(sentence, lang, ja_tokenizer))
+                sentences.append(_annotate(sentence, lang, ja_tokenizer, zh_tokenizer))
         except textseg.TokenizerUnavailable as error:
             raise ParseError("parse_failed", str(error)) from error
         if not sentences:
@@ -515,13 +516,13 @@ def _build_chapters(documents, destinations, lang, ja_tokenizer):
     return chapters
 
 
-def _annotate(sentence, lang, ja_tokenizer):
+def _annotate(sentence, lang, ja_tokenizer, zh_tokenizer):
     try:
-        return textseg.annotate(sentence, lang, ja_tokenizer)
+        return textseg.annotate(sentence, lang, ja_tokenizer, zh_tokenizer)
     except textseg.TokenizerUnavailable:
         raise
     except Exception as error:
-        raise ParseError("parse_failed", f"Japanese tokenizer failed: {error}") from error
+        raise ParseError("parse_failed", f"tokenizer failed: {error}") from error
 
 
 def _slice_text(documents, start, end):

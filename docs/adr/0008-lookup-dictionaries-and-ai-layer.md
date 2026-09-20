@@ -1,7 +1,7 @@
 # ADR 0008: Lookup dictionaries and the AI explanation layer
 
 Date: 2026-09-20
-Status: Accepted
+Status: Accepted (the zh part amended by [ADR 0009](0009-chinese-lookup-and-segmentation.md))
 Tickets: [#11](https://github.com/lanshengzhi/learn-buddy/issues/11) (research),
 [#12](https://github.com/lanshengzhi/learn-buddy/issues/12) (UI prototype),
 [#15](https://github.com/lanshengzhi/learn-buddy/issues/15) (AI decision),

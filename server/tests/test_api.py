@@ -372,6 +372,15 @@ class TestLookupEndpoints(ApiTestCase):
                 "INSERT INTO senses VALUES (1, 0, 'v1', 'to eat')",
             ],
         )
+        _write_db(
+            os.path.join(dicts_dir, "zh.sqlite"),
+            [
+                "CREATE TABLE cedict (traditional TEXT, simplified TEXT, pinyin TEXT, glosses TEXT)",
+                "CREATE INDEX cedict_simplified ON cedict(simplified)",
+                "CREATE INDEX cedict_traditional ON cedict(traditional)",
+                "INSERT INTO cedict VALUES ('寶玉', '宝玉', 'bao3 yu4', '/precious jade/')",
+            ],
+        )
 
     def test_lookup_resolves_en_and_ja(self):
         self._with_fixture_dicts()
@@ -388,12 +397,29 @@ class TestLookupEndpoints(ApiTestCase):
         self.assertEqual(payload["key"], "ja:食べる")
         self.assertEqual(payload["reading"], "たべる")
 
+    def test_lookup_resolves_zh(self):
+        self._with_fixture_dicts()
+        # zh-CN canonicalizes to zh.
+        status, _, body = self.get_url("/lookup", {"lang": "zh-CN", "word": "宝玉"})
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["lang"], "zh")
+        self.assertEqual(payload["key"], "zh:宝玉")
+        self.assertEqual(payload["reading"], "bǎo yù")
+        # Mixed-tradition text: the traditional form hits the same entry.
+        status, _, body = self.get_url("/lookup", {"lang": "zh", "word": "寶玉"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["key"], "zh:宝玉")
+
     def test_lookup_misses_are_404(self):
         self._with_fixture_dicts()
         status, _, body = self.get_url("/lookup", {"lang": "en", "word": "qwertyuiop"})
         self.assertEqual(status, 404)
         self.assertEqual(json.loads(body)["error"], "entry_not_found")
         status, _, body = self.get_url("/lookup", {"lang": "fr", "word": "bonjour"})
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body)["error"], "entry_not_found")
+        status, _, body = self.get_url("/lookup", {"lang": "zh", "word": "甄士隐"})
         self.assertEqual(status, 404)
         self.assertEqual(json.loads(body)["error"], "entry_not_found")
 

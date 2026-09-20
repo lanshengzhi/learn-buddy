@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Build the lookup dictionary SQLite files (ADR 0008) into <data-dir>/dicts/.
 
-Sources (research/lookup-data.md §2):
+Sources (research/lookup-data.md §2; zh sources measured in research/rare-hanzi.md):
   en.sqlite   ECDICT release csv        → https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv
   ja.sqlite   JMdict_e.gz               → https://www.edrdg.org/pub/Nihongo/JMdict_e.gz   (www., not ftp.: cert CN)
   kanji.sqlite KANJIDIC2                → https://www.edrdg.org/pub/Nihongo/kanjidic2.xml.gz
+  zh.sqlite   CC-CEDICT daily export    → https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz (CC BY-SA 4.0)
+              Unihan.zip (kMandarin, kDefinition) → https://www.unicode.org/Public/UCD/latest/ucd/Unihan.zip
 
 Usage:  python3 server/tools/build_dicts.py [--data-dir DIR] [--only en,ja]
 Files are written atomically (tmp + rename); existing files are kept unless
---force. zh.sqlite is deliberately out of MVP (Chinese effort is a separate map).
+--force.
 """
 
 import argparse
@@ -28,6 +30,8 @@ DEFAULT_DATA_DIR = os.path.join(REPO_ROOT, "server", "data")
 ECDICT_URL = "https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv"
 JMDICT_URL = "https://www.edrdg.org/pub/Nihongo/JMdict_e.gz"
 KANJIDIC_URL = "https://www.edrdg.org/pub/Nihongo/kanjidic2.xml.gz"
+CEDICT_URL = "https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz"
+UNIHAN_URL = "https://www.unicode.org/Public/UCD/latest/ucd/Unihan.zip"
 
 USER_AGENT = "learnbuddy-dict-builder/1.0"
 
@@ -75,6 +79,50 @@ def build_en(connection, source):
             (record.get("definition") or "").strip(),
         ))
     connection.executemany("INSERT OR REPLACE INTO ecdict VALUES (?, ?, ?, ?)", rows)
+
+
+# -- Chinese (CC-CEDICT + Unihan) ---------------------------------------------
+
+# `傳統字 簡體字 [pinyin] /gloss/ /gloss/` — traditional and simplified live in
+# one row, so the runtime can exact-match either tradition without conversion.
+_CEDICT_LINE = re.compile(
+    r"^(?P<traditional>\S+) (?P<simplified>\S+) \[(?P<pinyin>[^\]]+)\] (?P<glosses>/.*/)$"
+)
+
+
+def build_zh(connection, sources):
+    cedict, unihan = sources
+    connection.execute(
+        "CREATE TABLE cedict (traditional TEXT, simplified TEXT, pinyin TEXT, glosses TEXT)"
+    )
+    connection.execute("CREATE INDEX cedict_simplified ON cedict(simplified)")
+    connection.execute("CREATE INDEX cedict_traditional ON cedict(traditional)")
+    rows = []
+    for line in cedict.decode("utf-8", "replace").splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        match = _CEDICT_LINE.match(line)
+        if match is None:
+            continue
+        rows.append(
+            (
+                match["traditional"],
+                match["simplified"],
+                match["pinyin"].strip(),
+                match["glosses"],
+            )
+        )
+    connection.executemany("INSERT INTO cedict VALUES (?, ?, ?, ?)", rows)
+    connection.execute(
+        "CREATE TABLE hanzi (hanzi TEXT PRIMARY KEY, pinyin TEXT, definition TEXT)"
+    )
+    connection.executemany(
+        "INSERT OR REPLACE INTO hanzi VALUES (?, ?, ?)",
+        [
+            (char, entry.get("pinyin", ""), entry.get("definition", ""))
+            for char, entry in sorted(unihan.items())
+        ],
+    )
 
 
 # -- EDRG XML (JMdict / KANJIDIC2): entities live in an inline DTD that
@@ -140,33 +188,63 @@ def build_kanji(connection, source):
         )
 
 
+def _decode_unihan(data):
+    """Unihan.zip → {char: {"pinyin", "definition"}} from Unihan_Readings.txt:
+    kMandarin (the first value is the default reading of a 多音字) and
+    kDefinition (English gloss; recent UCD versions carry it in the same
+    file)."""
+    import zipfile
+
+    entries = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        for line in archive.read("Unihan_Readings.txt").decode("utf-8").splitlines():
+            parts = line.split("\t")
+            if line.startswith("#") or len(parts) < 3 or parts[1] not in ("kMandarin", "kDefinition"):
+                continue
+            value = parts[2].strip()
+            if not value:
+                continue
+            entry = entries.setdefault(chr(int(parts[0][2:], 16)), {})
+            if parts[1] == "kMandarin":
+                entry.setdefault("pinyin", value.split(" ")[0])
+            else:
+                entry["definition"] = value
+    return entries
+
+
 BUILDERS = {
-    "en": ("en.sqlite", ECDICT_URL, "utf-8", build_en),
-    "ja": ("ja.sqlite", JMDICT_URL, "gzip", build_ja),
-    "kanji": ("kanji.sqlite", KANJIDIC_URL, "gzip", build_kanji),
+    "en": ("en.sqlite", (ECDICT_URL,), ("utf-8",), build_en),
+    "ja": ("ja.sqlite", (JMDICT_URL,), ("gzip",), build_ja),
+    "kanji": ("kanji.sqlite", (KANJIDIC_URL,), ("gzip",), build_kanji),
+    "zh": ("zh.sqlite", (CEDICT_URL, UNIHAN_URL), ("gzip", "unihan"), build_zh),
+}
+
+
+_DECODERS = {
+    "utf-8": lambda data: data,
+    "gzip": gzip.decompress,
+    "unihan": _decode_unihan,
 }
 
 
 def build(langs, data_dir, force=False, downloader=_download):
     for lang in langs:
-        filename, url, encoding, builder = BUILDERS[lang]
+        filename, urls, encodings, builder = BUILDERS[lang]
         path = os.path.join(data_dir, "dicts", filename)
         if os.path.isfile(path) and not force:
             print(f"[skip] {lang}: {path} exists (use --force to rebuild)")
             continue
-        print(f"[build] {lang}: downloading {url}")
-        source = downloader(url)
-        if encoding == "gzip":
-            source = gzip.decompress(source)
-        print(f"[build] {lang}: building {path} from {len(source) / 1e6:.1f} MB of source data")
-        _atomic_write(path, lambda connection: builder(connection, source))
+        print(f"[build] {lang}: downloading {' and '.join(urls)}")
+        sources = [_DECODERS[encoding](downloader(url)) for url, encoding in zip(urls, encodings)]
+        print(f"[build] {lang}: building {path}")
+        _atomic_write(path, lambda connection: builder(connection, sources))
         print(f"[done] {lang}: {os.path.getsize(path) / 1e6:.1f} MB")
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
-    parser.add_argument("--only", default="en,ja,kanji", help="comma list: en, ja, kanji")
+    parser.add_argument("--only", default="en,ja,kanji,zh", help="comma list: en, ja, kanji, zh")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
     langs = [lang.strip() for lang in args.only.split(",") if lang.strip()]

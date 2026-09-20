@@ -7,12 +7,16 @@ Reading positions and Lookups are stable across devices and browsers (ADR
 - Japanese goes through SudachiPy (`split_sentences` + `annotate`). Sudachi
   caps one input at 49,149 utf-8 bytes, so sentences longer than that are fed
   to it in chunks.
+- Chinese goes through jieba (`tokenize_zh`, no ruby — readings belong to the
+  zh lookup card); traditional text degrades to single characters, which the
+  zh dictionary still resolves per character (its forms table carries both
+  the traditional and the simplified form).
 - Other languages use a rule tokenizer: Latin/number runs are words, CJK
   characters are one-character words, everything in between (spaces,
   punctuation) is its own segment, so the length array always reconstructs
   the sentence exactly.
 
-Both tokenizers produce the same shape: a `w` list of segment lengths whose
+All tokenizers produce the same shape: a `w` list of segment lengths whose
 sum is `len(t)` and a `ruby` list of `[start, length, reading]` annotations
 (empty outside Japanese).
 """
@@ -31,6 +35,9 @@ MAX_SUDACHI_BYTES = 49149
 KANJI_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 _JA_TERMINATORS = "。！？!?…"
+# 红楼梦 editions vary: the PG transcription (issue #10) uses `．`(U+FF0E)
+# 21,290 times as its period against `。` 7,886 times.
+_ZH_TERMINATORS = "。！？!?…．"
 _EN_TERMINATORS = ".!?…"
 # Characters that may follow a terminator and still belong to the sentence.
 _CLOSERS = "\"'”’»)]}」』）】》〉〕"
@@ -60,6 +67,7 @@ class TokenizerUnavailable(RuntimeError):
 
 _tokenizer_lock = threading.Lock()
 _tokenizer = None
+_jieba_tokenizer = None
 
 
 def _sudachi():
@@ -85,32 +93,47 @@ def _is_ja(lang):
     return str(lang or "").lower().startswith("ja")
 
 
+def _is_zh(lang):
+    return str(lang or "").lower().startswith("zh")
+
+
 def split_sentences(text, lang="en"):
     """Split `text` into sentences. Paragraph breaks (newlines) are
-    boundaries; within a paragraph, terminators end a sentence. Sentences
-    longer than MAX_SENTENCE_CHARS are cut into fixed-length chunks."""
+    boundaries; within a paragraph, terminators end a sentence. Japanese and
+    Chinese always break at a terminator (scripts have no capitalization to
+    check); other languages break only when the next non-space character
+    starts a new sentence. Sentences longer than MAX_SENTENCE_CHARS are cut
+    into fixed-length chunks."""
     if not text:
         return []
-    ja = _is_ja(lang)
+    if _is_ja(lang):
+        terminators, always_break = _JA_TERMINATORS, True
+    elif _is_zh(lang):
+        terminators, always_break = _ZH_TERMINATORS, True
+    else:
+        terminators, always_break = _EN_TERMINATORS, False
     sentences = []
     for paragraph in text.split("\n"):
         paragraph = paragraph.strip()
         if not paragraph:
             continue
-        for sentence in _split_paragraph(paragraph, ja):
+        for sentence in _split_paragraph(paragraph, terminators, always_break):
             sentences.extend(_chunk_overlong(sentence))
     return sentences
 
 
-def annotate(sentence, lang="en", ja_tokenizer=None):
+def annotate(sentence, lang="en", ja_tokenizer=None, zh_tokenizer=None):
     """Word-length array + ruby annotations for one sentence.
 
-    `ja_tokenizer` is the parse pipeline's injectable seam (defaults to
-    `tokenize_ja`). Returns `{"t", "w", "ruby"}`; `sum(w) == len(t)` always
-    holds — a tokenizer that does not partition the sentence falls back to the
-    rule tokenizer rather than emit an annotation the client cannot index."""
+    `ja_tokenizer` / `zh_tokenizer` are the parse pipeline's injectable seams
+    (default to `tokenize_ja` / `tokenize_zh`). Returns `{"t", "w", "ruby"}`;
+    `sum(w) == len(t)` always holds — a tokenizer that does not partition the
+    sentence falls back to the rule tokenizer rather than emit an annotation
+    the client cannot index."""
     if _is_ja(lang):
         lengths, ruby = (ja_tokenizer or tokenize_ja)(sentence)
+    elif _is_zh(lang):
+        lengths, ruby = (zh_tokenizer or tokenize_zh)(sentence)
     else:
         lengths, ruby = tokenize_rule(sentence)
     if sum(lengths) != len(sentence):
@@ -131,6 +154,40 @@ def tokenize_rule(text):
     if position < len(text):
         lengths.append(len(text) - position)
     return lengths, []
+
+
+def tokenize_zh(text):
+    """jieba tokenization for Chinese: word-length segments, no ruby. Uses a
+dedicated Tokenizer instance (`_jieba`) so the shared dictionary never
+touches jieba's global state; `initialize()` is jieba's thread-unsafe part
+and runs once under the module lock, `cut()` only reads afterwards."""
+    tokenizer = _jieba()
+    lengths = [len(word) for word in tokenizer.cut(text)]
+    if sum(lengths) != len(text):
+        return tokenize_rule(text)
+    return lengths, []
+
+
+def _jieba():
+    """Lazily build the shared jieba tokenizer — the same lazy-lock pattern
+as `_sudachi`: no module import of jieba at import time, so server starts
+(and test runs) never depend on the dependency being present until a
+Chinese book is actually parsed."""
+    global _jieba_tokenizer
+    if _jieba_tokenizer is None:
+        with _tokenizer_lock:
+            if _jieba_tokenizer is None:
+                try:
+                    import jieba
+                except ImportError as error:  # pragma: no cover - env dependent
+                    raise TokenizerUnavailable(
+                        "jieba is required to parse Chinese books "
+                        "(pip install -r server/requirements.txt)"
+                    ) from error
+                tokenizer = jieba.Tokenizer()
+                tokenizer.initialize()
+                _jieba_tokenizer = tokenizer
+    return _jieba_tokenizer
 
 
 def tokenize_ja(text, max_bytes=MAX_SUDACHI_BYTES):
@@ -155,52 +212,44 @@ def tokenize_ja(text, max_bytes=MAX_SUDACHI_BYTES):
     return lengths, ruby
 
 
-def _split_paragraph(paragraph, ja):
+def _split_paragraph(paragraph, terminators, always_break):
     sentences = []
     start = 0
     index = 0
     length = len(paragraph)
     while index < length:
         char = paragraph[index]
-        if ja:
-            if char not in _JA_TERMINATORS:
-                index += 1
-                continue
-            end = _consume_terminators(paragraph, index)
-            sentence = paragraph[start:end].strip()
-            if sentence:
-                sentences.append(sentence)
-            start = end
-            index = end
-            continue
-        if char not in _EN_TERMINATORS:
+        if char not in terminators:
             index += 1
             continue
-        end = _consume_terminators(paragraph, index)
-        next_index = end
-        while next_index < length and paragraph[next_index].isspace():
-            next_index += 1
-        if next_index < length and not _starts_new_sentence(paragraph, index, next_index):
-            index = end
-            continue
+        end = _consume_terminators(paragraph, index, terminators)
+        if not always_break:
+            next_index = end
+            while next_index < length and paragraph[next_index].isspace():
+                next_index += 1
+            if next_index < length and not _starts_new_sentence(paragraph, index, next_index):
+                index = end
+                continue
         sentence = paragraph[start:end].strip()
         if sentence:
             sentences.append(sentence)
-        start = next_index
-        index = next_index
+        if always_break:
+            start = end
+        else:
+            start = next_index
+        index = start
     tail = paragraph[start:].strip()
     if tail:
         sentences.append(tail)
     return sentences
 
 
-def _consume_terminators(paragraph, index):
+def _consume_terminators(paragraph, index, terminators):
     """Advance past a run of terminators plus closing quotes/brackets."""
     length = len(paragraph)
     end = index
     while end < length and (
-        paragraph[end] in _JA_TERMINATORS or paragraph[end] in _EN_TERMINATORS
-        or paragraph[end] in _CLOSERS
+        paragraph[end] in terminators or paragraph[end] in _CLOSERS
     ):
         end += 1
     return end
