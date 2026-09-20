@@ -309,7 +309,12 @@ class Library:
         manifest_path = self._manifest_path(book_id)
         if os.path.isfile(manifest_path):
             manifest = _read_json(manifest_path, {})
-            return True, {"book": self._book_summary(manifest, profile_id)}
+            if manifest.get("parseVersion") == epub.PARSE_VERSION:
+                return True, {"book": self._book_summary(manifest, profile_id)}
+            # Stale parse: the parser changed since this book was uploaded
+            # (e.g. a language pipeline fix). Fall through to a fresh parse so
+            # the baked chapters match the current tokenizer; positions live
+            # under the same content-hash id and survive the refresh.
         try:
             parsed = epub.parse_epub(data, ja_tokenizer=self.ja_tokenizer, zh_tokenizer=self.zh_tokenizer)
         except epub.ParseError as error:

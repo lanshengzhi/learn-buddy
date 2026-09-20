@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import unittest
 
+import epub
 import library
 import textseg
 
@@ -27,6 +28,11 @@ class LibraryTestCase(unittest.TestCase):
     def read_json(self, *parts):
         with open(os.path.join(self.root, *parts), encoding="utf-8") as fh:
             return json.load(fh)
+
+    def write_json(self, *parts, payload):
+        path = os.path.join(self.root, *parts)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
 
 
 class TestProfiles(LibraryTestCase):
@@ -242,7 +248,7 @@ class TestBooks(LibraryTestCase):
         self.assertTrue(os.path.isfile(os.path.join(book_dir, "chapters", "0000.json")))
         self.assertTrue(os.path.isfile(os.path.join(book_dir, "chapters", "0001.json")))
         manifest = self.read_json("books", book["id"], "manifest.json")
-        self.assertEqual(manifest["parseVersion"], 1)
+        self.assertEqual(manifest["parseVersion"], epub.PARSE_VERSION)
         self.assertEqual(manifest["fileName"], "nav.epub")
         self.assertEqual(manifest["toc"][0], {"index": 0, "title": "Chapter One"})
 
@@ -252,6 +258,20 @@ class TestBooks(LibraryTestCase):
         self.assertEqual(duplicate, True)
         self.assertEqual(second["book"]["id"], first["book"]["id"])
         self.assertEqual(len(self.library.list_books("dad")["books"]), 1)
+
+    def test_stale_parse_version_reparses(self):
+        # A parser upgrade (e.g. a language pipeline fix) must refresh the
+        # baked chapters of previously uploaded books on the next upload.
+        _, first = self._upload()
+        book_id = first["book"]["id"]
+        stale = self.read_json("books", book_id, "manifest.json")
+        stale["parseVersion"] = epub.PARSE_VERSION - 1
+        self.write_json("books", book_id, "manifest.json", payload=stale)
+        duplicate, second = self._upload()
+        self.assertEqual(duplicate, False)
+        self.assertEqual(second["book"]["id"], book_id)
+        manifest = self.read_json("books", book_id, "manifest.json")
+        self.assertEqual(manifest["parseVersion"], epub.PARSE_VERSION)
 
     def test_filename_is_reduced_to_a_basename(self):
         _, response = self._upload(name="../../evil.epub", data=_fixture("nav.epub"))

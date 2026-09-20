@@ -24,7 +24,7 @@ from urllib.parse import unquote
 
 import textseg
 
-PARSE_VERSION = 1
+PARSE_VERSION = 2
 
 OPF_MEDIA_TYPE = "application/oebps-package+xml"
 NCX_MEDIA_TYPE = "application/x-dtbncx+xml"

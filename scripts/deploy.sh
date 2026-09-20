@@ -17,8 +17,9 @@ rsync -az --exclude 'cache/' --exclude 'data/' --exclude '__pycache__/' web/ "${
 rsync -az --exclude 'cache/' --exclude 'data/' --exclude '__pycache__/' server/ "${HOST}:${DEST}/server/"
 
 # Python backend deps (jieba joined with ADR 0009; sudachipy was already
-# provisioned). Install only when something is missing — pip is slow offline.
-ssh "${HOST}" "${DEST}/.venv/bin/python3 -c 'import jieba, sudachipy' 2>/dev/null || sudo -u learnbuddy ${DEST}/.venv/bin/pip install -q -r ${DEST}/server/requirements.txt"
+# provisioned). The venv on claw is owned by the deploy user, so no sudo.
+# Install only when something is missing — pip is slow offline.
+ssh "${HOST}" "${DEST}/.venv/bin/python3 -c 'import jieba, sudachipy' 2>/dev/null || ${DEST}/.venv/bin/pip install -q -r ${DEST}/server/requirements.txt"
 
 # Lookup dictionaries (~150 MB build artifacts, ADR 0008/0009). Synced once —
 # rebuilt only when a local rebuild changes them; absent locally, the
