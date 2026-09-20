@@ -32,7 +32,7 @@ import textseg
 
 MAX_HISTORY_ENTRIES = 50
 ANCHOR_TEXT_CHARS = 40
-DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+DEFAULT_MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 
 DEFAULT_STATE = {"rate_preset": "Normal", "loop_mode": "All", "lastBook": None, "hl_mode": "underline"}
 DEFAULT_PROFILES = [
