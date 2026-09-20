@@ -2,8 +2,8 @@
  * Server API client — the browser side of the ADR 0007 learner-records API
  * (Profiles, State, History, Words, Books) plus the lookup / AI layer
  * (ADR 0008). Every call carries `?profile=` — "who is asking" — except
- * `GET /profiles` and `GET /books/<id>`. Errors surface as ApiError with the
- * backend's code (errors.js maps it to a learner-facing string).
+ * `GET /profiles`. Errors surface as ApiError with the backend's code
+ * (errors.js maps it to a learner-facing string).
  */
 
 import { apiErrorToMessage } from './errors.js';
@@ -35,7 +35,7 @@ export class ServerApi {
     return `${url.pathname}${url.search}`;
   }
 
-  async #request(path, { method = 'GET', body = null, signal } = {}) {
+  async #request(path, { method = 'GET', body = null, signal, keepalive = false } = {}) {
     let response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
@@ -43,6 +43,10 @@ export class ServerApi {
         headers: body !== null ? { 'Content-Type': 'application/json' } : undefined,
         body: body !== null ? JSON.stringify(body) : undefined,
         signal,
+        // The position flush runs in pagehide: without keepalive the browser
+        // aborts the request as the navigation starts and the write is lost
+        // (#17 acceptance: close mid-debounce must still save the position).
+        keepalive,
       });
     } catch (error) {
       if (error.name === 'AbortError') throw error;
@@ -143,7 +147,9 @@ export class ServerApi {
   }
 
   async getBook(bookId) {
-    return this.#request(`/books/${encodeURIComponent(bookId)}`, { withProfile: false });
+    // ?profile= makes the detail carry this Profile's reading position
+    // (chapter-level resume, #17 acceptance).
+    return this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}`));
   }
 
   async getChapter(bookId, chapterIndex) {
@@ -152,10 +158,13 @@ export class ServerApi {
     );
   }
 
-  async putPosition(bookId, chapter, sentence) {
+  async putPosition(bookId, chapter, sentence, { keepalive = false } = {}) {
     await this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}/position`), {
       method: 'PUT',
       body: { chapter, sentence },
+      // Only the pagehide flush needs keepalive; the debounced path is a
+      // normal in-page request.
+      keepalive,
     });
   }
 

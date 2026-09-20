@@ -354,12 +354,15 @@ class Library:
         books.sort(key=lambda book: (book["addedAt"], book["id"]), reverse=True)
         return {"books": books}
 
-    def get_book(self, book_id):
+    def get_book(self, book_id, profile_id=None):
         manifest = self._require_manifest(book_id)
-        return {
-            "book": {**self._book_info(manifest), "fileName": manifest.get("fileName", "")},
-            "toc": manifest.get("toc", []),
-        }
+        book = {**self._book_info(manifest), "fileName": manifest.get("fileName", "")}
+        if profile_id is not None:
+            # The asker's reading rides along so reopening the app resumes the
+            # right chapter (the library list carries the same field).
+            self.require_profile(profile_id)
+            book["reading"] = self._reading(book_id, profile_id)
+        return {"book": book, "toc": manifest.get("toc", [])}
 
     def get_chapter(self, book_id, index, profile_id):
         self.require_profile(profile_id)

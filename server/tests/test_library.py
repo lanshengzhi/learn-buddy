@@ -307,6 +307,16 @@ class TestBooks(LibraryTestCase):
             [{"index": 0, "title": "Chapter One"}, {"index": 1, "title": "Chapter Two"}],
         )
 
+    def test_get_book_with_profile_includes_that_profiles_reading(self):
+        # Reopening the app resumes the right CHAPTER: the detail response
+        # carries the asker's reading when a profile asks (#17 acceptance).
+        _, response = self._upload()
+        book_id = response["book"]["id"]
+        self.library.put_position(book_id, "dad", 1, 2)
+        detail = self.library.get_book(book_id, "dad")
+        self.assertEqual(detail["book"]["reading"], {"chapter": 1, "sentence": 2})
+        self.assertIsNone(self.library.get_book(book_id)["book"].get("reading"))
+
     def test_unknown_or_malformed_book_id_is_book_not_found(self):
         for book_id in ("deadbeef", "../../etc", ""):
             with self.assertRaises(library.ApiError) as caught:

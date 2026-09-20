@@ -104,15 +104,19 @@ export class BookView {
   /** Opens a Book at its Reading position (or chapter 0) and switches the view. */
   async openBook(bookId) {
     let book;
+    let toc = [];
     try {
-      book = (await this.api.getBook(bookId)).book;
+      // The detail response carries the TOC at the top level, next to `book`.
+      const detail = await this.api.getBook(bookId);
+      book = detail.book;
+      toc = detail.toc ?? [];
     } catch (error) {
       this.toast(error.message ?? '书打不开了。');
       return;
     }
     this.book = book;
     this.bookTitle.textContent = book.title || '未命名';
-    this.toc = book.toc ?? [];
+    this.toc = toc;
     this.checkedSentences = new Set();
     // The app opens here next time — /state.lastBook is the Profile's bookmark.
     this.api.putState({ lastBook: bookId }).catch(() => {});
@@ -758,7 +762,9 @@ export class BookView {
     if (this.positionTimer == null || this.lastSentence == null) return;
     clearTimeout(this.positionTimer);
     this.positionTimer = null;
-    void this.api.putPosition(this.book.id, this.chapterIndex, this.lastSentence).catch(() => {});
+    // keepalive: the fetch must survive the navigation that triggered the
+    // pagehide — a plain fetch is aborted and the position is lost (#17).
+    void this.api.putPosition(this.book.id, this.chapterIndex, this.lastSentence, { keepalive: true }).catch(() => {});
   }
 
   #restoreScroll() {

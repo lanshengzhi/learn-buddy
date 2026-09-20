@@ -463,10 +463,22 @@ try {
   console.log('library shows the uploaded book');
 
   // 22. Open the book → the chapter renders as sentences of word spans.
-  await bpage.locator('.library-entry').first().click();
+  // Pick the fixture by title: with real books in the library the newest
+  // entry is not necessarily this upload (#17 acceptance found this).
+  await bpage.locator('.library-entry', { hasText: 'Nav Book' }).first().click();
   await bpage.waitForFunction(() => document.body.dataset.view === 'book', { timeout: 10000 });
   await bpage.waitForSelector('#chapter-body .sent .w', { timeout: 15000 });
   console.log('book view open, sentences:', await bpage.locator('#chapter-body .sent').count());
+
+  // 22b. The aside TOC renders the book's chapters (the detail response keeps
+  //      the TOC at the top level, next to `book` — #17 acceptance regression).
+  await bpage.click('#tab-toc');
+  await bpage.waitForFunction(
+    () => document.querySelectorAll('#aside-body .toc-entry').length > 0,
+    { timeout: 8000 },
+  );
+  console.log('aside TOC renders:', await bpage.locator('#aside-body .toc-entry').count(), 'entries');
+  await bpage.click('#tab-lookup');
 
   // 23. Tap a sentence → it becomes the selected (playing) sentence; the
   //     debounced write-back persists it server-side. (At 2× the short
@@ -487,6 +499,21 @@ try {
   const selected = await bpage.evaluate(() => document.querySelector('#chapter-body .sent.selected')?.dataset.sentence);
   console.log('reopened to the server-side reading position, sentence', selected);
   if (selected !== '1') throw new Error(`expected sentence 1 after reopen, got ${selected}`);
+
+  // 24b. Close mid-debounce: tap another sentence and reload WITHOUT waiting
+  //      for the 1.2 s debounce — the pagehide flush must keepalive-write the
+  //      position so the restore lands on the tapped sentence (#17 acceptance).
+  await bpage.locator('#chapter-body .sent').nth(2).click();
+  await bpage.waitForFunction(
+    () => document.querySelector('#chapter-body .sent.playing')?.dataset.sentence === '2',
+    { timeout: 30000 },
+  );
+  await bpage.reload({ waitUntil: 'domcontentloaded' });
+  await bpage.waitForFunction(() => document.body.dataset.view === 'book', { timeout: 10000 });
+  await bpage.waitForSelector('#chapter-body .sent.selected', { timeout: 15000 });
+  const flushed = await bpage.evaluate(() => document.querySelector('#chapter-body .sent.selected')?.dataset.sentence);
+  console.log('flush-on-reload restored sentence', flushed);
+  if (flushed !== '2') throw new Error(`expected the keepalive flush to save sentence 2, got ${flushed}`);
 
   // 25. Hover-lookup: dwell on a word, the card opens in the (wide) aside.
   const word = bpage.locator('#chapter-body .sent .w').first();

@@ -348,7 +348,7 @@ class TtsHandler(BaseHTTPRequestHandler):
         self._json_response(200 if duplicate else 201, payload)
 
     def api_get_book(self, params, groups):
-        self._json_response(200, self._library().get_book(groups["book"]))
+        self._json_response(200, self._library().get_book(groups["book"], params.get("profile", "") or None))
 
     def api_get_chapter(self, params, groups):
         self._json_response(200, self._library().get_chapter(
