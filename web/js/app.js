@@ -23,7 +23,7 @@ import { computeFollowAction } from './core/visual-follow.js';
 import { HtmlAudioPlayer } from './player.js';
 import { createHistoryRepository, registerServiceWorker } from './bootstrap.js';
 import { ServerApi } from './core/api.js';
-import { detectLanguage } from './core/language.js';
+import { detectLanguage, normalizeLanguage } from './core/language.js';
 import { storedProfile, switchProfile, storeProfile } from './browser/profile.js';
 import { ServerPlaybackPreferences } from './browser/server-playback-preferences.js';
 import { BookView } from './book.js';
@@ -86,6 +86,12 @@ const LANGUAGE_LABELS = { en: '英语', ja: '日语', 'zh-CN': '中文' };
 /** Locale code → Chinese UI label (zh-CN is the default, shown as 中文). */
 function languageLabel(locale) {
   return LANGUAGE_LABELS[locale] ?? locale;
+}
+
+function setReadingLanguage(locale) {
+  const normalized = normalizeLanguage(locale);
+  if (normalized) document.body.dataset.readingLang = normalized;
+  else delete document.body.dataset.readingLang;
 }
 
 // Touch devices get the focus takeover (the virtual keyboard needs the room);
@@ -227,7 +233,7 @@ function chooseProfile(profiles) {
 function bindProfileChip() {
   const chip = $('profile-chip');
   chip.hidden = api.profile == null;
-  chip.textContent = `${api.profile ?? '档案'} ▾`;
+  chip.textContent = api.profile ?? '档案';
   chip.onclick = () => {
     void (async () => {
       let profiles = [];
@@ -298,6 +304,7 @@ function showCardsEmpty() {
 /** The BookView→controller bridge: a chapter's baked sentences take over. */
 async function loadChapter(sentences, reading, locale, restored) {
   chapterSentences = sentences;
+  setReadingLanguage(locale);
   setMode('book');
   await controller.loadText(
     sentences.map((sentence) => sentence.t).join('\n'),
@@ -389,6 +396,7 @@ function setText(value) {
   textInput.value = value;
   updateButton.disabled = text.trim() === '';
   langBadge.hidden = text.trim() === '';
+  setReadingLanguage(text.trim() === '' ? null : detectLanguage(text));
   if (text.trim() === '') langBadge.textContent = '';
 }
 
@@ -471,11 +479,20 @@ function renderSentences(sentences) {
   for (const sentence of sentences) {
     const li = document.createElement('li');
     li.dataset.index = String(sentence.index);
+    li.setAttribute('role', 'button');
+    li.tabIndex = 0;
     li.textContent = sentence.text;
-    li.addEventListener('click', () => {
+    const playSentence = () => {
       controller.onSentenceClicked(sentence.index);
       // Tapping a sentence means listening, not editing — collapse the editor.
       if (!editorCollapsed) setEditorCollapsed(true);
+    };
+    li.addEventListener('click', playSentence);
+    li.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      playSentence();
     });
     listEl.append(li);
     cards.push(li);
@@ -542,7 +559,10 @@ function applyCardsState(s) {
 
   for (const card of cards) {
     const index = Number(card.dataset.index);
-    card.classList.toggle('selected', s.selectedSentenceIndex === index);
+    const isSelected = s.selectedSentenceIndex === index;
+    card.classList.toggle('selected', isSelected);
+    if (isSelected) card.setAttribute('aria-current', 'true');
+    else card.removeAttribute('aria-current');
     const isPlaying =
       s.playingSentenceIndex === index ||
       (s.isAudioLoading && s.selectedSentenceIndex === index);
@@ -556,7 +576,10 @@ function applyBookState(s) {
   const sentences = bookView?.chapterBody?.querySelectorAll('.sent') ?? [];
   for (const sentence of sentences) {
     const index = Number(sentence.dataset.sentence);
-    sentence.classList.toggle('selected', s.selectedSentenceIndex === index);
+    const isSelected = s.selectedSentenceIndex === index;
+    sentence.classList.toggle('selected', isSelected);
+    if (isSelected) sentence.setAttribute('aria-current', 'true');
+    else sentence.removeAttribute('aria-current');
     const isPlaying =
       s.playingSentenceIndex === index ||
       (s.isAudioLoading && s.selectedSentenceIndex === index);

@@ -329,6 +329,16 @@ test('sentences in a Chinese passage keep the Chinese voice', async () => {
   await flush();
 });
 
+test('Chinese book chapters with the server locale zh keep the Chinese voice', async () => {
+  const { controller, tts, player } = setup();
+  await controller.loadText('你好。世界。', -1, 'zh');
+  controller.onSentenceClicked(0);
+  await flush();
+  assert.equal(tts.requests[0].voice, 'zh-CN-YunxiNeural');
+  player.finish();
+  await flush();
+});
+
 test('replay re-plays the selected sentence', async () => {
   const { controller, tts } = setup();
   await load(controller);

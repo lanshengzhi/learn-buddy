@@ -10,7 +10,7 @@ import unittest
 import urllib.error
 import urllib.request
 
-from ai import AiProxy, _default_urlopen
+from ai import AiProxy, DEFAULT_EXPLANATION_LOCALE, _default_urlopen
 from dicts import Dicts, LookupUnavailable
 
 
@@ -34,6 +34,7 @@ def _fixture_dicts(dir):
             "CREATE TABLE ecdict (word TEXT PRIMARY KEY, phonetic TEXT, translation TEXT, definition TEXT)",
             "INSERT INTO ecdict VALUES ('run', 'rʌn', '跑\n运行', 'move fast')",
             "INSERT INTO ecdict VALUES ('stop', 'stɑp', '停', 'cease')",
+            "INSERT INTO ecdict VALUES ('move', 'muːv', '', 'change location')",
         ],
     )
     _write_db(
@@ -85,6 +86,14 @@ class DictsTestCase(unittest.TestCase):
         self.assertEqual(entry["key"], "en:run")
         self.assertEqual(entry["reading"], "rʌn")
         self.assertEqual([sense["gloss"] for sense in entry["senses"]][:2], ["跑", "运行"])
+        self.assertEqual(entry["glossLanguage"], "zh")
+        self.assertEqual(entry["glossSource"], "ECDICT translation")
+
+    def test_en_definition_is_explicit_fallback_when_translation_is_empty(self):
+        entry = self.dicts.lookup_en("move")
+        self.assertEqual(entry["senses"][0]["gloss"], "change location")
+        self.assertEqual(entry["glossLanguage"], "en")
+        self.assertEqual(entry["glossSource"], "ECDICT definition")
 
     def test_en_lemma_fallback(self):
         self.assertEqual(self.dicts.lookup_en("runs")["key"], "en:run")
@@ -137,6 +146,8 @@ class DictsTestCase(unittest.TestCase):
         self.assertEqual(entry["matched"], "宝玉")
         self.assertEqual(entry["reading"], "bǎo yù")
         self.assertEqual(entry["senses"][0]["gloss"], "precious jade")
+        self.assertEqual(entry["glossLanguage"], "en")
+        self.assertEqual(entry["glossSource"], "CC-CEDICT")
 
     def test_zh_traditional_form_resolves_to_the_same_key(self):
         # CC-CEDICT stores both traditions in one row; the key is the
@@ -220,7 +231,9 @@ class AiProxyTestCase(unittest.TestCase):
             raise AssertionError("upstream should not be called on cache hit")
 
         proxy = self.make(urlopen=urlopen)
-        key = hashlib.sha256("word|sentence|en".encode("utf-8")).hexdigest()
+        key = hashlib.sha256(
+            f"word|sentence|en|{DEFAULT_EXPLANATION_LOCALE}".encode("utf-8")
+        ).hexdigest()
         proxy._write_cache(key, {"text": "cached"})
         self.assertEqual(proxy.explain("word", "sentence", "en"), {"text": "cached"})
         self.assertEqual(calls, [])
@@ -229,12 +242,23 @@ class AiProxyTestCase(unittest.TestCase):
         def urlopen(request, timeout):
             self.assertEqual(request.full_url, self.url + "/explain")
             payload = json.loads(request.data.decode("utf-8"))
-            self.assertEqual(payload, {"word": "run", "sentence": "I run.", "language": "en"})
+            self.assertEqual(
+                payload,
+                {
+                    "word": "run",
+                    "sentence": "I run.",
+                    "language": "en",
+                    "explanationLocale": DEFAULT_EXPLANATION_LOCALE,
+                },
+            )
             return {"text": "It means to run."}
 
         proxy = self.make(urlopen=urlopen)
         self.assertEqual(proxy.explain("run", "I run.", "en"), {"text": "It means to run."})
-        # Second call hits the cache even though the injected upstream died.
+        # A changed explanation locale is a different cache entry.
+        with self.assertRaises(AssertionError):
+            proxy.explain("run", "I run.", "en", "en-US")
+        # The original call hits the cache even though the injected upstream died.
         proxy._urlopen = None
         self.assertEqual(proxy.explain("run", "I run.", "en"), {"text": "It means to run."})
 

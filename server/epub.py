@@ -24,7 +24,7 @@ from urllib.parse import unquote
 
 import textseg
 
-PARSE_VERSION = 2
+PARSE_VERSION = 3
 
 OPF_MEDIA_TYPE = "application/oebps-package+xml"
 NCX_MEDIA_TYPE = "application/x-dtbncx+xml"
@@ -363,9 +363,17 @@ def _load_destinations(archive, opf, documents):
         except ParseError:
             continue
         resolved = _resolve_positions(links, opf, documents)
-        if resolved:
+        if resolved and not _navigation_is_degraded(resolved, documents):
             return resolved
     return []
+
+
+def _navigation_is_degraded(destinations, documents):
+    """Return whether a non-empty TOC is too sparse to trust."""
+    # debt: ratio-only detection; add target-distribution evidence if a real
+    # EPUB exposes a false positive.
+    text_document_count = sum(bool(document["text"].strip()) for document in documents)
+    return len(destinations) * 2 < text_document_count
 
 
 def _resolve_positions(links, opf, documents):

@@ -3,16 +3,17 @@ decision in #15): a thin proxy in front of the `learnbuddy-ai` Node service
 (pi SDK wrapping whatever model pi is configured with).
 
 The frontend never talks to the AI service directly; this proxy owns the
-cache (SHA-256 of word|sentence|language, shared across Profiles — an
-explanation is a language fact, not learner state) and the degrade codes
+cache (SHA-256 of word|sentence|language|explanationLocale, shared across
+Profiles — an explanation is a language fact, not learner state) and the degrade codes
 copied from the TTS exception vocabulary:
 
 - `ai_not_configured` — LEARNBUDDY_AI_URL unset (tab shows the copy, entry stays)
 - `ai_upstream_error` — the service answered non-200 or unusable
 - `ai_timeout`        — 20 s elapse without an answer (retryable in the tab)
 
-Requests carry only the target word, its sentence and the language — never
-Profile identity.
+Requests carry only the target word, its sentence, source language and
+explanation locale — never Profile identity. The explanation locale defaults
+to zh-CN so Chinese-native learners get a truthful, explicit contract.
 """
 
 import hashlib
@@ -22,6 +23,7 @@ import urllib.error
 import urllib.request
 
 AI_TIMEOUT_SECONDS = 20
+DEFAULT_EXPLANATION_LOCALE = "zh-CN"
 
 
 class AiProxy:
@@ -33,26 +35,37 @@ class AiProxy:
         self.timeout = timeout
         self._urlopen = urlopen or _default_urlopen
 
-    def explain(self, word, sentence, language):
+    def explain(self, word, sentence, language, explanation_locale=DEFAULT_EXPLANATION_LOCALE):
         word = (word or "").strip()
         sentence = (sentence or "").strip()
         language = (language or "").strip()
-        if not word or not language:
-            raise ValueError("word and language are required")
-        key = hashlib.sha256(f"{word}|{sentence}|{language}".encode("utf-8")).hexdigest()
+        explanation_locale = (explanation_locale or DEFAULT_EXPLANATION_LOCALE).strip()
+        if not word or not language or not explanation_locale:
+            raise ValueError("word, language and explanation locale are required")
+        key = hashlib.sha256(
+            f"{word}|{sentence}|{language}|{explanation_locale}".encode("utf-8")
+        ).hexdigest()
         cached = self._read_cache(key)
         if cached is not None:
             return cached
         if not self.url:
             raise LookupError("ai_not_configured")
-        answer = self._ask(word, sentence, language)
+        answer = self._ask(word, sentence, language, explanation_locale)
         self._write_cache(key, answer)
         return answer
 
     # -- internals ----------------------------------------------------------
 
-    def _ask(self, word, sentence, language):
-        body = json.dumps({"word": word, "sentence": sentence, "language": language}, ensure_ascii=False).encode("utf-8")
+    def _ask(self, word, sentence, language, explanation_locale):
+        body = json.dumps(
+            {
+                "word": word,
+                "sentence": sentence,
+                "language": language,
+                "explanationLocale": explanation_locale,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
         request = urllib.request.Request(
             self.url.rstrip("/") + "/explain",
             data=body,

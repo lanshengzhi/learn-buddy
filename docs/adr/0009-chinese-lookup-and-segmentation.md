@@ -39,8 +39,10 @@ Chinese word segmentation when asked.
   simplified form** (`zh:宝玉`), so 我认识 marks share across traditions. The
   numbered pinyin is converted to tone-marked pinyin for the card's 读音. A
   single-Han-character miss falls back to the `hanzi` table (Unihan) — the zh
-  counterpart of the ja KANJIDIC2 fallback, keeping 生僻字 lookable-up. There
-  is no lemma chain: Chinese has no inflection, exact match suffices.
+  counterpart of the ja KANJIDIC2 fallback, keeping 生僻字 lookable-up. The
+  CC-CEDICT and Unihan glosses remain English and are labeled as such in the
+  lookup response; no unlicensed Chinese gloss source is fabricated. There is
+  no lemma chain: Chinese has no inflection, exact match suffices.
 - **Sentence splitting**: Chinese always breaks at a terminator (like
   Japanese, no capitalization check): `。！？!?…` **plus `．`(U+FF0E)**, the
   PG transcription's period.

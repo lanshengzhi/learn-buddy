@@ -31,7 +31,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote_plus, urlparse
 
-from ai import AiProxy
+from ai import AiProxy, DEFAULT_EXPLANATION_LOCALE
 from azure_tts import AzureTtsSynthesizer
 from dicts import Dicts, LookupUnavailable, MAX_CHECK_WORDS
 from edge_tts import (
@@ -388,11 +388,13 @@ class TtsHandler(BaseHTTPRequestHandler):
     def api_ai(self, params, groups):
         body = self._read_json()
         word, sentence, language = body.get("word"), body.get("sentence"), body.get("language")
+        explanation_locale = body.get("explanationLocale", DEFAULT_EXPLANATION_LOCALE)
         if not isinstance(word, str) or not isinstance(language, str) \
-                or (sentence is not None and not isinstance(sentence, str)):
-            raise ApiError("bad_request", "word and language must be strings")
+                or (sentence is not None and not isinstance(sentence, str)) \
+                or not isinstance(explanation_locale, str):
+            raise ApiError("bad_request", "word, language and explanationLocale must be strings")
         try:
-            answer = self.server.app.ai.explain(word, sentence or "", language)
+            answer = self.server.app.ai.explain(word, sentence or "", language, explanation_locale)
         except ValueError as error:
             raise ApiError("bad_request", str(error)) from error
         except LookupError as error:

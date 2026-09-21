@@ -161,6 +161,43 @@ class TestParseSpineFallbackBook(unittest.TestCase):
         )
 
 
+class TestDegradedNavigationFallback(unittest.TestCase):
+    def test_sparse_ncx_falls_back_to_text_spine(self):
+        package = _package(
+            '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="license" href="license.xhtml" media-type="application/xhtml+xml"/>',
+            '<itemref idref="c1"/><itemref idref="c2"/><itemref idref="license"/>',
+        )
+        ncx = """<?xml version="1.0" encoding="utf-8"?>
+        <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+          <navMap>
+            <navPoint id="license" playOrder="1">
+              <navLabel><text>License</text></navLabel>
+              <content src="license.xhtml"/>
+            </navPoint>
+          </navMap>
+        </ncx>
+        """
+        book = epub.parse_epub(_zip({
+            "META-INF/container.xml": CONTAINER,
+            "OEBPS/content.opf": package,
+            "OEBPS/toc.ncx": ncx,
+            "OEBPS/c1.xhtml": "<html><body><h1>Chapter One</h1><p>First text.</p></body></html>",
+            "OEBPS/c2.xhtml": "<html><body><h1>Chapter Two</h1><p>Second text.</p></body></html>",
+            "OEBPS/license.xhtml": "<html><body><h1>License</h1><p>License text.</p></body></html>",
+        }))
+        self.assertEqual(
+            [chapter["title"] for chapter in book["chapters"]],
+            ["Chapter One", "Chapter Two", "License"],
+        )
+        self.assertEqual(
+            [sentence["t"] for sentence in book["chapters"][0]["sentences"]],
+            ["Chapter One", "First text."],
+        )
+
+
 class TestLanguageDetection(unittest.TestCase):
     def test_declared_language_wins(self):
         book = epub.parse_epub(_fixture("nav.epub"))

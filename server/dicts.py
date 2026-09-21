@@ -91,11 +91,17 @@ class Dicts:
                     (candidate,),
                 ).fetchone()
             if row is not None:
+                translation = row[2] or ""
+                gloss = translation or row[3] or ""
                 return {
                     "key": f"en:{row[0]}",
                     "matched": row[0],
                     "reading": row[1] or "",
-                    "senses": _gloss_senses(row[2] or row[3] or ""),
+                    "senses": _gloss_senses(gloss),
+                    # ECDICT's Chinese translation is preferred when present;
+                    # its English definition is an explicit fallback.
+                    "glossLanguage": "zh" if translation else "en",
+                    "glossSource": "ECDICT translation" if translation else "ECDICT definition",
                 }
         return None
 
@@ -143,6 +149,8 @@ class Dicts:
             "matched": text,
             "reading": "・".join(dict.fromkeys(readings)),
             "senses": _gloss_senses((meanings or "").replace("|", "\n")),
+            "glossLanguage": "en",
+            "glossSource": "KANJIDIC2",
         }
 
     # -- Chinese ------------------------------------------------------------
@@ -172,6 +180,10 @@ class Dicts:
                 "matched": simplified,
                 "reading": _pinyin_tone_marks(reading),
                 "senses": senses[:MAX_SENSES],
+                # CC-CEDICT glosses are English; do not present them as
+                # Chinese-native explanations.
+                "glossLanguage": "en",
+                "glossSource": "CC-CEDICT",
             }
         return self._hanzi_fallback(word)
 
@@ -196,6 +208,8 @@ class Dicts:
             "matched": text,
             "reading": _pinyin_tone_marks(pinyin or ""),
             "senses": _gloss_senses((definition or "").replace("|", "\n")),
+            "glossLanguage": "en",
+            "glossSource": "Unihan",
         }
 
     # -- presence check (标生词 underline) -----------------------------------
@@ -340,4 +354,6 @@ def _ja_entry(db, entry_id):
             {"pos": pos or "", "gloss": gloss}
             for pos, gloss in rows[:MAX_SENSES]
         ],
+        "glossLanguage": "en",
+        "glossSource": "JMdict_e",
     }

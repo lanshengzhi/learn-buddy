@@ -8,6 +8,8 @@
 
 import { apiErrorToMessage } from './errors.js';
 
+export const DEFAULT_EXPLANATION_LOCALE = 'zh-CN';
+
 export class ApiError extends Error {
   constructor(code, status) {
     super(apiErrorToMessage(code));
@@ -22,11 +24,13 @@ export class ServerApi {
    * @param {typeof fetch} [options.fetchImpl] — seam for tests
    * @param {string} [options.baseUrl] — origin prefix, default '' (same origin)
    * @param {string} [options.profile] — the active Profile id; set after boot
+   * @param {string} [options.explanationLocale] — learner-facing explanation locale
    */
-  constructor({ fetchImpl, baseUrl = '', profile = null } = {}) {
+  constructor({ fetchImpl, baseUrl = '', profile = null, explanationLocale = DEFAULT_EXPLANATION_LOCALE } = {}) {
     this.fetchImpl = fetchImpl ?? ((...args) => fetch(...args));
     this.baseUrl = baseUrl;
     this.profile = profile;
+    this.explanationLocale = explanationLocale || DEFAULT_EXPLANATION_LOCALE;
   }
 
   #url(path, { withProfile = true } = {}) {
@@ -190,7 +194,11 @@ export class ServerApi {
     return (await this.#request('/lookup/check', { method: 'POST', body: { lang, words } }))?.words ?? {};
   }
 
-  async aiExplain(word, sentence, language, signal) {
-    return this.#request('/ai', { method: 'POST', body: { word, sentence, language }, signal });
+  async aiExplain(word, sentence, language, signal, explanationLocale = this.explanationLocale) {
+    return this.#request('/ai', {
+      method: 'POST',
+      body: { word, sentence, language, explanationLocale },
+      signal,
+    });
   }
 }

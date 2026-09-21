@@ -13,13 +13,19 @@
  * CJK punctuation alone is deliberately not a signal.
  *
  * @param {string} text
- * @param {'en' | 'ja' | 'zh-CN'} [fallbackLocale] — passage locale, inherited by kana-less text
+ * @param {'en' | 'ja' | 'zh' | 'zh-CN'} [fallbackLocale] — passage locale, inherited by kana-less text
  * @returns {'ja' | 'zh-CN' | 'en'}
  */
 export function detectLanguage(text, fallbackLocale) {
+  const fallback = normalizeLanguage(fallbackLocale);
   if (hasKana(text)) return 'ja';
-  if (hasHanIdeographs(text)) return fallbackLocale ?? 'zh-CN';
-  return fallbackLocale ?? 'en';
+  if (hasHanIdeographs(text)) return fallback ?? 'zh-CN';
+  return fallback ?? 'en';
+}
+
+/** Normalize server EPUB locales to the browser's canonical locale names. */
+export function normalizeLanguage(locale) {
+  return locale === 'zh' ? 'zh-CN' : locale;
 }
 
 // Hiragana and Katakana blocks.
@@ -53,6 +59,7 @@ export function defaultVoiceFor(locale) {
   switch (locale) {
     case 'ja':
       return 'ja-JP-KeitaNeural';
+    case 'zh':
     case 'zh-CN':
       return 'zh-CN-YunxiNeural';
     default:

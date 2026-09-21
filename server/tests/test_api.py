@@ -390,6 +390,8 @@ class TestLookupEndpoints(ApiTestCase):
         self.assertEqual(payload["key"], "en:run")
         self.assertEqual(payload["reading"], "rʌn")
         self.assertEqual(payload["senses"][0]["gloss"], "跑")
+        self.assertEqual(payload["glossLanguage"], "zh")
+        self.assertEqual(payload["glossSource"], "ECDICT translation")
 
         status, _, body = self.get_url("/lookup", {"lang": "ja", "word": "食べる"})
         self.assertEqual(status, 200)
@@ -449,7 +451,18 @@ class TestAiEndpoint(ApiTestCase):
 
         proxy = self.harness.httpd.app.ai
         proxy.url = "http://ai.test"
-        proxy._urlopen = lambda request, timeout: {"text": "to run fast"}
-        status, _, body = self.json_request("POST", "/ai", {"word": "run", "sentence": "I run.", "language": "en"})
+        requests = []
+        def upstream(request, timeout):
+            requests.append(json.loads(request.data.decode("utf-8")))
+            return {"text": "to run fast"}
+        proxy._urlopen = upstream
+        status, _, body = self.json_request("POST", "/ai", {
+            "word": "run", "sentence": "I run.", "language": "en",
+            "explanationLocale": "zh-CN",
+        })
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"text": "to run fast"})
+        self.assertEqual(requests, [{
+            "word": "run", "sentence": "I run.", "language": "en",
+            "explanationLocale": "zh-CN",
+        }])

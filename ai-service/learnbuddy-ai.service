@@ -5,17 +5,21 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/srv/learnbuddy/ai
+# Runtime identity is the unprivileged `learnbuddy` system user (ADR 0010):
+# code is immutable in /opt, auth/config/cache live in /var/lib (seeded once
+# by hand, never synced by deploy.sh). HOME is /var/lib/learnbuddy, so the
+# default agent dir would resolve sanely — the explicit env below pins it.
+WorkingDirectory=/opt/learnbuddy/ai
 User=learnbuddy
 Group=learnbuddy
-Environment=LEARNBUDDY_AI_AGENT_DIR=/srv/learnbuddy/ai/agent
-ExecStart=/usr/bin/node /srv/learnbuddy/ai/index.mjs
+Environment=LEARNBUDDY_AI_AGENT_DIR=/var/lib/learnbuddy/ai-agent
+ExecStart=/usr/bin/node /opt/learnbuddy/ai/index.mjs
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/srv/learnbuddy/ai/agent
+ReadWritePaths=/var/lib/learnbuddy/ai-agent
 ProtectHome=true
 
 [Install]

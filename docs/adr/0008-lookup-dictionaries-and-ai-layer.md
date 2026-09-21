@@ -30,9 +30,11 @@ service wrapping the pi SDK, with the Python backend proxying and caching.
   `scripts/deploy.sh` when built locally.
 - **Endpoints**:
   - `GET /lookup?lang=&word=` → `{lang, word, key, matched, reading, senses[]}`
-    with `key` being the **Word key** (`ja:食べる`); misses → `404
-    entry_not_found`; no dictionary file for the language → `503
-    lookup_unavailable`.
+    with `key` being the **Word key** (`ja:食べる`); entries also expose
+    `glossLanguage` and `glossSource` so an English gloss is never presented as
+    a Chinese explanation. ECDICT uses its Chinese `translation` when present,
+    falling back to the English `definition`; misses → `404 entry_not_found`;
+    no dictionary file for the language → `503 lookup_unavailable`.
   - `POST /lookup/check` `{lang, words[]}` → `{words: {surface: key|null}}` —
     the 标生词 lazy batch for visible sentences (cap 180 words; `too_large`
     beyond). Never baked at upload time (§16: 44k tokens × 80µs ≈ 3.5s/chapter).
@@ -53,15 +55,17 @@ service wrapping the pi SDK, with the Python backend proxying and caching.
 
 ### AI explanation layer (from #15)
 
-- The frontend calls `POST /ai {word, sentence, language}` — **never** the AI
-  service directly. The Python backend owns the cache
-  (SHA-256 of `word|sentence|language`, `<data-dir>/ai-cache/`, shared across
+- The frontend calls `POST /ai {word, sentence, language, explanationLocale}` —
+  **never** the AI service directly. `explanationLocale` defaults to `zh-CN`
+  (the generic contract can support another learner locale). The Python backend
+  owns the cache (SHA-256 of `word|sentence|language|explanationLocale`,
+  `<data-dir>/ai-cache/`, shared across
   Profiles — an explanation is a language fact) and the degrade codes:
   `ai_not_configured` (no `LEARNBUDDY_AI_URL`), `ai_upstream_error`,
   `ai_timeout` (20 s, retryable in the tab). A failure never blocks the
   dictionary card.
 - The provider behind the proxy is the separate `learnbuddy-ai` Node service
-  (pi SDK, `{word, sentence, language}` → `{text}`); pi's configured model is
+  (pi SDK, `{word, sentence, language, explanationLocale}` → `{text}`); pi's configured model is
   whatever pi uses. Its implementation and deployment on claw are their own
   follow-up ticket — until it exists the tab shows the `ai_not_configured`
   state with the entry point visible (as #15 specified).

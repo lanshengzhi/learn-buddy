@@ -1,0 +1,37 @@
+[Unit]
+Description=LearnBuddy web app (LAN + tailnet)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runtime identity is the unprivileged `learnbuddy` system user (ADR 0010).
+# `lansy` deploys but never runs the service (it holds NOPASSWD sudo);
+# nothing runs as root past PID 1.
+User=learnbuddy
+Group=learnbuddy
+WorkingDirectory=/opt/learnbuddy
+ExecStart=/opt/learnbuddy/.venv/bin/python3 /opt/learnbuddy/server/tts_server.py --port 80 --host 0.0.0.0 --static /opt/learnbuddy/web --cache-dir /var/cache/learnbuddy/tts --data-dir /var/lib/learnbuddy
+# Fail fast when deploy.sh has not seeded config yet.
+EnvironmentFile=/etc/learnbuddy/learnbuddy.env
+# :80 as non-root: one ambient capability, nothing else. Verified together
+# with NoNewPrivileges — ambient caps are already possessed (not gained at
+# exec), so the bind survives NNP; the deploy health check gates on :80.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+# /opt is read-only at runtime (code is immutable to the service);
+# only state and the TTS cache are writable. ProtectHome additionally
+# hides /home/lansy (SSH keys, shell history) from the service.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/learnbuddy /var/cache/learnbuddy
+ProtectHome=true
+PrivateTmp=true
+# Code dirs are read-only under ProtectSystem=strict: never write __pycache__
+# into them; the venv + stdlib elsewhere are enough.
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

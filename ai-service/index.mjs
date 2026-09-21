@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // learnbuddy-ai — AI context explanations for LearnBuddy's 查义 card (ADR 0008,
-// decision in #15). A tiny HTTP service: POST /explain {word, sentence, language}
-// -> {text}. It wraps the pi SDK so the provider, model and auth are whatever
+// decision in #15). A tiny HTTP service: POST /explain {word, sentence,
+// language, explanationLocale} -> {text}. It wraps the pi SDK so the provider, model and auth are whatever
 // the pi agent dir is configured with — LearnBuddy owns no keys or accounts.
 //
 // The Python backend (server/ai.py) proxies /ai here and owns the cache and
@@ -26,9 +26,9 @@ const AGENT_DIR = process.env.LEARNBUDDY_AI_AGENT_DIR || path.join(os.homedir(),
 // socket never hangs forever. Failures surface as 502 -> ai_upstream_error.
 const REQUEST_DEADLINE_MS = Number(process.env.LEARNBUDDY_AI_DEADLINE_MS || 60_000);
 
-const SYSTEM_PROMPT = `你是 epub 语言学习阅读器的查义助手。用户给出目标词、它所在的句子和语言（en 或 ja）。
+const SYSTEM_PROMPT = `你是 epub 语言学习阅读器的查义助手。用户给出目标词、它所在的句子、原文语言和解释语言。
 解释目标词在这个句子里取哪个义项、是什么语法角色或活用形式。要求：
-- 用简体中文回答，1–3 句，60–120 字。
+- 用请求的解释语言回答（默认是 zh-CN；zh-CN 用简体中文），1–3 句，60–120 字。
 - 只讲语言事实：这个词在此句中的含义、词性、语法（活用还原、惯用型、固定搭配），必要时给读音（英文注音标，日文注假名）。
 - 不做教学扩展、不给例句、不评价句子。
 - 直接输出解释正文，不要标题、列表或寒暄。`;
@@ -91,19 +91,22 @@ async function main() {
       const word = typeof body.word === "string" ? body.word.trim() : "";
       const sentence = typeof body.sentence === "string" ? body.sentence.trim() : "";
       const language = typeof body.language === "string" ? body.language.trim() : "";
-      if (!word || !language) {
+      const explanationLocale = typeof body.explanationLocale === "string"
+        ? body.explanationLocale.trim()
+        : "zh-CN";
+      if (!word || !language || !explanationLocale) {
         json(response, 400, { error: "bad_request" });
         return;
       }
-      const prompt = `语言：${language}\n句子：${sentence || "（无）"}\n目标词：${word}`;
+      const prompt = `原文语言：${language}\n解释语言：${explanationLocale}\n句子：${sentence || "（无）"}\n目标词：${word}`;
       tail = tail.then(() =>
         explain(session, prompt).then(
           (text) => {
-            console.error(`[learnbuddy-ai] ok lang=${language} word="${word}" ${text.length} chars`);
+            console.error(`[learnbuddy-ai] ok lang=${language} explanation=${explanationLocale} word="${word}" ${text.length} chars`);
             json(response, 200, { text });
           },
           (error) => {
-            console.error(`[learnbuddy-ai] failed lang=${language} word="${word}": ${error?.message ?? error}`);
+            console.error(`[learnbuddy-ai] failed lang=${language} explanation=${explanationLocale} word="${word}": ${error?.message ?? error}`);
             json(response, 502, { error: "upstream_error" });
           },
         ),

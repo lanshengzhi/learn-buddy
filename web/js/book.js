@@ -294,6 +294,15 @@ export class BookView {
       if (sentence) this.onSentenceTap?.(Number(sentence.dataset.sentence));
     });
 
+    this.chapterBody.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const sentence = event.target.closest?.('.sent');
+      if (!sentence) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.onSentenceTap?.(Number(sentence.dataset.sentence));
+    });
+
     this.chapterBody.addEventListener('pointerover', (event) => this.#onPointerOver(event));
     this.chapterBody.addEventListener('pointerout', (event) => this.#onPointerOut(event));
     this.chapterBody.addEventListener('pointerdown', (event) => this.#onPointerDown(event));
@@ -516,6 +525,8 @@ export class BookView {
       const p = document.createElement('p');
       p.className = 'sent';
       p.dataset.sentence = String(position);
+      p.setAttribute('role', 'button');
+      p.tabIndex = 0;
       for (const token of this.tokens(sentence)) {
         const span = document.createElement('span');
         span.className = token.isWord ? 'w' : 'sep';
@@ -661,6 +672,10 @@ export class BookView {
     } else if (this.cardState === 'missing') {
       card.append(paragraph('词典里没有这个词。', 'muted'));
     } else if (entry) {
+      const glossLabel = entry.glossLanguage
+        ? `词典释义（${glossLanguageLabel(entry.glossLanguage)}${entry.glossSource ? ` · ${entry.glossSource}` : ''}）`
+        : '词典释义';
+      card.append(paragraph(glossLabel, 'muted card-gloss-label'));
       const markButton = () => {
         const mark = document.createElement('button');
         mark.type = 'button';
@@ -702,7 +717,7 @@ export class BookView {
     const aiTab = document.createElement('button');
     aiTab.type = 'button';
     aiTab.className = 'btn secondary';
-    aiTab.textContent = this.cardAiOpen ? '词条' : '问 AI';
+    aiTab.textContent = this.cardAiOpen ? '词条' : `问 AI（${explanationLocaleLabel(this.api.explanationLocale)}）`;
     aiTab.addEventListener('click', () => {
       this.cardAiOpen = !this.cardAiOpen;
       if (this.cardAiOpen && this.cardAi == null) this.#requestAi(surface, sentence?.t ?? '');
@@ -717,6 +732,9 @@ export class BookView {
     actions.append(close);
     card.append(actions);
 
+    if (this.cardAiOpen) {
+      card.append(paragraph(`${explanationLocaleLabel(this.api.explanationLocale)}语境解释（AI，可选）`, 'muted card-ai-label'));
+    }
     if (this.cardAiOpen && this.cardAi != null) {
       if (this.cardAi.error) {
         const line = paragraph(this.cardAi.error, 'error');
@@ -804,3 +822,12 @@ function isFinePointer() {
 }
 
 const LANG_LABELS = { en: '英语', ja: '日语', zh: '中文', 'zh-CN': '中文' };
+const EXPLANATION_LOCALE_LABELS = { 'zh-CN': '中文', zh: '中文', 'zh-TW': '繁體中文', en: '英语', 'en-US': '英语' };
+
+function explanationLocaleLabel(locale) {
+  return EXPLANATION_LOCALE_LABELS[locale] ?? locale ?? '中文';
+}
+
+function glossLanguageLabel(language) {
+  return language === 'zh' ? '中文' : language === 'en' ? '英文' : language;
+}
