@@ -1,0 +1,30 @@
+$ node e2-toolcall.mjs toolcall
+loaded extensions : 2, errors: []
+active tools      : ["lb_word_lookup","lb_reading_position"]
+noExtensions      : false
+[mock] [mock-openai] listening on 127.0.0.1:8199, log /home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/requests.jsonl
+
+prompt : TOOLCALL:lb_word_lookup:{"word":"読む","language":"ja-JP"}
+
+events:
+  tool_execution_start name=lb_word_lookup args={"word":"読む","language":"ja-JP"}
+  tool_execution_end name=lb_word_lookup isError=false
+  turn_end
+  turn_end
+
+provider requests in this run: 2
+  #0 roles=system|user
+     advertisedTools=[lb_word_lookup,lb_reading_position]
+  #1 roles=system|user|assistant|tool
+     advertisedTools=[lb_word_lookup,lb_reading_position]
+     assistantToolCalls=[{"name":"lb_word_lookup","args":"{\"word\":\"読む\",\"language\":\"ja-JP\"}"}]
+     toolResults=[{"id":"call_mock_1","name":null,"text":"読む: よむ・他動詞五段 — to read"}]
+
+execute() invocations added: 1
+  2026-09-22T10:37:25.567Z lb_word_lookup word=読む
+
+final assistant text: "ACK n=4 roles=system|user|assistant|tool tools=[lb_word_lookup,lb_reading_position] toolResults=[null=読む: よむ・他動詞五段 — to read]"
+--- gate.log ---
+2026-09-22T10:37:25.297Z gate-factory-called
+2026-09-22T10:37:25.566Z tool_call name=lb_word_lookup input={"word":"読む","language":"ja-JP"} hasUI=false mode=print
+2026-09-22T10:37:25.566Z gate-decision=allow

@@ -1,0 +1,5 @@
+$ node e3-discovery.mjs factory
+case            : factory   (cwd=/home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/factory/project)
+extensions      : 1  errors=[]
+   loaded <inline:1>
+active tools    : ["inline_factory_tool"]

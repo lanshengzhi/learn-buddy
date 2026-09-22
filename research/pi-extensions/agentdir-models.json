@@ -1,0 +1,23 @@
+{
+  "providers": {
+    "mock": {
+      "baseUrl": "http://127.0.0.1:8199/v1",
+      "api": "openai-completions",
+      "apiKey": "mock-key-not-a-secret",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "mock-model",
+          "name": "Mock Model",
+          "reasoning": false,
+          "contextWindow": 32000,
+          "maxTokens": 2048,
+          "cost": { "input": 1, "output": 2, "cacheRead": 0.1, "cacheWrite": 1 }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,29 @@
+$ node e2-toolcall.mjs gate
+loaded extensions : 2, errors: []
+active tools      : ["lb_word_lookup","lb_reading_position"]
+noExtensions      : false
+[mock] [mock-openai] listening on 127.0.0.1:8199, log /home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/requests.jsonl
+
+prompt : TOOLCALL:lb_word_lookup:{"word":"FORBIDDEN"}
+
+events:
+  tool_execution_start name=lb_word_lookup args={"word":"FORBIDDEN"}
+  tool_execution_end name=lb_word_lookup isError=true
+  turn_end
+  turn_end
+
+provider requests in this run: 2
+  #0 roles=system|user
+     advertisedTools=[lb_word_lookup,lb_reading_position]
+  #1 roles=system|user|assistant|tool
+     advertisedTools=[lb_word_lookup,lb_reading_position]
+     assistantToolCalls=[{"name":"lb_word_lookup","args":"{\"word\":\"FORBIDDEN\"}"}]
+     toolResults=[{"id":"call_mock_1","name":null,"text":"blocked by #35 gate fixture"}]
+
+execute() invocations added: 0
+
+final assistant text: "ACK n=4 roles=system|user|assistant|tool tools=[lb_word_lookup,lb_reading_position] toolResults=[null=blocked by #35 gate fixture]"
+--- gate.log ---
+2026-09-22T10:37:26.548Z gate-factory-called
+2026-09-22T10:37:26.809Z tool_call name=lb_word_lookup input={"word":"FORBIDDEN"} hasUI=false mode=print
+2026-09-22T10:37:26.809Z gate-decision=block

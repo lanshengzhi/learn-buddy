@@ -1,0 +1,22 @@
+$ node e1-load.mjs ext notools=all
+ext dir       : /home/lansy/Work/LearnBuddy/research/pi-extensions/ext
+ext paths     : gate.ts, learnbuddy-tools.ts, typebox-tool.ts
+noExtensions  : false
+notools mode  : all
+
+reload() threw : no
+result keys    : ["extensions","errors","runtime"]
+extensions[]   : 3
+errors[]       : []
+   loaded gate.ts
+   loaded learnbuddy-tools.ts
+   loaded typebox-tool.ts
+
+session.extensionsResult === loader result : true
+active tools : []
+all tools    : []
+getToolDefinition(lb_word_lookup) : ABSENT
+getToolDefinition(lb_reading_position) : ABSENT
+getToolDefinition(tb_echo) : ABSENT
+factory log  : 2026-09-22T10:37:20.533Z extension-factory-called | typebox-factory-called
+gate log     : 2026-09-22T10:37:20.532Z gate-factory-called

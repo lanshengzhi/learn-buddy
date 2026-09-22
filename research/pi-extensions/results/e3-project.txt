@@ -1,0 +1,5 @@
+$ node e3-discovery.mjs project
+case            : project   (cwd=/home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/project/project)
+extensions      : 1  errors=[]
+   loaded /home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/project/project/.pi/extensions/project-ext.ts
+active tools    : ["lb_word_lookup","lb_reading_position"]

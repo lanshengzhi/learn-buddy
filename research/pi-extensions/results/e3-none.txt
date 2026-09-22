@@ -1,0 +1,4 @@
+$ node e3-discovery.mjs none
+case            : none   (cwd=/home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/none/project)
+extensions      : 0  errors=[]
+active tools    : []

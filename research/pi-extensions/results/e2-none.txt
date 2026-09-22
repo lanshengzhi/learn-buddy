@@ -1,0 +1,26 @@
+$ node e2-toolcall.mjs none
+loaded extensions : 0, errors: []
+active tools      : []
+noExtensions      : true
+[mock] [mock-openai] listening on 127.0.0.1:8199, log /home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/requests.jsonl
+
+prompt : TOOLCALL:lb_word_lookup:{"word":"読む"}
+
+events:
+  tool_execution_start name=lb_word_lookup args={"word":"読む"}
+  tool_execution_end name=lb_word_lookup isError=true
+  turn_end
+  turn_end
+
+provider requests in this run: 2
+  #0 roles=system|user
+     advertisedTools=[]
+  #1 roles=system|user|assistant|tool
+     advertisedTools=[]
+     assistantToolCalls=[{"name":"lb_word_lookup","args":"{\"word\":\"読む\"}"}]
+     toolResults=[{"id":"call_mock_1","name":null,"text":"Tool lb_word_lookup not found"}]
+
+execute() invocations: (no log file)
+
+final assistant text: "ACK n=4 roles=system|user|assistant|tool tools=[] toolResults=[null=Tool lb_word_lookup not found]"
+--- gate.log ---

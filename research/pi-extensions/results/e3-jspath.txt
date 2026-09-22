@@ -1,0 +1,5 @@
+$ node e3-discovery.mjs jspath
+case            : jspath   (cwd=/home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/jspath/project)
+extensions      : 1  errors=[]
+   loaded /home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/js-ext/plain.js
+active tools    : ["js_tool"]

@@ -1,0 +1,21 @@
+$ node e1-load.mjs /home/lansy/Work/LearnBuddy/.scratch/pi-ext-nodeps notools=builtin
+ext dir       : /home/lansy/Work/LearnBuddy/.scratch/pi-ext-nodeps
+ext paths     : runtime-import.ts, typebox-tool.ts
+noExtensions  : false
+notools mode  : builtin
+
+reload() threw : no
+result keys    : ["extensions","errors","runtime"]
+extensions[]   : 2
+errors[]       : []
+   loaded runtime-import.ts
+   loaded typebox-tool.ts
+
+session.extensionsResult === loader result : true
+active tools : ["runtime_import_probe","tb_echo"]
+all tools    : ["read","bash","powershell","edit","write","grep","find","ls","runtime_import_probe","tb_echo"]
+getToolDefinition(lb_word_lookup) : ABSENT
+getToolDefinition(lb_reading_position) : ABSENT
+getToolDefinition(tb_echo) : present
+factory log  : typebox-factory-called
+gate log     : (absent)

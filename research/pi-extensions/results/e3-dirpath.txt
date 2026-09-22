@@ -1,0 +1,4 @@
+$ node e3-discovery.mjs dirpath
+case            : dirpath   (cwd=/home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/dirpath/project)
+extensions      : 0  errors=[{"path":"/home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/shared-ext","error":"Failed to load extension: Cannot find module '/home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/shared-ext'\nRequire stack:\n- /home/lansy/Work/LearnBuddy/ai-service/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js"}]
+active tools    : []

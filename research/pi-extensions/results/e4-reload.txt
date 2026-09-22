@@ -1,0 +1,7 @@
+$ node e4-reload.mjs
+process start, file v1, loaderA.reload()#1: ["version_tool_v1"]
+--- file rewritten to v2 ---
+brand-new loaderD, no prior reload: ["version_tool_v1"]
+loaderA.reload()#2 after edit    : ["version_tool_v2"]
+brand-new loaderB, same cwd      : ["version_tool_v2"]
+new loaderC, different cwd       : ["version_tool_v2"]

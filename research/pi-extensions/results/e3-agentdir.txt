@@ -1,0 +1,5 @@
+$ node e3-discovery.mjs agentdir
+case            : agentdir   (cwd=/home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/agentdir/project)
+extensions      : 1  errors=[]
+   loaded /home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/agentdir/agentdir/extensions/agent-ext.ts
+active tools    : ["lb_word_lookup","lb_reading_position"]

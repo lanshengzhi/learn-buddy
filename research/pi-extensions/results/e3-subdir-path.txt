@@ -1,0 +1,5 @@
+$ node e3-discovery.mjs subdir-path
+case            : subdir-path   (cwd=/home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/subdir-path/project)
+extensions      : 1  errors=[]
+   loaded /home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/e3/subdir-index-ext/myext
+active tools    : ["lb_word_lookup","lb_reading_position"]

@@ -1,0 +1,19 @@
+$ node e1-load.mjs /home/lansy/Work/LearnBuddy/research/pi-extensions/../../.scratch/pi-ext-lab/ext-missing notools=builtin
+ext dir       : /home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/ext-missing
+ext paths     : needs-pkg.ts
+noExtensions  : false
+notools mode  : builtin
+
+reload() threw : no
+result keys    : ["extensions","errors","runtime"]
+extensions[]   : 0
+errors[]       : [{"path":"/home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/ext-missing/needs-pkg.ts","error":"Failed to load extension: Cannot find module 'no-such-pkg-xyz-42'\nRequire stack:\n- /home/lansy/Work/LearnBuddy/.scratch/pi-ext-lab/ext-missing/needs-pkg.ts"}]
+
+session.extensionsResult === loader result : true
+active tools : []
+all tools    : ["read","bash","powershell","edit","write","grep","find","ls"]
+getToolDefinition(lb_word_lookup) : ABSENT
+getToolDefinition(lb_reading_position) : ABSENT
+getToolDefinition(tb_echo) : ABSENT
+factory log  : (absent)
+gate log     : (absent)
