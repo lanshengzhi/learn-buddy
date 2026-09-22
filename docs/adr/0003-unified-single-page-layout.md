@@ -1,5 +1,7 @@
 # Unified single-page layout: reading on top, editor at the bottom, at every width
 
+> **Partially superseded for the family hub** (map #23, issue #38) — the "no breakpoint" claim holds for the reader's single-page layout it was written about, but **not for the shell map #23 adds**: a left rail and a right-side AI panel cannot share a phone screen. Issue #38 settles **one breakpoint at ~900px** — three columns above it; a drawer plus full-screen overlays below. The reader layout itself is unchanged, and the four decisions below still govern it.
+
 ADR 0002 introduced a ≥1024px breakpoint: desktop got the single page (reading on top, collapsible editor at the bottom) while mobile kept the two-screen flow as two in-page views (Paste view ⇄ Reader view). Real-device acceptance exposed the cost: narrowing a desktop browser mid-session silently swapped the page into the two-view flow, hiding the reading area behind a view switch — and two interaction models meant two things to learn.
 
 This ADR removes the breakpoint: the single-page layout is the one layout at every width and on every device.
