@@ -1,0 +1,415 @@
+<!doctype html>
+<!--
+  PROTOTYPE — 一次性产物，不要合进产品路径。
+
+  问题（wayfinder #27「侧栏壳的信息架构原型（Chat / Read）」）：
+    「随时调出 AI」到底是什么动作？
+
+  三个结构上互不相同的变体，用 ?variant=A|B|C 切换：
+    A 常驻右栏   —— AI 永远在场，不需要"叫出"
+    B 浮层抽屉   —— 阅读占满宽度，AI 是叫出来的
+    C 就地内联   —— AI 出现在文本里，Chat 面是"深度模式"
+
+  另有 ?surface=read|chat 切换两个面。
+
+  怎么跑：  python3 server/tts_server.py --port 8000
+           打开 http://localhost:8000/prototype-shell.html
+
+  文本是真的：嫌われる勇気 / 第 62 章，来自 server/data/books/ 里已解析的章节。
+  没有网络请求，没有持久化，没有错误处理 —— 故意的。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE · 侧栏壳（Chat / Read）</title>
+<style>
+  :root{
+    --bg:#f7f6f3; --surface:#fff; --text:#1f2328; --text-muted:#6a737d;
+    --border:#d8d6d1; --primary:#2f6f4f; --primary-strong:#24563e; --primary-soft:#e4efe8;
+    --rail:#efece6; --mark:#f3e7c8; --card-shadow:0 1px 2px rgba(0,0,0,.06);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#17191c; --surface:#202327; --text:#e8e6e3; --text-muted:#9aa0a6;
+      --border:#3a3f45; --primary:#5aa37e; --primary-strong:#6fb692; --primary-soft:#23382c;
+      --rail:#1b1e21; --mark:#3d3722; --card-shadow:0 1px 2px rgba(0,0,0,.4); }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans CJK SC",sans-serif;
+    display:flex;overflow:hidden}
+
+  /* ---------- 左导航栏 ---------- */
+  .rail{width:212px;flex:0 0 212px;background:var(--rail);border-right:1px solid var(--border);
+    display:flex;flex-direction:column;padding:14px 10px}
+  .brand{font-weight:700;font-size:14px;letter-spacing:.02em;padding:4px 10px 14px;color:var(--text-muted)}
+  .nav{display:flex;flex-direction:column;gap:2px}
+  .nav button{all:unset;cursor:pointer;padding:9px 10px;border-radius:8px;display:flex;
+    align-items:center;gap:9px;font-size:14px;color:var(--text)}
+  .nav button .ic{width:18px;text-align:center;opacity:.75}
+  .nav button:hover{background:rgba(127,127,127,.12)}
+  .nav button[aria-current="true"]{background:var(--primary-soft);color:var(--primary-strong);font-weight:600}
+  .rail .spacer{flex:1}
+  .rail .addface{margin:0 4px 6px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;
+    font-size:12px;color:var(--text-muted);text-align:center;cursor:pointer}
+  .face{all:unset;cursor:pointer;display:flex;align-items:center;gap:9px;padding:9px 10px;
+    border-radius:8px;font-size:14px;border:1px solid var(--border);background:var(--surface)}
+  .face .dot{width:22px;height:22px;border-radius:50%;background:var(--primary);color:#fff;
+    display:grid;place-items:center;font-size:11px;font-weight:700}
+  .face .who{font-weight:600}
+  .face .sub{font-size:11px;color:var(--text-muted);font-weight:400}
+
+  /* ---------- 主区 ---------- */
+  .main{flex:1;display:flex;min-width:0;position:relative}
+  .note{position:absolute;top:0;left:0;right:0;z-index:5;background:var(--mark);color:var(--text);
+    font-size:12px;padding:6px 14px;border-bottom:1px solid var(--border)}
+  .note b{font-weight:700}
+  .note .k{font-family:ui-monospace,monospace;background:rgba(127,127,127,.18);padding:1px 5px;border-radius:4px}
+
+  /* 阅读面 */
+  .reader{flex:1;min-width:0;overflow:auto;padding:56px 32px 80px}
+  .reader .col{max-width:var(--readw,680px);margin:0 auto}
+  .bookmeta{font-size:12px;color:var(--text-muted);letter-spacing:.04em}
+  .bookmeta b{display:block;font-size:17px;color:var(--text);letter-spacing:0;margin:3px 0 2px}
+  .chapter{font-size:20px;font-weight:700;margin:26px 0 6px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+  .body{font-size:17.5px;line-height:2.05}
+  .s{display:block;padding:3px 0;border-radius:4px;cursor:text}
+  .s:hover{background:rgba(127,127,127,.07)}
+  .s.sel{background:var(--primary-soft)}
+  .w{cursor:pointer;border-radius:3px}
+  .w:hover{background:var(--mark)}
+  .w.on{background:var(--primary);color:#fff}
+  ruby rt{font-size:.52em;color:var(--text-muted);font-weight:400}
+
+  /* AI 栏 / 抽屉 / 内联 共用的对话气泡 */
+  .turn{padding:9px 0}
+  .turn .lab{font-size:11px;color:var(--text-muted);letter-spacing:.06em;margin-bottom:4px}
+  .turn.me .bub{background:var(--primary-soft);color:var(--text)}
+  .bub{font-size:14px;line-height:1.72;white-space:pre-wrap}
+  .ctxline{font-size:11px;color:var(--text-muted);border-top:1px dashed var(--border);
+    padding-top:8px;margin-top:10px}
+
+  /* A：常驻右栏 */
+  .ai-col{width:338px;flex:0 0 338px;border-left:1px solid var(--border);background:var(--surface);
+    display:flex;flex-direction:column;padding-top:34px}
+  .ai-col .hd{padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;
+    display:flex;align-items:center;justify-content:space-between}
+  .ai-col .hd .tag{font-size:11px;font-weight:400;color:var(--text-muted)}
+  .ai-col .log{flex:1;overflow:auto;padding:8px 14px}
+  .ai-col .ctx{padding:7px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted)}
+  .composer{border-top:1px solid var(--border);padding:10px 12px;display:flex;gap:8px}
+  .composer input{flex:1;font:inherit;font-size:14px;padding:8px 10px;border-radius:8px;
+    border:1px solid var(--border);background:var(--bg);color:var(--text)}
+  .composer button{all:unset;cursor:pointer;background:var(--primary);color:#fff;border-radius:8px;
+    padding:8px 13px;font-size:13px;font-weight:600}
+
+  /* B：浮层抽屉 */
+  .drawer{position:absolute;top:0;right:0;bottom:0;width:392px;background:var(--surface);
+    border-left:1px solid var(--border);box-shadow:-8px 0 28px rgba(0,0,0,.14);
+    display:flex;flex-direction:column;transform:translateX(100%);transition:transform .18s ease}
+  .drawer.open{transform:none}
+  .fab{position:absolute;right:22px;bottom:22px;z-index:6;all:unset;cursor:pointer;
+    background:var(--primary);color:#fff;border-radius:999px;padding:11px 17px;font-size:13px;
+    font-weight:600;box-shadow:0 6px 18px rgba(0,0,0,.22)}
+  .bubble{position:absolute;z-index:7;all:unset;cursor:pointer;background:var(--text);color:var(--bg);
+    border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600}
+
+  /* C：就地内联 */
+  .thread{margin:8px 0 14px;padding:2px 0 2px 15px;border-left:2.5px solid var(--primary);
+    background:linear-gradient(90deg,rgba(47,111,79,.06),transparent 42%)}
+  .thread .lab{font-size:11px;color:var(--text-muted);letter-spacing:.06em;margin-bottom:3px}
+  .thread .go{all:unset;cursor:pointer;font-size:12.5px;color:var(--primary-strong);font-weight:600;
+    margin-top:8px;display:inline-block}
+  .thread .go:hover{text-decoration:underline}
+
+  /* Chat 面 */
+  .sessions{width:246px;flex:0 0 246px;border-right:1px solid var(--border);background:var(--surface);
+    padding-top:34px;overflow:auto}
+  .sessions .new{margin:10px 12px;padding:8px;border:1px dashed var(--border);border-radius:8px;
+    text-align:center;font-size:12.5px;color:var(--text-muted);cursor:pointer}
+  .sessions .row{padding:9px 14px;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer}
+  .sessions .row:hover{background:rgba(127,127,127,.07)}
+  .sessions .row[aria-current="true"]{background:var(--primary-soft)}
+  .sessions .row .t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sessions .row .m{font-size:11px;color:var(--text-muted);margin-top:2px}
+  .convo{flex:1;min-width:0;display:flex;flex-direction:column;padding-top:34px}
+  .convo .hd{padding:11px 18px;border-bottom:1px solid var(--border);font-size:13.5px;font-weight:600}
+  .convo .log{flex:1;overflow:auto;padding:12px 22px}
+  .convo .log .col{max-width:660px;margin:0 auto}
+  .convo .composer{border-top:1px solid var(--border);padding:12px}
+  .convo .composer .inner{max-width:660px;margin:0 auto;display:flex;gap:9px}
+  .convo .composer input{flex:1;font:inherit;font-size:14px;padding:10px 12px;border-radius:9px;
+    border:1px solid var(--border);background:var(--bg);color:var(--text)}
+  .convo .composer button{all:unset;cursor:pointer;background:var(--primary);color:#fff;
+    border-radius:9px;padding:10px 16px;font-size:13px;font-weight:600}
+
+  /* 查义卡 */
+  .look{position:absolute;z-index:20;width:290px;background:var(--surface);border:1px solid var(--border);
+    border-radius:11px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:12px 13px}
+  .look .hw{font-size:19px;font-weight:700}
+  .look .rd{font-size:12px;color:var(--primary-strong);margin-top:1px}
+  .look .tabs{display:flex;gap:3px;margin:10px 0 8px;border-bottom:1px solid var(--border)}
+  .look .tabs button{all:unset;cursor:pointer;font-size:12.5px;padding:5px 9px;border-radius:6px 6px 0 0;
+    color:var(--text-muted)}
+  .look .tabs button[aria-current="true"]{background:var(--primary-soft);color:var(--primary-strong);font-weight:600}
+  .look .sense{font-size:13px;line-height:1.7}
+  .look .sense ol{margin:4px 0 0;padding-left:18px}
+  .look .foot{margin-top:11px;padding-top:9px;border-top:1px solid var(--border);display:flex;
+    justify-content:space-between;align-items:center}
+  .look .foot .mark{font-size:12px;color:var(--text-muted);cursor:pointer}
+  .look .foot .ask{all:unset;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--primary-strong)}
+  .look .foot .ask:hover{text-decoration:underline}
+
+  /* 悬浮切换器 */
+  #sw{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:100;
+    display:flex;align-items:center;gap:10px;background:#111;color:#fff;border-radius:999px;
+    padding:7px 9px;box-shadow:0 8px 26px rgba(0,0,0,.34);font:13px/1 ui-monospace,monospace}
+  #sw button{all:unset;cursor:pointer;width:26px;height:26px;border-radius:50%;display:grid;
+    place-items:center;background:rgba(255,255,255,.14);font-size:14px}
+  #sw button:hover{background:rgba(255,255,255,.3)}
+  #sw .lbl{min-width:190px;text-align:center}
+  #sw .lbl b{color:#7ee0a8}
+</style>
+</head>
+<body>
+<div class="rail">
+  <div class="brand">家庭中枢 <span style="opacity:.6">PROTOTYPE</span></div>
+  <div class="nav" id="nav"></div>
+  <div class="spacer"></div>
+  <div class="addface">＋ 再加一个面（未来）</div>
+  <button class="face" id="face"><span class="dot" id="faceDot">爸</span>
+    <span><span class="who" id="faceWho">爸爸</span><br><span class="sub">切档案 = 换 Chat</span></span>
+  </button>
+</div>
+<div class="main" id="main"></div>
+
+<div id="sw">
+  <button id="prev" title="上一个变体（←）">‹</button>
+  <span class="lbl" id="swLbl"></span>
+  <button id="next" title="下一个变体（→）">›</button>
+</div>
+
+<script>
+const DATA = {"book": "嫌われる勇気", "author": "岸見 一郎", "chapter": "無意味な人生に「意味」を与えよ", "sentences": [{"t": "無意味な人生に「意味」を与えよ", "w": [3, 1, 2, 1, 1, 2, 1, 1, 3], "ruby": [[0, 3, "むいみ"], [4, 2, "じんせい"], [8, 2, "いみ"], [12, 3, "あたえよ"]]}, {"t": "なんということだ。", "w": [2, 1, 2, 2, 1, 1], "ruby": []}, {"t": "哲人 もはや議論は水辺に達しているでしょう。", "w": [2, 1, 3, 2, 1, 2, 1, 2, 1, 2, 4, 1], "ruby": [[0, 2, "てつと"], [6, 2, "ぎろん"], [9, 2, "みずべ"], [12, 2, "たっし"]]}, {"t": "水を呑むかどうかは、あなたの決心次第です。", "w": [1, 1, 2, 1, 2, 1, 1, 1, 3, 1, 2, 2, 2, 1], "ruby": [[0, 1, "みず"], [2, 2, "のむ"], [14, 2, "けっしん"], [16, 2, "しだい"]]}, {"t": "青年 ああ、アドラー心理学、そして先生の哲学は、たしかにわたしを変えようとしているのかもしれない。", "w": [2, 1, 2, 1, 4, 3, 1, 3, 2, 1, 2, 1, 1, 3, 1, 3, 1, 4, 1, 1, 1, 2, 1, 1, 1, 2, 2, 1], "ruby": [[0, 2, "せいねん"], [10, 3, "しんりがく"], [17, 2, "せんせい"], [20, 2, "てつがく"], [32, 4, "かえよう"]]}, {"t": "わたしは「変わらない」という決心をやめ、新しい生き方を、新しいライフスタイルを選ぼうとしているのかもしれない。……", "w": [3, 1, 1, 3, 2, 1, 1, 2, 2, 1, 2, 1, 3, 3, 1, 1, 3, 7, 1, 3, 1, 1, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1], "ruby": [[5, 3, "かわら"], [14, 2, "けっしん"], [20, 3, "あたらしい"], [23, 3, "いきかた"], [28, 3, "あたらしい"], [39, 3, "えらぼう"]]}, {"t": "でも、でも、最後にもうひとつだけ聞かせてください！", "w": [1, 1, 1, 1, 1, 1, 2, 1, 2, 2, 1, 2, 2, 1, 1, 4, 1], "ruby": [[6, 2, "さいご"], [16, 2, "きか"]]}]};
+
+const VARIANTS = {
+  A:{name:'常驻右栏', saide:'AI 永远在场，不需要"叫出"。阅读宽度被让出一部分。'},
+  B:{name:'浮层抽屉', saide:'阅读占满宽度，AI 是叫出来的。AI 在场时正文被遮住一部分。'},
+  C:{name:'就地内联', saide:'AI 出现在文本里。Chat 面退化成"深度模式"，不是日常入口。'}
+};
+const FACES = [{id:'dad',n:'爸爸',d:'爸'},{id:'mom',n:'妈妈',d:'妈'},
+               {id:'d1',n:'大女儿',d:'大'},{id:'d2',n:'小女儿',d:'小'}];
+
+const P = new URLSearchParams(location.search);
+let variant = (P.get('variant') || 'A').toUpperCase();
+if(!VARIANTS[variant]) variant = 'A';
+let surface = P.get('surface') === 'chat' ? 'chat' : 'read';
+let face = FACES.find(f => f.id === P.get('face')) || FACES[0];
+let drawerOpen = false, openThread = null, look = null;
+
+function setParam(k,v){ P.set(k,v); history.replaceState(null,'','?'+P.toString()); }
+
+/* ---------- 文本 ---------- */
+function words(s){
+  const out=[]; let i=0;
+  for(const n of s.w){ if(i>=s.t.length) break; out.push(s.t.slice(i,i+n)); i+=n; }
+  if(i < s.t.length) out.push(s.t.slice(i));
+  return out;
+}
+const RUBY = {}; // word -> reading，仅用于查义卡（真项目里来自词典）
+function sentenceHTML(s, idx){
+  const ws = words(s);
+  const rt = {}; (s.ruby||[]).forEach(([off,len,r])=>{ rt[off]=r; });
+  let html='', off=0;
+  const offsets=[]; {let i=0; for(const n of s.w){offsets.push(i); i+=n;}}
+  ws.forEach((w,i)=>{
+    const o=offsets[i]; const r=rt[o];
+    RUBY[w] = RUBY[w] || r || null;
+    const inner = r ? `<ruby>${esc(w)}<rt>${esc(r)}</rt></ruby>` : esc(w);
+    html += `<span class="w" data-w="${esc(w)}">${inner}</span>`;
+  });
+  return `<span class="s" data-i="${idx}">${html}</span>`;
+}
+function esc(t){ return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+/* ---------- 三个变体各自的"阅读面"骨架 ---------- */
+function readerHTML(){
+  const sents = DATA.sentences.map(sentenceHTML).join('');
+  const head = `<div class="bookmeta">${esc(DATA.author)}<b>${esc(DATA.book)}</b></div>
+    <div class="chapter">${esc(DATA.chapter)}</div>`;
+  const body = `<div class="body" id="body">${sents}</div>`;
+  return {head, body};
+}
+
+function aiLogHTML(){
+  const t = openThread;
+  const turns = t
+    ? `<div class="turn me"><div class="lab">你</div><div class="bub">${esc(t.q)}</div></div>
+       <div class="turn"><div class="lab">AI</div><div class="bub">${esc(t.a)}</div></div>`
+    : `<div class="turn"><div class="lab">AI</div><div class="bub">这一章在收尾：哲人说人生的意义不是被给予的，而是你自己赋予的。要我从「連続する刹那」这个说法往下讲吗？</div></div>`;
+  return turns + `<div class="ctxline">上下文：第 62 章《${esc(DATA.chapter)}》全文 · 你的阅读位置</div>`;
+}
+
+function chatHTML(){
+  return `<div class="sessions">
+      <div class="new">＋ 新对话</div>
+      <div class="row" aria-current="true"><div class="t">这一章的「刹那」怎么理解</div><div class="m">今天 · 嫌われる勇気</div></div>
+      <div class="row"><div class="t">「決心」和「決意」的差别</div><div class="m">昨天</div></div>
+      <div class="row"><div class="t">整理这一章的生词</div><div class="m">3 天前</div></div>
+    </div>
+    <div class="convo">
+      <div class="hd">这一章的「刹那」怎么理解 · ${esc(face.n)}的对话</div>
+      <div class="log"><div class="col">
+        <div class="turn me"><div class="lab">你</div><div class="bub">第 12 回那个「連続する刹那」跟「いま、ここ」是一回事吗？</div></div>
+        <div class="turn"><div class="lab">AI</div><div class="bub">基本是一回事，但侧重不同。「連続する刹那」说的是时间由一个个刹那接续而成，「いま、ここ」说的是你只能活在当下这一个刹那。哲人用前者解释人生为什么不需要一个终点式的意义，用后者回答"那该怎么活"。</div></div>
+        <div class="turn me"><div class="lab">你</div><div class="bub">那这一章末尾说的「意味を与えよ」是谁给？</div></div>
+        <div class="turn"><div class="lab">AI</div><div class="bub">你自己。这正是本章标题的落点：人生本来没有意义，所以才有赋予它的余地——如果有现成的意义，你只剩接受。</div></div>
+      </div></div>
+      <div class="composer"><div class="inner">
+        <input placeholder="接着问…（默认带上当前章节）">
+        <button>发送</button>
+      </div></div>
+    </div>`;
+}
+
+/* ---------- 变体渲染 ---------- */
+function renderA(){
+  const {head, body} = readerHTML();
+  return `<div class="note"><b>A · 常驻右栏</b> — ${VARIANTS.A.saide}
+      <span class="k">?variant=B|C</span> 看另两个</div>
+    <div class="reader" style="--readw:600px"><div class="col">${head}${body}</div></div>
+    <div class="ai-col">
+      <div class="hd">AI <span class="tag">当前章节</span></div>
+      <div class="log">${aiLogHTML()}</div>
+      <div class="composer"><input placeholder="就这一章问点什么…"><button>发送</button></div>
+    </div>`;
+}
+
+function renderB(){
+  const {head, body} = readerHTML();
+  return `<div class="note"><b>B · 浮层抽屉</b> — ${VARIANTS.B.saide}
+      <span class="k">?variant=A|C</span> 看另两个</div>
+    <div class="reader" style="--readw:720px"><div class="col">${head}${body}</div></div>
+    <button class="fab" id="fab">✦ 问 AI</button>
+    <div class="drawer ${drawerOpen?'open':''}" id="drawer">
+      <div class="hd" style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600">
+        AI <span class="tag" style="font-weight:400;color:var(--text-muted)">当前章节</span></div>
+      <div class="log" style="flex:1;overflow:auto;padding:8px 14px">${aiLogHTML()}</div>
+      <div class="composer"><input placeholder="就这一章问点什么…"><button>发送</button></div>
+    </div>`;
+}
+
+function renderC(){
+  const {head, body} = readerHTML();
+  const th = openThread
+    ? `<div class="thread"><div class="lab">AI · 就地回答</div>
+         <div class="bub" style="font-size:14px">${esc(openThread.a)}</div>
+         <button class="go" id="toChat">继续追问 → 带着这句去 Chat</button></div>`
+    : `<div class="thread" style="border-left-color:var(--border);background:none">
+         <div class="lab">选中任意一句 → AI 就地展开回答</div>
+         <div class="bub" style="font-size:13px;color:var(--text-muted)">这里没有右栏，也没有抽屉。</div></div>`;
+  return `<div class="note"><b>C · 就地内联</b> — ${VARIANTS.C.saide}
+      <span class="k">?variant=A|B</span> 看另两个</div>
+    <div class="reader" style="--readw:660px"><div class="col">${head}${body}${th}</div></div>`;
+}
+
+/* ---------- 主渲染 ---------- */
+function render(){
+  document.getElementById('faceDot').textContent = face.d;
+  document.getElementById('faceWho').textContent = face.n;
+  const nav = document.getElementById('nav');
+  nav.innerHTML = ['chat','read'].map(s =>
+    `<button data-s="${s}" aria-current="${surface===s}">
+       <span class="ic">${s==='chat'?'💬':'📖'}</span>${s==='chat'?'Chat':'Read'}</button>`).join('');
+  nav.querySelectorAll('button').forEach(b => b.onclick = () => {
+    surface = b.dataset.s; setParam('surface', surface); render();
+  });
+
+  const main = document.getElementById('main');
+  if(surface === 'chat'){ main.innerHTML = chatHTML(); }
+  else { main.innerHTML = variant==='A' ? renderA() : variant==='B' ? renderB() : renderC(); }
+
+  wire();
+  const sw = document.getElementById('swLbl');
+  sw.innerHTML = `<b>${variant}</b> (${VARIANTS[variant].name})`;
+}
+
+function wire(){
+  const main = document.getElementById('main');
+  const fab = document.getElementById('fab');
+  if(fab) fab.onclick = () => { drawerOpen = !drawerOpen; render(); };
+  const toChat = document.getElementById('toChat');
+  if(toChat) toChat.onclick = () => { surface='chat'; setParam('surface','chat'); render(); };
+
+  main.querySelectorAll('.w').forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    const w = el.dataset.w, r = el.getBoundingClientRect();
+    look = {w, reading: RUBY[w] || '—', x: Math.min(r.left, window.innerWidth-320), y: r.bottom + 8};
+    main.querySelectorAll('.w.on').forEach(o=>o.classList.remove('on'));
+    el.classList.add('on');
+    drawLook();
+  });
+  main.querySelectorAll('.s').forEach(el => el.onclick = () => {
+    if(variant !== 'C') return;
+    const i = +el.dataset.i;
+    openThread = { q: DATA.sentences[i].t,
+      a: '这句的关键在「' + (words(DATA.sentences[i])[0] || '') + '」。放到整章看，它是在回答上一段的追问——哲人把"人生有没有意义"换成了"你要不要给它一个意义"。' };
+    render();
+  });
+  document.getElementById('face').onclick = () => {
+    face = FACES[(FACES.indexOf(face)+1) % FACES.length];
+    setParam('face', face.id); render();
+  };
+}
+
+function drawLook(){
+  document.querySelectorAll('.look').forEach(e=>e.remove());
+  if(!look) return;
+  const d = document.createElement('div');
+  d.className = 'look';
+  d.style.left = look.x+'px'; d.style.top = look.y+'px';
+  d.innerHTML = `
+    <div class="hw">${esc(look.w)}</div>
+    <div class="rd">${esc(look.reading)}</div>
+    <div class="tabs"><button aria-current="true">词典</button><button>AI</button></div>
+    <div class="sense"><ol><li>这个词在本句中的含义（本地词典条目，离线可得）。</li></ol></div>
+    <div class="foot">
+      <span class="mark">我认识</span>
+      <button class="ask" id="lookAsk">在 Chat 里继续问 →</button>
+    </div>`;
+  document.getElementById('main').appendChild(d);
+  d.querySelector('#lookAsk').onclick = () => { surface='chat'; setParam('surface','chat'); look=null; render(); };
+  d.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+    d.querySelectorAll('.tabs button').forEach(x=>x.removeAttribute('aria-current'));
+    b.setAttribute('aria-current','true');
+    d.querySelector('.sense').innerHTML = b.textContent === 'AI'
+      ? '它在这个句子里取的是"决心、决断"这一层，不是"决定某个具体事项"。和「決意」相比，「決心」更强调内心的坚定，书面语里常与「する」搭配。'
+      : '<ol><li>这个词在本句中的含义（本地词典条目，离线可得）。</li></ol>';
+  });
+}
+
+function setVariant(v){
+  variant = v; setParam('variant', v);
+  openThread = null; look = null; drawerOpen = false; render();
+}
+document.getElementById('prev').onclick = () => {
+  const k = Object.keys(VARIANTS); setVariant(k[(k.indexOf(variant)+k.length-1)%k.length]);
+};
+document.getElementById('next').onclick = () => {
+  const k = Object.keys(VARIANTS); setVariant(k[(k.indexOf(variant)+1)%k.length]);
+};
+window.addEventListener('keydown', (e) => {
+  const t = document.activeElement;
+  if(t && (/^(INPUT|TEXTAREA)$/.test(t.tagName) || t.isContentEditable)) return;
+  if(e.key === 'ArrowLeft') document.getElementById('prev').click();
+  if(e.key === 'ArrowRight') document.getElementById('next').click();
+});
+document.addEventListener('click', (e) => {
+  if(look && !e.target.closest('.look') && !e.target.closest('.w')){ look = null; drawLook(); }
+});
+
+render();
+</script>
+</body>
+</html>
