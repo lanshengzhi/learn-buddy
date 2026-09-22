@@ -69,6 +69,7 @@ Learner records live **only on the server**, keyed by **Person**: reading positi
 
 - **Conversation (对话)** — One thread of talking between a **Person** and the assistant. A Person has many; each is stored and can be resumed. The unit of the Chat surface. (ADR 0011)
 - **Memory (记忆)** — What survives a Conversation. In v1 that is the Conversation list plus resuming a stored Conversation; cross-Conversation search and distilled personal facts are future evolution. **Memory is not reading state** — the two layers meet through one channel: a Conversation may *read* the reading domain (what the 查义卡 追问 and the AI panel do), while **Reading position**, **History**, **Word state** and 划线 / 想法 stay their own layer. (ADR 0011)
+- **Reference (引用)** — A piece of the reading domain attached to a **Conversation** by the **Person**, so the Conversation can read it. It is the only channel between the two layers (ADR 0011). Always attached: the current **Chapter**. Attachable by hand in v1: another Chapter, a word. When a Conversation is opened from a selection, the selected sentence attaches itself. (ADR 0011)
 
 ## History
 
