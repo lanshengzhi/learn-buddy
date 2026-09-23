@@ -27,6 +27,7 @@ import { detectLanguage, normalizeLanguage } from './core/language.js';
 import { storedProfile, switchProfile, storeProfile } from './browser/profile.js';
 import { ServerPlaybackPreferences } from './browser/server-playback-preferences.js';
 import { BookView } from './book.js';
+import { createLearnLookupBridge } from './core/learn-lookup.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -187,6 +188,7 @@ async function boot() {
     onSentenceTap: (index) => controller.onSentenceClicked(index),
     knownWords,
     rateSsml: () => controller.state.ratePreset.ssmlRate,
+    lookupEnabled: () => !document.getElementById('learn-face'),
   });
 
   bindProfileChip(profiles, profileId);
@@ -200,6 +202,10 @@ async function boot() {
     openBook: (bookId) => bookView?.openBook(bookId),
     currentBookId: () => bookView?.book?.id ?? null,
   };
+  // Additive /next seam only; keep it absent from the live legacy shell.
+  if (document.getElementById('learn-face')) {
+    window.learnbuddyLookup = createLearnLookupBridge(bookView);
+  }
   document.dispatchEvent(new CustomEvent('learnbuddy:read-ready'));
 
   const lastBook = state.lastBook;

@@ -35,14 +35,13 @@ test('narrow mode: toggleNav opens and closes the drawer layer', () => {
 
 test('back() closes layers in spec §4.2 priority, not opening order', () => {
   const shell = new ShellController({ narrow: true });
-  // Open bottom-up: drawer first, D3 last.
-  for (const layer of [Layer.Drawer, Layer.Toolbar, Layer.Identity, Layer.WordCard, Layer.D3]) {
+  for (const layer of [Layer.Drawer, Layer.Toolbar, Layer.Identity, Layer.WordCard]) {
     shell.open(layer);
   }
   const closed = [];
   let layer;
   while ((layer = shell.back()) !== null) closed.push(layer);
-  assert.deepEqual(closed, [Layer.D3, Layer.WordCard, Layer.Identity, Layer.Toolbar, Layer.Drawer]);
+  assert.deepEqual(closed, [Layer.WordCard, Layer.Identity, Layer.Toolbar, Layer.Drawer]);
   assert.deepEqual(shell.state.openLayers, []);
 });
 
@@ -56,9 +55,9 @@ test('back() with nothing open returns null and emits nothing', () => {
 test('opening an already-open layer is a no-op', () => {
   const { events, onEvent } = recorder();
   const shell = new ShellController({ narrow: true, onEvent });
-  shell.open(Layer.D3);
-  shell.open(Layer.D3);
-  assert.deepEqual(shell.state.openLayers, [Layer.D3]);
+  shell.open(Layer.WordCard);
+  shell.open(Layer.WordCard);
+  assert.deepEqual(shell.state.openLayers, [Layer.WordCard]);
   assert.deepEqual(events.map((e) => e.type), ['layer-opened']);
 });
 
@@ -66,7 +65,7 @@ test('viewport transitions reset the layer stack', () => {
   const { events, onEvent } = recorder();
   const shell = new ShellController({ narrow: true, onEvent });
   shell.open(Layer.Drawer);
-  shell.open(Layer.D3);
+  shell.open(Layer.WordCard);
   shell.setNarrow(false);
   assert.equal(shell.state.narrow, false);
   assert.deepEqual(shell.state.openLayers, []);
@@ -80,29 +79,18 @@ test('setNarrow with an unchanged value emits nothing', () => {
   assert.deepEqual(events, []);
 });
 
-test('face switching keeps layers open — D3 belongs to no face', () => {
-  const shell = new ShellController({ narrow: false });
-  shell.open(Layer.D3);
-  shell.setFace('chat');
-  assert.equal(shell.state.activeFace, 'chat');
-  assert.deepEqual(shell.state.openLayers, [Layer.D3]);
-  shell.setFace('read');
-  assert.equal(shell.state.activeFace, 'read');
-  assert.deepEqual(shell.state.openLayers, [Layer.D3]);
-});
-
-test('D3 toggle emits only layer events — the reader is never touched (§4.2 #2/#3)', () => {
+test('Read, Chat and Learn face switching emits state changes only', () => {
   const { events, onEvent } = recorder();
   const shell = new ShellController({ onEvent });
-  shell.open(Layer.D3);
-  shell.close(Layer.D3);
-  // The prototype lost the reading position by rebuilding the reading pane
-  // on D3 toggle. The controller's contract is its event stream; any future
-  // reader-facing effect emitted here fails this test.
+  shell.setFace('chat');
+  shell.setFace('learn');
+  shell.setFace('read');
   assert.deepEqual(events, [
-    { type: 'layer-opened', layer: Layer.D3 },
-    { type: 'layer-closed', layer: Layer.D3 },
+    { type: 'face-changed', face: 'chat' },
+    { type: 'face-changed', face: 'learn' },
+    { type: 'face-changed', face: 'read' },
   ]);
+  assert.equal(shell.state.activeFace, 'read');
 });
 
 test('setFace to the current face is a no-op (no event, no state churn)', () => {

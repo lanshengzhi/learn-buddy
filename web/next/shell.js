@@ -1,11 +1,10 @@
 /**
  * Shell DOM adapter (map #40, slice 1) — wires ShellController to the DOM.
- * The reader is owned by /js/app.js, unchanged; this module only owns the
- * shell chrome: nav, identity chip, D3 placeholder, drawer, and the
- * selection toolbar.
+ * The reader is owned by /js/app.js; this module owns shell chrome, face
+ * visibility, identity chip, drawer, and the selection toolbar.
  *
  * Hard rules from spec §4.2 baked in here:
- *  - #2/#3: opening/closing D3 never touches #shell-main, and every
+ *  - #2/#3: face/layer changes never rebuild #shell-main, and every
  *    geometry read (toolbar position, word-card scroll) is live — no
  *    cached offsets anywhere in this file.
  *  - #4: when the word card opens on narrow, the looked-up sentence is
@@ -24,28 +23,29 @@ const WORD_SELECTION_MAX = 3; // §4.3: ≤3 chars is a word → word card, not 
 
 const shell = new ShellController({ narrow: NARROW.matches, onEvent: render });
 
-const d3 = $('d3');
 const shellScrim = $('shell-scrim');
 const selToolbar = $('sel-toolbar');
 const selCopy = $('sel-copy');
+const selLookup = $('sel-lookup');
 const lookupDrawer = $('lookup-drawer');
 const chatFace = $('chat-face');
 const readingArea = $('reading-area');
-const editorRegion = $('editor-region');
+const learnFace = $('learn-face');
+const readEmpty = $('read-empty');
+const bookView = $('book-view');
 const navChat = $('nav-chat');
 const navRead = $('nav-read');
+const navLearn = $('nav-learn');
 const navHistory = $('nav-history');
 const navShelf = $('nav-shelf');
 const navConversations = $('nav-conversations');
-const d3Trigger = $('d3-trigger');
-const d3TriggerNarrow = $('d3-trigger-narrow');
 const topbarTitle = $('shell-topbar-title');
 
 // --- render: state → DOM (idempotent; the shell DOM is tiny) ---------------
 
 function render() {
   const { openLayers, navCollapsed, narrow, activeFace } = shell.state;
-  d3.hidden = !openLayers.includes(Layer.D3);
+  document.body.dataset.face = activeFace;
   const drawerOpen = narrow && openLayers.includes(Layer.Drawer);
   document.body.classList.toggle('drawer-open', drawerOpen);
   shellScrim.hidden = !drawerOpen;
@@ -58,22 +58,23 @@ function render() {
   // toggles — the reading pane is NEVER rebuilt (spec §4.2 #2), so Chat and
   // Read keep their own state and never see each other's (user story 20).
   const chatActive = activeFace === Face.Chat;
+  const learnActive = activeFace === Face.Learn;
+  const readActive = activeFace === Face.Read;
   chatFace.hidden = !chatActive;
-  readingArea.hidden = chatActive;
-  editorRegion.hidden = chatActive;
+  readingArea.hidden = !readActive;
+  learnFace.hidden = !learnActive;
+  readEmpty.hidden = !bookView.hidden;
   navChat.classList.toggle('active', chatActive);
-  navRead.classList.toggle('active', !chatActive);
-  if (chatActive) navChat.setAttribute('aria-current', 'page');
-  else navChat.removeAttribute('aria-current');
-  if (chatActive) navRead.removeAttribute('aria-current');
-  else navRead.setAttribute('aria-current', 'page');
-  // The contextual panels and Read-only entries swap with the face.
+  navRead.classList.toggle('active', readActive);
+  navLearn.classList.toggle('active', learnActive);
+  for (const [button, active] of [[navChat, chatActive], [navRead, readActive], [navLearn, learnActive]]) {
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  }
   navConversations.hidden = !chatActive;
-  navShelf.hidden = chatActive;
-  navHistory.hidden = chatActive;
-  d3Trigger.hidden = chatActive;
-  d3TriggerNarrow.hidden = chatActive;
-  topbarTitle.textContent = chatActive ? 'Chat' : 'Read';
+  navShelf.hidden = !readActive;
+  navHistory.hidden = !learnActive;
+  topbarTitle.textContent = chatActive ? 'Chat' : learnActive ? '学习' : 'Read';
   if (chatActive) chatAdapter.activate();
 }
 
@@ -91,16 +92,20 @@ $('shell-nav-toggle').addEventListener('click', () => shell.toggleNav());
 $('nav-collapse').addEventListener('click', () => shell.toggleNav());
 shellScrim.addEventListener('click', () => shell.close(Layer.Drawer));
 
-// 阅读记录入口：现役 History 面板（编辑区「历史」按钮的既有行为）。
+// 阅读记录 belongs to Learn; show its existing history pane.
 navHistory.addEventListener('click', () => $('history-button').click());
 
-// Face 切换（#47）：Chat / Read 都只切 hidden；窄屏下从抽屉点完即收。
+// Face switches only toggle hidden; narrow drawer closes after selection.
 navChat.addEventListener('click', () => {
   shell.setFace(Face.Chat);
   shell.close(Layer.Drawer);
 });
 navRead.addEventListener('click', () => {
   shell.setFace(Face.Read);
+  shell.close(Layer.Drawer);
+});
+navLearn.addEventListener('click', () => {
+  shell.setFace(Face.Learn);
   shell.close(Layer.Drawer);
 });
 
@@ -124,12 +129,6 @@ new MutationObserver(syncIdentity).observe(profileChip, {
   subtree: true,
 });
 syncIdentity();
-
-// --- D3 placeholder (slice 1 trigger; slice 2: word card 追问 → / AI问书) ---
-
-$('d3-trigger').addEventListener('click', () => shell.open(Layer.D3));
-$('d3-trigger-narrow').addEventListener('click', () => shell.open(Layer.D3));
-$('d3-back').addEventListener('click', () => shell.close(Layer.D3));
 
 // --- viewport: crossing ~900px resets the layer stack ------------------------
 
@@ -175,7 +174,7 @@ document.addEventListener('selectionchange', () => {
   selectionTimer = setTimeout(() => {
     const selection = window.getSelection();
     const text = selection?.toString().trim() ?? '';
-    if (!selection || selection.isCollapsed || text.length <= WORD_SELECTION_MAX) {
+    if (!selection || selection.isCollapsed || text.length === 0) {
       shell.close(Layer.Toolbar);
       return;
     }
@@ -183,7 +182,8 @@ document.addEventListener('selectionchange', () => {
       selection.anchorNode?.nodeType === Node.ELEMENT_NODE
         ? selection.anchorNode
         : selection.anchorNode?.parentElement;
-    if (!anchor?.closest('#chapter-body, #sentence-list')) {
+    const inLearnSentence = shell.state.activeFace === Face.Learn && anchor?.closest('#sentence-list');
+    if (!inLearnSentence && (text.length <= WORD_SELECTION_MAX || !anchor?.closest('#chapter-body'))) {
       shell.close(Layer.Toolbar);
       return;
     }
@@ -223,5 +223,24 @@ selCopy.addEventListener('click', async () => {
   }
   shell.close(Layer.Toolbar);
 });
+
+selLookup.addEventListener('mousedown', (event) => event.preventDefault());
+selLookup.addEventListener('click', () => {
+  const selection = window.getSelection();
+  const word = selection?.toString().trim() ?? '';
+  const anchor = selection?.anchorNode?.nodeType === Node.ELEMENT_NODE
+    ? selection.anchorNode
+    : selection?.anchorNode?.parentElement;
+  const sentence = anchor?.closest('#sentence-list li');
+  if (!word || !sentence || shell.state.activeFace !== Face.Learn || !window.learnbuddyLookup) return;
+  const text = sentence.textContent;
+  const language = /[ぁ-ヿ]/u.test(text) ? 'ja' : /[\u3400-\u9fff]/u.test(text) ? 'zh' : 'en';
+  window.learnbuddyLookup({ word, sentence: text, language });
+  shell.close(Layer.Toolbar);
+});
+
+new MutationObserver(() => {
+  readEmpty.hidden = !bookView.hidden;
+}).observe(bookView, { attributes: true, attributeFilter: ['hidden'] });
 
 render();
