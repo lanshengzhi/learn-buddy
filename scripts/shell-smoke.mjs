@@ -259,6 +259,54 @@ await wp.waitForSelector('body[data-ready]');
 const otherLabel = await wp.locator('#shelf-list .shelf-item').first().locator('.shelf-reading').textContent();
 check(`wide: another Person sees their own position (${otherLabel.trim()})`, otherLabel.trim() === '未开始');
 
+// Focus the Learn editor on the same 390×844 touch page, after position
+// persistence checks so the extra keyboard interaction cannot race them.
+await np.locator('#shell-nav-toggle').click();
+await np.locator('#nav-learn').click();
+await np.locator('#text-input').fill('This is a narrow viewport study passage.');
+await np.locator('#update-button').click();
+await np.waitForSelector('#sentence-list li');
+const learnGeometryBefore = await np.evaluate(() => {
+  const rect = (selector) => document.querySelector(selector).getBoundingClientRect().toJSON();
+  return {
+    editor: rect('#editor-region'),
+    cards: rect('#reader-body'),
+    playback: rect('#bottom-bar'),
+    topbar: rect('#shell-topbar'),
+  };
+});
+await np.locator('#text-input').focus();
+await np.waitForFunction(() => document.body.classList.contains('editor-takeover'));
+await np.waitForTimeout(300);
+const learnGeometryFocused = await np.evaluate(() => {
+  const rect = (selector) => document.querySelector(selector).getBoundingClientRect().toJSON();
+  return {
+    editor: rect('#editor-region'),
+    cards: rect('#reader-body'),
+    playback: rect('#bottom-bar'),
+    topbar: rect('#shell-topbar'),
+  };
+});
+check('narrow: Learn editor takeover expands editor and moves cards/playback out of view',
+  learnGeometryFocused.editor.height > learnGeometryBefore.editor.height
+  && learnGeometryFocused.cards.bottom <= learnGeometryFocused.topbar.bottom
+  && learnGeometryFocused.playback.bottom <= learnGeometryFocused.topbar.bottom);
+await np.locator('#text-input').evaluate((el) => el.blur());
+await np.waitForFunction(() => !document.body.classList.contains('editor-takeover'));
+await np.waitForTimeout(300);
+const learnGeometryBlurred = await np.evaluate(() => {
+  const rect = (selector) => document.querySelector(selector).getBoundingClientRect().toJSON();
+  return {
+    editor: rect('#editor-region'),
+    cards: rect('#reader-body'),
+    playback: rect('#bottom-bar'),
+  };
+});
+check('narrow: Learn cards and playback return after editor blur',
+  learnGeometryBlurred.editor.height < learnGeometryFocused.editor.height
+  && learnGeometryBlurred.cards.bottom > 0
+  && learnGeometryBlurred.playback.bottom > 0);
+
 // ---------- old shell untouched ----------
 const op = await boot(wide, '/', 'old');
 check('old: no shell chrome at /', (await op.locator('#shell-nav').count()) === 0);

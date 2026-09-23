@@ -13,6 +13,7 @@
  */
 
 import { ShellController, Layer, Face } from '/js/core/shell-controller.js';
+import { detectLanguage } from '/js/core/language.js';
 import { initShelf } from './shelf.js';
 import { initChat } from './chat.js';
 
@@ -234,7 +235,7 @@ selLookup.addEventListener('click', () => {
   const sentence = anchor?.closest('#sentence-list li');
   if (!word || !sentence || shell.state.activeFace !== Face.Learn || !window.learnbuddyLookup) return;
   const text = sentence.textContent;
-  const language = /[ぁ-ヿ]/u.test(text) ? 'ja' : /[\u3400-\u9fff]/u.test(text) ? 'zh' : 'en';
+  const language = detectLanguage(text, document.body.dataset.readingLang);
   window.learnbuddyLookup({ word, sentence: text, language });
   shell.close(Layer.Toolbar);
 });

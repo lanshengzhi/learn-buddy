@@ -569,6 +569,22 @@ body[data-face="learn"] #back-to-book {
 }
 
 @media (pointer: coarse) {
+  /* Learn's editor shares the legacy focus-takeover class, but its cards and
+     playback bar live outside #reading-area in the /next shell. */
+  body.editor-takeover #learn-face #cards-view {
+    flex: 0;
+  }
+
+  body.editor-takeover #learn-face #reader-body,
+  body.editor-takeover #learn-face #bottom-bar {
+    transform: translateY(-100%);
+  }
+
+  body.editor-takeover #learn-face #editor-region {
+    flex: 1;
+    height: auto;
+  }
+
   /* The composer reuses the editor-takeover mechanism (§4.2): focus adds
      the same body class app.js uses, and the thread slides out of the way
      above the virtual keyboard — one keyboard dance, not two. */
