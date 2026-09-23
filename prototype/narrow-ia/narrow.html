@@ -1,0 +1,514 @@
+<!doctype html>
+<!--
+  PROTOTYPE · 窄屏 IA — 一次性产物，不要合进产品路径。
+
+  问题（wayfinder #41「窄屏 IA 原型」）：
+    规格 §4.2 是唯一标着「未经验证」的地方，而它恰恰是家里人最常用的形状。
+    它给的是纸面结构（抽屉 / D3 全屏覆盖层 / 单栏 / 底部词卡），**没人点过**。
+
+  三个结构上不同的窄屏导航，用 ?variant=N1|N2|N3 切换：
+    N1 汉堡 + 抽屉        —— 规格的字面：一个抽屉装下全部（面 + 记录 + 身份）
+    N2 底部标签 + 抽屉    —— 面用底部 tab；记录与身份仍在抽屉里
+    N3 无抽屉             —— 面用底部 tab；身份在右上头像；记录各自留在面内
+
+  其余（D3 全屏覆盖层 / 底部词卡 / 选中工具条 / 阅读 / 书架 / Chat）三变体共用。
+
+  要回答的五问（票 #41）：
+    1 抽屉与 D3 覆盖层能同时打开吗？先开谁、怎么退？
+    2 D3 一开一关，阅读位置会不会丢？
+    3 底部词卡会不会挡住它要解释的那个词？
+    4 写想法时虚拟键盘弹起，工具条该去哪？   ← 点顶栏「⌨ 键盘」模拟
+    5 ~900px 断点够不够？                    ← 顶栏实时显示宽度与命中哪一套
+
+  怎么跑：python3 server/tts_server.py --port 8000
+          http://localhost:8000/prototype-narrow.html    （建议用 390×844 与 834×1112 两个尺寸看）
+
+  真的：正文 / 分词 / ruby 来自 server/data/books/ 已解析章节；中文拼音与释义来自 server/data/dicts/zh.sqlite（CC-CEDICT）。
+  假的：AI 回答、会话记录、持久化。没有网络请求。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PROTOTYPE 窄屏 · 家庭中枢</title>
+<style>
+  :root{
+    --bg:#f4f3ef; --surface:#fff; --text:#1f2328; --muted:#6a737d; --border:#dcd9d3;
+    --primary:#2f6f4f; --primary-strong:#24563e; --soft:#e4efe8; --mark:#f6e7a8;
+    --shadow:0 8px 30px rgba(0,0,0,.18); --tabh:54px;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#16181b; --surface:#202327; --text:#e8e6e3; --muted:#9aa0a6; --border:#3a3f45;
+    --primary:#5aa37e; --primary-strong:#6fb692; --soft:#23382c; --mark:#5c5220;}}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overscroll-behavior:none}
+  body{background:var(--bg);color:var(--text);overflow:hidden;
+    font:16px/1.7 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans CJK SC",sans-serif;
+    -webkit-text-size-adjust:100%}
+  button{font:inherit;color:inherit}
+  .app{display:flex;flex-direction:column;height:100dvh}
+
+  /* 顶栏 */
+  .top{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:8px 10px;
+    padding-top:max(8px,env(safe-area-inset-top));background:var(--surface);
+    border-bottom:1px solid var(--border);min-height:50px}
+  .top .ic{all:unset;cursor:pointer;min-width:40px;min-height:40px;display:grid;place-items:center;
+    border-radius:10px;font-size:18px}
+  .top .ic:active{background:rgba(127,127,127,.18)}
+  .top .title{flex:1;min-width:0;text-align:center;font-size:14px;font-weight:600;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .top .title small{display:block;font-size:10.5px;color:var(--muted);font-weight:400}
+  .top .avatar{all:unset;cursor:pointer;width:34px;height:34px;border-radius:50%;background:var(--primary);
+    color:#fff;display:grid;place-items:center;font-size:12px;font-weight:700}
+
+  /* 主区 */
+  .main{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+  .pane{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
+
+  /* 正文 */
+  .rd{padding:16px 18px calc(var(--tabh) + 40px)}
+  .rd h1{font-size:17px;line-height:1.45;margin:0 0 3px}
+  .rd .meta{font-size:11.5px;color:var(--muted);margin-bottom:16px}
+  .body{font-size:17px;line-height:2.05}
+  .s{display:block;padding:3px 2px;border-radius:5px}
+  .s.marked{background:var(--mark)}
+  .w{border-radius:3px}
+  ruby rt{font-size:.5em;color:var(--muted);font-weight:400}
+  .note{margin:6px 0 12px;padding:7px 10px;border-left:3px solid var(--primary);
+    background:var(--surface);border-radius:0 7px 7px 0;font-size:13px;color:var(--muted)}
+
+  /* 书架 */
+  .shelf{padding:16px 16px calc(var(--tabh) + 40px)}
+  .shelf h2{margin:0 0 3px;font-size:18px}
+  .shelf .sub{font-size:12px;color:var(--muted);margin-bottom:14px}
+  .cats{display:flex;gap:6px;overflow-x:auto;padding-bottom:12px;scrollbar-width:none}
+  .cats::-webkit-scrollbar{display:none}
+  .cats button{all:unset;cursor:pointer;flex:0 0 auto;padding:6px 13px;border-radius:999px;font-size:13px;
+    border:1px solid var(--border);background:var(--surface);color:var(--muted)}
+  .cats button[aria-current="true"]{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 10px}
+  .bk .cv{aspect-ratio:3/4.3;border-radius:7px;display:flex;align-items:flex-end;padding:8px;
+    color:#fff;font-size:11px;font-weight:700;line-height:1.3;overflow:hidden;
+    background:linear-gradient(150deg,#2f6f4f,#1d4632)}
+  .bk:nth-child(3n) .cv{background:linear-gradient(150deg,#7a5a2e,#4a3618)}
+  .bk:nth-child(3n+1) .cv{background:linear-gradient(150deg,#3a4a7a,#222c4a)}
+  .bk .tt{font-size:12px;font-weight:600;margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bk .pg{font-size:10.5px;color:var(--primary-strong)}
+  .import{aspect-ratio:3/4.3;border:1.5px dashed var(--border);border-radius:7px;display:grid;
+    place-items:center;color:var(--muted);font-size:12px;text-align:center;padding:8px}
+
+  /* Chat */
+  .chat{padding:12px 16px calc(var(--tabh) + 40px)}
+  .recs{display:flex;flex-direction:column;gap:2px;margin-bottom:14px}
+  .recs .r{padding:9px 10px;border-radius:9px;font-size:13.5px;background:var(--surface);
+    border:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .recs .r[aria-current="true"]{background:var(--soft);border-color:var(--primary);font-weight:600}
+  .turn{margin:12px 0}
+  .turn .who{font-size:10.5px;color:var(--muted);letter-spacing:.06em;margin-bottom:3px}
+  .turn .bub{font-size:15px;line-height:1.7}
+  .turn.me .bub{background:var(--soft);padding:8px 11px;border-radius:11px}
+
+  /* 底部标签（N2 / N3） */
+  .tabs{flex:0 0 auto;height:var(--tabh);padding-bottom:env(safe-area-inset-bottom);
+    display:flex;background:var(--surface);border-top:1px solid var(--border)}
+  .tabs button{all:unset;cursor:pointer;flex:1;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:1px;font-size:10.5px;color:var(--muted)}
+  .tabs button[aria-current="true"]{color:var(--primary-strong);font-weight:700}
+  .tabs button .g{font-size:19px;line-height:1}
+
+  /* 抽屉（N1 / N2） */
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.42);z-index:60;opacity:0;pointer-events:none;
+    transition:opacity .16s}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .drawer{position:absolute;top:0;left:0;bottom:0;width:80%;max-width:320px;z-index:61;
+    background:var(--bg);border-right:1px solid var(--border);transform:translateX(-102%);
+    transition:transform .18s ease;display:flex;flex-direction:column;
+    padding:max(10px,env(safe-area-inset-top)) 10px 10px}
+  .drawer.on{transform:none}
+  .drawer .brand{font-size:12px;font-weight:700;letter-spacing:.03em;color:var(--muted);padding:4px 10px 12px}
+  .drawer .ni{all:unset;cursor:pointer;display:flex;align-items:center;gap:11px;padding:11px 10px;
+    border-radius:10px;font-size:15px;min-height:46px}
+  .drawer .ni[aria-current="true"]{background:var(--soft);color:var(--primary-strong);font-weight:600}
+  .drawer .caret{margin-left:auto;font-size:10px;opacity:.55;transition:transform .12s}
+  .drawer .caret.down{transform:rotate(90deg)}
+  .drawer .subs{display:flex;flex-direction:column;gap:1px;margin:2px 0 8px 30px}
+  .drawer .subs .se{all:unset;cursor:pointer;padding:8px;border-radius:8px;font-size:13px;color:var(--muted);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .drawer .subs .se[aria-current="true"]{background:var(--soft);color:var(--primary-strong);font-weight:600}
+  .drawer .sp{flex:1}
+  .face{all:unset;cursor:pointer;display:flex;align-items:center;gap:10px;padding:10px;border-radius:11px;
+    background:var(--surface);border:1px solid var(--border)}
+  .face .dot{width:30px;height:30px;border-radius:50%;background:var(--primary);color:#fff;display:grid;
+    place-items:center;font-size:12px;font-weight:700}
+  .face .who{font-weight:600;font-size:14px}
+  .face .sub{display:block;font-size:10.5px;color:var(--muted)}
+
+  /* 选中工具条 */
+  .selbar{position:absolute;z-index:64;display:flex;gap:1px;background:#1b1e21;color:#fff;padding:3px;
+    border-radius:10px;box-shadow:var(--shadow);max-width:calc(100% - 16px);overflow-x:auto}
+  .selbar button{all:unset;cursor:pointer;padding:9px 12px;border-radius:7px;font-size:13px;white-space:nowrap;
+    min-height:38px;display:flex;align-items:center}
+  .selbar .hi{font-weight:700;color:#8ce0ae}
+
+  /* 底部卡片（词卡 / 写想法 / 身份） */
+  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:66;background:var(--surface);
+    border-top:1px solid var(--border);border-radius:14px 14px 0 0;box-shadow:0 -8px 26px rgba(0,0,0,.2);
+    max-height:62%;display:flex;flex-direction:column}
+  .sheet .grab{width:36px;height:4px;border-radius:99px;background:var(--border);margin:7px auto 0}
+  .sheet .in{padding:10px 16px calc(14px + env(safe-area-inset-bottom));overflow-y:auto}
+  .sheet .hw{font-size:22px;font-weight:700}
+  .sheet .py{font-size:14px;color:var(--primary-strong);margin-top:1px}
+  .sheet .lb{font-size:10.5px;color:var(--muted);letter-spacing:.08em;margin:11px 0 4px}
+  .sheet .gl{font-size:14px;line-height:1.7}
+  .sheet .gl ol{margin:0;padding-left:18px}
+  .sheet .gl .en{color:var(--muted);font-size:12.5px}
+  .sheet .foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;
+    justify-content:space-between;align-items:center;gap:10px}
+  .sheet .foot .mk{font-size:13px;color:var(--muted)}
+  .sheet .foot .ask{all:unset;cursor:pointer;font-size:14px;font-weight:700;color:var(--primary-strong)}
+  .askrow{display:flex;gap:8px;flex:1}
+  .askrow input{flex:1;min-width:0;font:inherit;font-size:15px;padding:10px 12px;border-radius:10px;
+    border:1px solid var(--border);background:var(--bg);color:var(--text)}
+  .askrow button{all:unset;cursor:pointer;background:var(--primary);color:#fff;border-radius:10px;
+    padding:10px 15px;font-size:14px;font-weight:600}
+
+  /* D3 全屏覆盖层 */
+  .d3{position:absolute;inset:0;z-index:80;background:var(--surface);display:flex;flex-direction:column}
+  .d3 .hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 10px;
+    padding-top:max(8px,env(safe-area-inset-top));border-bottom:1px solid var(--border);min-height:50px}
+  .d3 .hd .ic{all:unset;cursor:pointer;min-width:40px;min-height:40px;display:grid;place-items:center;
+    border-radius:10px;font-size:19px}
+  .d3 .hd b{font-size:13.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .d3 .log{flex:1;min-height:0;overflow-y:auto;padding:12px 16px}
+  .chip{display:inline-block;font-size:11px;color:var(--primary-strong);background:var(--soft);
+    border-radius:6px;padding:3px 8px;margin-bottom:9px}
+  .quoted{border-left:3px solid var(--primary);background:var(--bg);border-radius:0 8px 8px 0;
+    padding:9px 12px;font-size:14px;line-height:1.7;margin:2px 0 11px}
+  .presets{display:flex;flex-wrap:wrap;gap:7px;margin:2px 0 12px}
+  .presets button{all:unset;cursor:pointer;border:1px solid var(--border);background:var(--surface);
+    border-radius:999px;padding:8px 14px;font-size:13px;color:var(--primary-strong);min-height:38px}
+  .inp{flex:0 0 auto;display:flex;gap:8px;padding:9px 12px calc(9px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border)}
+  .inp input{flex:1;min-width:0;font:inherit;font-size:15px;padding:11px 13px;border-radius:11px;
+    border:1px solid var(--border);background:var(--bg);color:var(--text)}
+  .inp button{all:unset;cursor:pointer;background:var(--primary);color:#fff;border-radius:11px;
+    padding:11px 17px;font-size:14px;font-weight:600}
+
+  /* 模拟虚拟键盘 */
+  .kb{position:absolute;left:0;right:0;bottom:0;height:38%;z-index:70;background:#cfd3d8;
+    border-top:1px solid var(--border);display:grid;place-items:center;color:#4a4f55;font-size:12px}
+  @media (prefers-color-scheme:dark){.kb{background:#2b2f33;color:#9aa0a6}}
+
+  /* 标注（原型提示，不属于设计） */
+  .hint{position:absolute;left:8px;right:8px;bottom:calc(var(--tabh) + 8px);z-index:50;
+    background:rgba(27,30,33,.86);color:#fff;border-radius:9px;padding:7px 10px;font-size:11.5px;
+    line-height:1.5;pointer-events:none}
+  .hint b{color:#8ce0ae}
+  #sw{position:fixed;left:50%;bottom:calc(var(--tabh) + 62px);transform:translateX(-50%);z-index:200;
+    display:flex;align-items:center;gap:8px;background:#111;color:#fff;border-radius:999px;padding:5px 7px;
+    box-shadow:0 6px 20px rgba(0,0,0,.4);font:12px/1 ui-monospace,monospace}
+  #sw button{all:unset;cursor:pointer;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+    background:rgba(255,255,255,.16);font-size:13px}
+  #sw .lbl{min-width:186px;text-align:center}
+  #sw .lbl b{color:#8ce0ae}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top" id="top"></div>
+  <div class="main" id="main"></div>
+  <div id="tabs"></div>
+</div>
+<div id="sw">
+  <button id="prev">‹</button><span class="lbl" id="lbl"></span><button id="next">›</button>
+</div>
+
+<script>
+const DATA = {"books": {"ja": {"book": "嫌われる勇気", "author": "岸見 一郎", "lang": "ja", "chapter": "無意味な人生に「意味」を与えよ", "sentences": [{"t": "無意味な人生に「意味」を与えよ", "w": [3, 1, 2, 1, 1, 2, 1, 1, 3], "ruby": [[0, 3, "むいみ"], [4, 2, "じんせい"], [8, 2, "いみ"], [12, 3, "あたえよ"]]}, {"t": "なんということだ。", "w": [2, 1, 2, 2, 1, 1], "ruby": []}, {"t": "哲人 もはや議論は水辺に達しているでしょう。", "w": [2, 1, 3, 2, 1, 2, 1, 2, 1, 2, 4, 1], "ruby": [[0, 2, "てつと"], [6, 2, "ぎろん"], [9, 2, "みずべ"], [12, 2, "たっし"]]}, {"t": "水を呑むかどうかは、あなたの決心次第です。", "w": [1, 1, 2, 1, 2, 1, 1, 1, 3, 1, 2, 2, 2, 1], "ruby": [[0, 1, "みず"], [2, 2, "のむ"], [14, 2, "けっしん"], [16, 2, "しだい"]]}, {"t": "青年 ああ、アドラー心理学、そして先生の哲学は、たしかにわたしを変えようとしているのかもしれない。", "w": [2, 1, 2, 1, 4, 3, 1, 3, 2, 1, 2, 1, 1, 3, 1, 3, 1, 4, 1, 1, 1, 2, 1, 1, 1, 2, 2, 1], "ruby": [[0, 2, "せいねん"], [10, 3, "しんりがく"], [17, 2, "せんせい"], [20, 2, "てつがく"], [32, 4, "かえよう"]]}, {"t": "わたしは「変わらない」という決心をやめ、新しい生き方を、新しいライフスタイルを選ぼうとしているのかもしれない。……", "w": [3, 1, 1, 3, 2, 1, 1, 2, 2, 1, 2, 1, 3, 3, 1, 1, 3, 7, 1, 3, 1, 1, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1], "ruby": [[5, 3, "かわら"], [14, 2, "けっしん"], [20, 3, "あたらしい"], [23, 3, "いきかた"], [28, 3, "あたらしい"], [39, 3, "えらぼう"]]}, {"t": "でも、でも、最後にもうひとつだけ聞かせてください！", "w": [1, 1, 1, 1, 1, 1, 2, 1, 2, 2, 1, 2, 2, 1, 1, 4, 1], "ruby": [[6, 2, "さいご"], [16, 2, "きか"]]}, {"t": "哲人 なんでしょう？", "w": [2, 1, 2, 4, 1], "ruby": [[0, 2, "てつと"]]}, {"t": "青年 人生が連続する刹那であったとき、人生が「いま、ここ」にしか存在しなかったとしたとき、いったい人生の意味とはなんなのでしょうか？", "w": [2, 1, 2, 1, 2, 2, 2, 1, 2, 1, 2, 1, 2, 1, 1, 2, 1, 2, 1, 1, 2, 2, 1, 3, 1, 1, 1, 1, 2, 1, 4, 2, 1, 2, 1, 1, 2, 1, 1, 4, 1, 1], "ruby": [[0, 2, "せいねん"], [3, 2, "じんせい"], [6, 2, "れんぞく"], [10, 2, "せつな"], [19, 2, "じんせい"], [32, 2, "そんざい"], [49, 2, "じんせい"], [52, 2, "いみ"]]}, {"t": "わたしはなんのために生まれ、この苦難に満ちた生を耐え抜き、死を迎えるというのでしょうか？", "w": [3, 1, 2, 1, 2, 1, 3, 1, 2, 2, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1, 3, 1, 2, 1, 4, 1, 1], "ruby": [[10, 3, "うまれ"], [16, 2, "くなん"], [19, 2, "みち"], [22, 1, "なま"], [24, 2, "たえ"], [26, 2, "ぬき"], [29, 1, "し"], [31, 3, "むかえる"]]}, {"t": "その理由が、わたしにはわからないのです。", "w": [2, 2, 1, 1, 3, 1, 1, 3, 2, 1, 2, 1], "ruby": [[2, 2, "りゆう"]]}, {"t": "哲人 人生の意味とはなにか？", "w": [2, 1, 2, 1, 2, 1, 1, 2, 1, 1], "ruby": [[0, 2, "てつと"], [3, 2, "じんせい"], [6, 2, "いみ"]]}, {"t": "人はなんのために生きるのか？", "w": [1, 1, 2, 1, 2, 1, 3, 1, 1, 1], "ruby": [[0, 1, "ひと"], [8, 3, "いきる"]]}, {"t": "ある人からこの質問を向けられたとき、アドラーの答えは「一般的な人生の意味はない」というものでした。", "w": [2, 1, 2, 2, 2, 1, 2, 2, 1, 2, 1, 4, 1, 2, 1, 1, 3, 1, 2, 1, 2, 1, 2, 1, 1, 2, 2, 2, 1, 1], "ruby": [[2, 1, "ひと"], [7, 2, "しつもん"], [10, 2, "むけ"], [23, 2, "こたえ"], [27, 3, "いっぱんてき"], [31, 2, "じんせい"], [34, 2, "いみ"]]}, {"t": "青年 人生に意味はない？", "w": [2, 1, 2, 1, 2, 1, 2, 1], "ruby": [[0, 2, "せいねん"], [3, 2, "じんせい"], [6, 2, "いみ"]]}, {"t": "哲人 たとえば戦禍や天災のように、われわれの住む世界には、理不尽な出来事が隣り合わせで存在しています。", "w": [2, 1, 4, 2, 1, 2, 1, 2, 1, 1, 4, 1, 2, 2, 1, 1, 1, 3, 1, 3, 1, 5, 1, 2, 1, 1, 1, 2, 1], "ruby": [[0, 2, "てつと"], [7, 2, "せんか"], [10, 2, "てんさい"], [22, 2, "すむ"], [24, 2, "せかい"], [29, 3, "りふじん"], [33, 3, "できごと"], [37, 5, "となりあわせ"], [43, 2, "そんざい"]]}, {"t": "戦渦に巻き込まれて命を落とした子どもたちを前に、「人生の意味」など語れるはずもありません。", "w": [2, 1, 4, 1, 1, 1, 1, 3, 1, 5, 1, 1, 1, 1, 1, 2, 1, 2, 1, 2, 3, 2, 1, 2, 2, 1, 1], "ruby": [[0, 2, "せんか"], [3, 4, "まきこま"], [9, 1, "いのち"], [11, 3, "おとし"], [15, 5, "こどもたち"], [21, 1, "まえ"], [25, 2, "じんせい"], [28, 2, "いみ"], [33, 3, "かたれる"]]}, {"t": "つまり、人生には一般論として語れるような意味は存在しないのです。", "w": [3, 1, 2, 1, 1, 2, 1, 1, 1, 1, 3, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1], "ruby": [[4, 2, "じんせい"], [8, 2, "いっぱん"], [10, 1, "ろん"], [14, 3, "かたれる"], [20, 2, "いみ"], [23, 2, "そんざい"]]}, {"t": "しかし、そうした不条理なる悲劇を前にしながら、なにも行動を起こさないのは、起きてしまった悲劇を肯定しているのと同じでしょう。", "w": [3, 1, 2, 1, 1, 3, 2, 2, 1, 1, 1, 1, 3, 1, 2, 1, 2, 1, 3, 2, 1, 1, 1, 2, 1, 3, 1, 2, 1, 2, 1, 1, 2, 1, 1, 2, 4, 1], "ruby": [[8, 3, "ふじょうり"], [13, 2, "ひげき"], [16, 1, "まえ"], [26, 2, "こうどう"], [29, 3, "おこさ"], [37, 2, "おき"], [44, 2, "ひげき"], [47, 2, "こうてい"], [55, 2, "おなじ"]]}, {"t": "どんな状況であれ、われわれはなんらかの行動を起こさねばなりません。", "w": [3, 2, 1, 2, 1, 4, 1, 2, 1, 1, 1, 2, 1, 3, 1, 1, 2, 2, 1, 1], "ruby": [[3, 2, "じょうきょう"], [19, 2, "こうどう"], [22, 3, "おこさ"]]}, {"t": "カントのいう傾向性に立ち向かわなければなりません。", "w": [3, 1, 2, 3, 1, 5, 3, 1, 2, 2, 1, 1], "ruby": [[6, 3, "けいこうせい"], [10, 5, "たちむかわ"]]}, {"t": "青年 ええ、ええ！", "w": [2, 1, 2, 1, 2, 1], "ruby": [[0, 2, "せいねん"]]}]}, "zh": {"book": "红楼梦", "author": "曹雪芹", "lang": "zh", "chapter": "第十七回至十八回 大观园试才题对额 荣国府归省庆元宵", "sentences": [{"t": "第十七回至十八回 大观园试才题对额 荣国府归省庆元宵〔一〕", "w": [4, 1, 2, 1, 1, 3, 3, 2, 1, 3, 2, 1, 2, 1, 1, 1], "ruby": []}, {"t": "话说秦钟既死，宝玉痛哭不已，李贵等好容易劝解半日方住，归时犹是凄恻哀痛。", "w": [1, 1, 2, 1, 1, 1, 2, 2, 2, 1, 2, 1, 3, 2, 3, 1, 1, 2, 1, 1, 2, 2, 1], "ruby": []}, {"t": "贾母帮了几十两银子，外又另备奠仪，宝玉去吊纸[2]。", "w": [2, 1, 1, 3, 2, 1, 1, 1, 2, 2, 1, 2, 1, 2, 1, 1, 1, 1], "ruby": []}, {"t": "七日后便送殡掩埋了，别无述记。", "w": [2, 1, 1, 2, 2, 1, 1, 1, 1, 2, 1], "ruby": []}]}}, "dz": {"宝玉": {"py": "bǎo yù", "gl": ["/precious jade/treasures/"]}, "痛哭": {"py": "tòng kū", "gl": ["/to cry bitterly/"]}, "劝解": {"py": "quàn jiě", "gl": ["/conciliation/mediation/to mollify/to propitiate/to reconcile/"]}, "银子": {"py": "yín zi", "gl": ["/money/silver/"]}, "话说": {"py": "huà shuō", "gl": ["/It is said that ... (at the start of a narrative)/to discuss; to recount/"]}}, "dj": {"無意味": {"rd": "むいみ"}, "人生": {"rd": "じんせい"}, "意味": {"rd": "いみ"}, "与えよ": {"rd": "あたえよ"}, "哲人": {"rd": "てつと"}, "議論": {"rd": "ぎろん"}, "水辺": {"rd": "みずべ"}, "達し": {"rd": "たっし"}, "水": {"rd": "みず"}, "呑む": {"rd": "のむ"}, "決心": {"rd": "けっしん"}, "次第": {"rd": "しだい"}, "青年": {"rd": "せいねん"}, "心理学": {"rd": "しんりがく"}, "先生": {"rd": "せんせい"}, "哲学": {"rd": "てつがく"}, "変えよう": {"rd": "かえよう"}, "変わら": {"rd": "かわら"}, "新しい": {"rd": "あたらしい"}, "生き方": {"rd": "いきかた"}, "選ぼう": {"rd": "えらぼう"}}};
+
+const VARI = {
+  N1:{n:'汉堡 + 抽屉', d:'规格的字面：一个抽屉装下全部（面 + 记录 + 身份）'},
+  N2:{n:'底部标签 + 抽屉', d:'面用底部 tab；记录与身份仍在抽屉里'},
+  N3:{n:'无抽屉', d:'面用底部 tab；身份在右上头像；记录各自留在面内'}
+};
+const FACES=[{n:'爸爸',d:'爸'},{n:'妈妈',d:'妈'},{n:'大女儿',d:'大'},{n:'小女儿',d:'小'}];
+const CATS=['全部','日语','中文','在读','待读'];
+const SHELF=[{k:'ja',cat:'日语',p:'读到第 62 章 · 82%'},{k:'zh',cat:'中文',p:'第十七回 · 12%'},
+  {k:'x1',cat:'在读',t:'The Pragmatic Programmer',p:'第 4 章'},{k:'x2',cat:'待读',t:'Proxmox VE Guide',p:''},
+  {k:'x3',cat:'待读',t:'The Western Canon',p:''},{k:'x4',cat:'日语',t:'羅生門',p:''}];
+const PRESETS=['断句解析','逐词解释','语法点','翻译成中文'];
+const SESS=[{t:'这一章的「刹那」怎么理解',m:'今天'},{t:'「決心」和「決意」的差别',m:'昨天'},
+  {t:'整理第十七回的生词',m:'3 天前'}];
+
+const P=new URLSearchParams(location.search);
+let V=(P.get('variant')||'N1').toUpperCase(); if(!VARI[V]) V='N1';
+const S={
+  drawer:false, chatOpen:true, readOpen:true,
+  surface:P.get('surface')==='chat'?'chat':'read',
+  shelf:P.get('shelf')==='1', cat:'全部', book:'ja', face:0, sess:0,
+  sel:null, selbar:null, dict:null, note:null, who:null,
+  marks:{}, notes:{}, d3:null, kb:false, q:null
+};
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const bd=k=>DATA.books[k];
+const hist=[];
+function go(fn){hist.push(JSON.stringify({d:S.drawer,d3:!!S.d3,dict:!!S.dict,note:!!S.note,who:!!S.who,sel:!!S.selbar}));fn();render();}
+function back(){
+  if(S.d3) return go(()=>S.d3=null);
+  if(S.dict) return go(()=>{S.dict=null;});
+  if(S.who) return go(()=>S.who=null);
+  if(S.note) return go(()=>S.note=null);
+  if(S.selbar) return go(()=>{S.selbar=null;S.sel=null;});
+  if(S.drawer) return go(()=>S.drawer=false);
+}
+function wordsOf(s){const o=[];let i=0;for(const n of s.w){if(i>=s.t.length)break;o.push([s.t.slice(i,i+n),i]);i+=n;}
+  if(i<s.t.length)o.push([s.t.slice(i),i]);return o;}
+function sentHTML(s,i){
+  const rt={};(s.ruby||[]).forEach(([o,l,r])=>rt[o]=r);
+  let h='';
+  for(const [w,o] of wordsOf(s)){
+    h+=`<span class="w" data-i="${i}" data-w="${esc(w)}">${rt[o]?`<ruby>${esc(w)}<rt>${esc(rt[o])}</rt></ruby>`:esc(w)}</span>`;
+  }
+  const n=S.notes[i]?`<div class="note">想法：${esc(S.notes[i])}</div>`:'';
+  return `<span class="s${S.marks[i]?' marked':''}" data-i="${i}">${h}</span>${n}`;
+}
+const dictFor=(lang,w)=> lang==='zh' ? (DATA.dz[w]?{py:DATA.dz[w].py,gl:DATA.dz[w].gl}:null)
+                                     : (DATA.dj[w]?{py:DATA.dj[w].rd,gl:null}:null);
+
+/* ---------- 顶部栏 ---------- */
+function topHTML(){
+  const b=bd(S.book), w=Math.round(window.innerWidth);
+  const wide=w>=900;
+  const title = S.surface==='chat' ? 'Chat' : (S.shelf? '书架' : esc(b.book));
+  const sub   = S.surface==='chat' ? esc(SESS[S.sess].t) : (S.shelf? '' : esc(b.chapter).slice(0,22)+'…');
+  const left = (V==='N3'||S.surface==='chat'||S.shelf||S.d3) ? '' :
+    `<button class="ic" id="burger" aria-label="导航">☰</button>`;
+  const right = V==='N3' ? `<button class="avatar" id="avatar">${FACES[S.face].d}</button>`
+                         : `<button class="ic" id="kbBtn" title="模拟虚拟键盘">⌨</button>`;
+  return `${left||'<span style="width:40px"></span>'}
+    <div class="title">${title}<small>${sub}</small></div>
+    ${(S.dict||S.note||S.who)?`<button class="ic" id="backBtn" title="返回">‹</button>`:''}
+    ${right}
+    <span style="position:absolute;left:0;right:0;bottom:-17px;text-align:center;font-size:10px;color:var(--muted)">
+      宽 ${w}px · 命中 ${wide?'宽屏（≥900）':'**窄屏**'}</span>`;
+}
+
+/* ---------- 抽屉 ---------- */
+function drawerHTML(){
+  const subs=(open,items,cur)=>open?`<div class="subs">${items.map((x,i)=>
+    `<button class="se" data-a="pick" data-kind="${cur}" data-i="${i}" aria-current="${cur==='sess'&&S.sess===i||cur==='rec'&&S.book===x.k}">${esc(x.t||bd(x.k).book)}</button>`).join('')}</div>`:'';
+  return `<div class="scrim ${S.drawer?'on':''}" data-a="drawer-off"></div>
+  <div class="drawer ${S.drawer?'on':''}">
+    <div class="brand">家庭中枢 · PROTOTYPE</div>
+    <button class="ni" data-a="surf" data-s="chat" aria-current="${S.surface==='chat'}">
+      <span>💬</span>Chat <span class="caret ${S.chatOpen?'down':''}" data-a="caret" data-k="chat">▶</span></button>
+    ${subs(S.chatOpen,SESS,'sess')}
+    <button class="ni" data-a="surf" data-s="read" aria-current="${S.surface==='read'}">
+      <span>📖</span>Read <span class="caret ${S.readOpen?'down':''}" data-a="caret" data-k="read">▶</span></button>
+    ${subs(S.readOpen,SHELF.filter(x=>x.p),'rec')}
+    <div class="sp"></div>
+    <button class="face" data-a="face"><span class="dot">${FACES[S.face].d}</span>
+      <span><span class="who">${FACES[S.face].n}</span><span class="sub">书 · 进度 · 词表 · 对话</span></span></button>
+  </div>`;
+}
+
+/* ---------- 面 ---------- */
+function readHTML(){
+  if(S.shelf){
+    const items=SHELF.filter(b=>S.cat==='全部'||b.cat===S.cat);
+    return `<div class="pane"><div class="shelf">
+      <h2>书架</h2><div class="sub">${SHELF.filter(b=>b.p).length} 本在读 · 共 44 本</div>
+      <div class="cats">${CATS.map(c=>`<button data-a="cat" data-c="${c}" aria-current="${S.cat===c}">${c}</button>`).join('')}</div>
+      <div class="grid">
+        <button class="import" data-a="import">＋<br>导入 epub</button>
+        ${items.map(b=>`<div class="bk" data-a="open" data-k="${b.k}">
+          <div class="cv">${esc((b.t||bd(b.k).book).slice(0,20))}</div>
+          <div class="tt">${esc(b.t||bd(b.k).book)}</div>
+          <div class="pg">${b.p?esc(b.p):'未开始'}</div></div>`).join('')}
+      </div></div></div>`;
+  }
+  const b=bd(S.book);
+  return `<div class="pane" id="reader"><div class="rd">
+    <h1>${esc(b.chapter)}</h1><div class="meta">${esc(b.book)} · ${esc(b.author)}</div>
+    <div class="body" id="body">${b.sentences.map(sentHTML).join('')}</div>
+  </div></div>`;
+}
+function chatHTML(){
+  return `<div class="pane"><div class="chat">
+    ${V==='N3'?`<div class="recs">${SESS.map((s,i)=>
+      `<div class="r" data-a="pick" data-kind="sess" data-i="${i}" aria-current="${S.sess===i}">${esc(s.t)}</div>`).join('')}</div>`:''}
+    <div class="turn me"><div class="who">你</div><div class="bub">「連続する刹那」跟「いま、ここ」是一回事吗？</div></div>
+    <div class="turn"><div class="who">AI</div><div class="bub">基本是一回事，但侧重不同。前者说时间由一个个刹那接续而成；后者说你只能活在当下这一个刹那。</div></div>
+    <div class="turn me"><div class="who">你</div><div class="bub">那本章末尾的「意味を与えよ」是谁给？</div></div>
+    <div class="turn"><div class="who">AI</div><div class="bub">你自己。这正是本章标题的落点。</div></div>
+    <div class="inp" style="border:0;padding:8px 0 0"><input placeholder="接着问…"><button data-a="noop">发送</button></div>
+  </div></div>`;
+}
+function tabsHTML(){
+  if(V==='N1') return '';
+  return `<div class="tabs">
+    <button data-a="surf" data-s="chat" aria-current="${S.surface==='chat'}"><span class="g">💬</span>Chat</button>
+    <button data-a="surf" data-s="read" aria-current="${S.surface==='read'}"><span class="g">📖</span>Read</button>
+  </div>`;
+}
+
+/* ---------- 覆盖层 ---------- */
+function d3HTML(){
+  const a=S.d3; if(!a) return '';
+  const preset=(a.presets&&!a.turns.some(t=>t.me))
+    ?`<div class="presets">${PRESETS.map(p=>`<button data-a="preset" data-p="${esc(p)}">${esc(p)}</button>`).join('')}</div>`:'';
+  return `<div class="d3">
+    <div class="hd"><button class="ic" data-a="d3-close">‹</button><b>AI · ${esc(a.ctx)}</b></div>
+    <div class="log"><span class="chip">上下文：${esc(a.ctx)}</span>
+      ${a.quote?`<div class="quoted">${esc(a.quote)}</div>`:''}${preset}
+      ${a.turns.map(t=>`<div class="turn ${t.me?'me':''}"><div class="who">${t.me?'你':'AI'}</div>
+        <div class="bub">${esc(t.x)}</div></div>`).join('')}
+    </div>
+    <div class="inp"><input placeholder="继续问…（不用切到 Chat）" id="d3in"><button data-a="d3-send">发送</button></div>
+  </div>`;
+}
+function selbarHTML(){
+  if(!S.selbar) return '';
+  return `<div class="selbar" style="left:${S.selbar.x}px;top:${S.selbar.y}px">
+    <button data-a="copy">复制</button><button data-a="mark">马克笔</button>
+    <button data-a="note">写想法</button><button class="hi" data-a="askbook">AI问书</button></div>`;
+}
+function sheetsHTML(){
+  let h='';
+  if(S.dict){
+    const d=S.dict;
+    const gl=d.gl?`<ol>${d.gl.map(g=>`<li class="en">${esc(String(g).replace(/^\/|\/$/g,'').replace(/\//g,'；'))}</li>`).join('')}</ol>`
+      :'<span style="color:var(--muted)">词典里没有这个词。</span>';
+    h+=`<div class="sheet"><div class="grab"></div><div class="in">
+      <div class="hw">${esc(d.w)}</div>
+      <div class="py">${d.lang==='zh'?'拼音':'读音'}　${esc(d.py||'—')}</div>
+      <div class="lb">文中意思</div><div class="gl">${esc(d.inText)}${gl}</div>
+      <div class="foot"><span class="mk" data-a="known">我认识</span>
+        <button class="ask" data-a="askword">追问 →</button></div>
+    </div></div>`;
+  }
+  if(S.note!==null&&S.note!==undefined&&S.note.open){
+    h+=`<div class="sheet" style="z-index:67"><div class="grab"></div><div class="in">
+      <div class="lb" style="margin-top:6px">写想法 · 第 ${S.note.i+1} 句</div>
+      <div class="askrow"><input id="notein" placeholder="记一句人话…" value="${esc(S.notes[S.note.i]||'')}">
+        <button data-a="note-save">存</button></div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:9px">
+        ⌨ 键盘弹起时：<b>工具条收起</b>，输入框贴到键盘上方（点顶栏 ⌨ 模拟）</div>
+    </div></div>`;
+  }
+  if(S.who){
+    h+=`<div class="sheet"><div class="grab"></div><div class="in">
+      <div class="lb" style="margin-top:6px">现在是谁</div>
+      ${FACES.map((f,i)=>`<div class="recs"><div class="r" data-a="setface" data-i="${i}"
+        aria-current="${S.face===i}">${f.n}${S.face===i?' ✓':''}</div></div>`).join('')}
+      <div style="font-size:11.5px;color:var(--muted);margin-top:8px">换的是整套：书 · 进度 · 词表 · 对话</div>
+    </div></div>`;
+  }
+  return h;
+}
+function hintHTML(){
+  const t={
+    N1:'<b>N1 汉堡 + 抽屉</b>：点左上 ☰ 开抽屉。抽屉开着时 D3 打不开（先关抽屉）。',
+    N2:'<b>N2 底部标签 + 抽屉</b>：底部切面；记录与「现在是谁」在抽屉里。',
+    N3:'<b>N3 无抽屉</b>：底部切面；右上头像换身份；会话列表在 Chat 面顶部。'
+  }[V];
+  return `<div class="hint">${t}<br>点一个<b>词</b>出词卡 · 长按/点句尾出<b>工具条</b>（此处：点句子右侧留白）· 顶部 ⌨ 模拟键盘</div>`;
+}
+
+/* ---------- 渲染 ---------- */
+function render(){
+  document.getElementById('top').innerHTML=topHTML();
+  const m=document.getElementById('main');
+  // Q2 的教训：整体重建 innerHTML 会把 .pane 的 scrollTop 重置为 0。
+  // 「D3 是覆盖层所以阅读面还在」只在**不重渲染**时成立——必须显式接住滚动位置。
+  const prevPane=m.querySelector('.pane'); const keep=prevPane?prevPane.scrollTop:null;
+  m.innerHTML = (S.surface==='chat'?chatHTML():(S.shelf?readHTML():readHTML()))
+    + (V!=='N3'?drawerHTML():'')
+    + d3HTML() + selbarHTML() + sheetsHTML()
+    + (S.kb?`<div class="kb">虚拟键盘（原型模拟）</div>`:'')
+    + hintHTML();
+  const p=m.querySelector('.pane'); if(p&&keep!=null) p.scrollTop=keep;
+  document.getElementById('tabs').innerHTML=tabsHTML();
+  document.getElementById('lbl').innerHTML=`<b>${V}</b> (${VARI[V].n})`;
+  wire();
+}
+function wire(){
+  const m=document.getElementById('main');
+  const on=(id,fn)=>{const e=document.getElementById(id); if(e) e.onclick=fn;};
+  on('burger',()=>go(()=>{S.drawer=true; S.kb=false;}));
+  on('backBtn',back);
+  on('kbBtn',()=>go(()=>{S.kb=!S.kb; if(S.kb){S.selbar=null;} if(!S.kb)S.note=null;}));
+  on('avatar',()=>go(()=>S.who=true));
+  m.querySelectorAll('.w').forEach(el=>el.onclick=e=>{
+    e.stopPropagation();
+    const i=+el.closest('.s').dataset.i, w=el.dataset.w, r=el.getBoundingClientRect();
+    const mr=m.getBoundingClientRect();
+    const d=dictFor(bd(S.book).lang,w), s=bd(S.book).sentences[i].t;
+    go(()=>{S.dict={w,i,lang:bd(S.book).lang,py:d?d.py:null,gl:d?d.gl:null,
+      inText:`在「${s.length>18?s.slice(0,18)+'…':s}」里，就是它字面上的用法。`};});
+    // Q3：把词滚到卡片上方——不让卡片挡住它
+    requestAnimationFrame(()=>{
+      const card=m.querySelector('.sheet'); const h=card?card.getBoundingClientRect().height:0;
+      const pane=m.querySelector('.pane'); if(!pane) return;
+      const top=el.getBoundingClientRect().top-mr.top+pane.scrollTop;
+      const want=top-(pane.clientHeight-h-24);
+      if(want>pane.scrollTop) pane.scrollTop=want;
+    });
+  });
+  m.querySelectorAll('.s').forEach(el=>el.onclick=e=>{
+    if(e.target.closest('.w')) return;
+    const i=+el.dataset.i, r=el.getBoundingClientRect(), mr=m.getBoundingClientRect();
+    go(()=>{S.sel={i,text:bd(S.book).sentences[i].t};
+      S.selbar={x:Math.max(8,Math.min(r.left-mr.left, mr.width-360)), y:Math.max(6,r.top-mr.top-52)};});
+  });
+  m.querySelectorAll('[data-a]').forEach(el=>el.onclick=e=>{
+    e.stopPropagation();
+    const a=el.dataset.a;
+    if(a==='drawer-off') return go(()=>S.drawer=false);
+    if(a==='surf') return go(()=>{S.surface=el.dataset.s; S.shelf=false; S.drawer=false;});
+    if(a==='caret') return go(()=>{ if(el.dataset.k==='chat')S.chatOpen=!S.chatOpen; else S.readOpen=!S.readOpen; });
+    if(a==='pick') return go(()=>{ if(el.dataset.kind==='sess'){S.sess=+el.dataset.i;S.surface='chat';}
+                                  else {S.book=el.dataset.i?SHELF.filter(x=>x.p)[+el.dataset.i].k:S.book;}
+                                  S.shelf=false; S.drawer=false; });
+    if(a==='face') return go(()=>S.who=true);
+    if(a==='setface') return go(()=>{S.face=+el.dataset.i; S.who=null;});
+    if(a==='cat') return go(()=>S.cat=el.dataset.c);
+    if(a==='open') return go(()=>{S.book=el.dataset.k; S.shelf=false;});
+    if(a==='import') return alert('原型：导入 epub（真项目走现有 POST /books 上传路径）');
+    if(a==='mark') return go(()=>{S.marks[S.sel.i]=!S.marks[S.sel.i]; S.selbar=null;});
+    if(a==='note') return go(()=>{S.note={open:true,i:S.sel.i}; S.selbar=null; S.kb=true;});
+    if(a==='note-save'){ const v=m.querySelector('#notein').value; return go(()=>{S.notes[S.note.i]=v;S.note=null;S.kb=false;}); }
+    if(a==='askbook') return openD3(bd(S.book).book+' · '+bd(S.book).chapter,{quote:S.sel.text,presets:true});
+    if(a==='askword') return openD3(S.dict.w+' · '+bd(S.book).chapter,
+      {quote:`${S.dict.w} —— 出现在「${bd(S.book).sentences[S.dict.i].t.slice(0,22)}…」`,presets:true});
+    if(a==='d3-close') return go(()=>S.d3=null);
+    if(a==='preset'){ const p=el.dataset.p; return go(()=>{S.d3.turns=[{me:true,x:`${p}：「${S.sel?S.sel.text:''}」`},
+      {x:`（原型：这里会是「${p}」的结果。）`}]; S.selbar=null;}); }
+    if(a==='d3-send'){ const v=m.querySelector('#d3in').value; if(!v.trim())return;
+      return go(()=>{S.d3.turns.push({me:true,x:v.trim()});S.d3.turns.push({x:'（原型：模型的回答。）'});}); }
+    if(a==='copy') return;
+    if(a==='known') return go(()=>S.dict=null);
+    if(a==='noop') return;
+  });
+}
+function openD3(ctx,o){ go(()=>{ S.d3={ctx,quote:o.quote||null,presets:!!o.presets,
+  turns:o.presets?[]:[{x:'（原型：模型的回答。）'}]}; S.selbar=null; S.dict=null; S.drawer=false; }); }
+/* 点句子右侧留白 = 选中那句（真项目里是拖选，见规格 §4.3 的选区长度分流） */
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#main')) return;
+  if(e.target.closest('.sheet,.d3,.selbar,.drawer,.scrim,.w,[data-a]')) return;
+  if(S.d3||S.dict||S.note||S.who) return;
+  shownav();
+});
+function shownav(){ S.selbar=null; S.sel=null; render(); }
+
+const KS=Object.keys(VARI);
+function setV(v){V=v;P.set('variant',v);history.replaceState(null,'','?'+P.toString());render();}
+document.getElementById('prev').onclick=()=>setV(KS[(KS.indexOf(V)+KS.length-1)%KS.length]);
+document.getElementById('next').onclick=()=>setV(KS[(KS.indexOf(V)+1)%KS.length]);
+/* 只重渲染——滚动位置由 render() 自己实时接住，不再缓存（缓存过的偏移量会遮蔽实时值） */
+window.addEventListener('resize',()=>render());
+render();
+</script>
+</body>
+</html>
