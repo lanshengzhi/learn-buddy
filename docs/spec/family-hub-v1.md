@@ -262,7 +262,7 @@
 | [#38](https://github.com/lanshengzhi/learn-buddy/issues/38) | v1 的设备与形态 |
 | [#39](https://github.com/lanshengzhi/learn-buddy/issues/39) | Conversation 的删除与保留 |
 
-**ADR**：`0003`（顶部横幅：无断点对新壳不再成立）· [`0011`](adr/0011-person-conversation-memory.md)（Person / Conversation / Memory）· [`0012`](adr/0012-python-host-node-sidecar.md)（Python 宿主 + Node 边车）· [`0013`](adr/0013-conversation-cost-and-privacy.md)（成本与隐私边界）
+**ADR**：`0003`（顶部横幅：无断点对新壳不再成立）· [`0011`](adr/0011-person-conversation-memory.md)（Person / Conversation / Memory）· [`0012`](adr/0012-python-host-node-sidecar.md)（Python 宿主 + Node 边车）· [`0013`](adr/0013-conversation-cost-and-privacy.md)（成本与隐私边界）· [`0014`](adr/0014-go-live-strategy.md)（上线策略：并行 `/next`、分阶段试用、改名随旧壳删除）
 
 **词汇表**：`CONTEXT.md`
 
