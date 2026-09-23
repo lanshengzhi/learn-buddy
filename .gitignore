@@ -12,3 +12,6 @@ server/data/
 # Python bytecode
 server/__pycache__/
 server/tests/__pycache__/
+
+# Shell smoke screenshots (dev artifact)
+shots-shell/

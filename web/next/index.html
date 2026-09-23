@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>LearnBuddy</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="theme-color" content="#f5f4ed">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/next/shell.css">
+</head>
+<body data-view="cards">
+
+  <!-- 窄屏顶栏（宽屏隐藏）：根位置是 ☰；D3 覆盖层自带 ‹，两者不共存（§4.2） -->
+  <div id="shell-topbar">
+    <button id="shell-nav-toggle" class="plain" type="button" aria-label="打开导航">☰</button>
+    <span id="shell-topbar-title">Read</span>
+    <!-- slice-1 占位：切片 2 由词卡「追问 →」/ AI问书接管 D3 触发 -->
+    <button id="d3-trigger-narrow" class="plain" type="button" title="切片 1 占位：验证开关 D3 不动阅读位置">AI</button>
+  </div>
+
+  <div id="shell">
+    <nav id="shell-nav" aria-label="主导航">
+      <div class="nav-head">
+        <span class="nav-brand">LearnBuddy</span>
+        <button id="nav-collapse" class="plain" type="button" aria-label="收起导航">«</button>
+      </div>
+      <button class="nav-item" id="nav-chat" type="button" disabled title="切片 2 接入" data-icon="💬">
+        <span class="nav-label">Chat</span>
+        <span class="nav-note">切片 2</span>
+      </button>
+      <button class="nav-item active" id="nav-read" type="button" aria-current="page" data-icon="📖">
+        <span class="nav-label">Read</span>
+      </button>
+      <button class="nav-sub" id="nav-history" type="button" data-icon="🕘">
+        <span class="nav-label">阅读记录</span>
+      </button>
+      <div class="nav-spacer"></div>
+      <!-- slice-1 占位：切片 2 由词卡「追问 →」/ AI问书接管 D3 触发 -->
+      <button id="d3-trigger" class="nav-sub" type="button" title="切片 1 占位：验证开关 D3 不动阅读位置" data-icon="✨">
+        <span class="nav-label">D3 预览</span>
+      </button>
+      <button id="identity-chip" type="button" aria-haspopup="menu">
+        <span class="chip-title">现在是谁</span>
+        <b id="identity-name">…</b>
+        <span class="chip-sub">书 · 进度 · 词表 · 对话</span>
+      </button>
+    </nav>
+
+    <div id="shell-main">
+      <!-- 旧顶栏：app.js 仍接线 profile-chip / lang-badge，壳 CSS 隐藏它；
+           身份入口由导航的身份 chip 接管 -->
+      <header class="app-header">
+        <div class="app-header-inner">
+          <button id="profile-chip" class="chip" type="button" hidden aria-haspopup="menu">档案</button>
+          <h1>LearnBuddy</h1>
+          <span id="lang-badge" class="lang-badge" hidden></span>
+        </div>
+      </header>
+
+      <main id="reading-area" class="reading-area">
+        <!-- 粘贴流程（句子卡片） -->
+        <div id="cards-view" class="cards-view">
+          <div id="reader-body" class="reader-body">
+            <div id="reader-loading" class="loading-indicator" hidden></div>
+            <p id="reader-error" class="error" role="alert" hidden></p>
+            <p id="reader-empty" class="muted" hidden>还没有句子，先在下方粘贴文本。</p>
+            <button id="empty-library-btn" class="btn" type="button" hidden>打开书库</button>
+            <ul id="sentence-list" class="sentence-list"></ul>
+          </div>
+        </div>
+
+        <!-- 书籍阅读面（#12：一套版式两种形状） -->
+        <section id="book-view" class="book-view" hidden>
+          <div class="bookbar">
+            <button id="toc-btn" class="plain" type="button" aria-label="目录">目录</button>
+            <div class="titles">
+              <b id="book-title">—</b>
+              <span id="chapter-title">—</span>
+            </div>
+            <button id="hl-toggle" class="plain" type="button" aria-label="生词提示">标生词</button>
+            <button id="library-btn" class="plain" type="button">书库</button>
+          </div>
+          <div id="book-scroll" class="book-scroll">
+            <div class="book-column">
+              <article id="chapter-body" aria-live="off"></article>
+              <p id="book-error" class="error" role="alert" hidden></p>
+              <div class="chapter-nav">
+                <button id="prev-chapter" class="btn secondary" type="button" disabled>上一章</button>
+                <button id="next-chapter" class="btn secondary" type="button" disabled>下一章</button>
+              </div>
+            </div>
+          </div>
+          <aside id="book-aside" class="book-aside">
+            <div class="tabs">
+              <button id="tab-lookup" class="active" type="button">查义</button>
+              <button id="tab-toc" type="button">目录</button>
+            </div>
+            <div id="aside-body" class="aside-body"></div>
+          </aside>
+        </section>
+
+        <nav id="bottom-bar" class="bottom-bar" hidden aria-label="播放控制">
+          <div class="playback-group" role="group" aria-label="句子播放">
+            <button id="prev-button" class="icon-button" type="button" aria-label="上一句" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+            </button>
+            <button id="replay-button" class="icon-button" type="button" aria-label="重播当前句" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+            </button>
+            <button id="play-button" class="icon-button primary" type="button" aria-label="播放" disabled>
+              <svg id="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+              <svg id="pause-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+            </button>
+            <button id="next-button" class="icon-button" type="button" aria-label="下一句" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+            </button>
+          </div>
+          <div class="playback-options" role="group" aria-label="播放设置">
+            <label class="rate-control">
+              <span class="sr-only">播放语速</span>
+              <select id="rate-select" aria-label="播放语速"></select>
+            </label>
+            <button id="loop-button" class="icon-button" type="button" aria-label="循环：关">
+              <svg id="loop-off-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+              <svg id="loop-all-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+              <svg id="loop-one-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"/></svg>
+            </button>
+          </div>
+        </nav>
+      </main>
+
+      <section id="editor-region" class="editor-region">
+        <div class="tabs" id="editor-tabs" hidden>
+          <button id="tab-edit" class="active" type="button">编辑</button>
+          <button id="tab-history" type="button">历史</button>
+          <button id="collapse-button" class="collapse-btn" type="button">收起</button>
+        </div>
+
+        <div id="edit-pane" class="pane">
+          <textarea id="text-input" class="textarea" rows="8" spellcheck="false"
+            placeholder="粘贴日文、英文或中文文本…"></textarea>
+          <button id="history-button" class="btn secondary" type="button">历史</button>
+          <div class="actions" id="editor-actions">
+            <button id="paste-button" class="secondary" type="button">从剪贴板粘贴</button>
+            <button id="update-button" type="button" disabled>更新</button>
+            <label class="auto-row"><input type="checkbox" id="auto-toggle"> 输入时自动分段</label>
+            <span id="editor-status" class="editor-status"></span>
+          </div>
+          <p id="paste-error" class="error" role="alert" hidden></p>
+        </div>
+
+        <div id="history-pane" class="pane" hidden>
+          <div class="chips">
+            <button id="filter-all" class="active" type="button">全部</button>
+            <button id="filter-fav" type="button">收藏</button>
+          </div>
+          <p id="history-empty" class="muted" hidden>暂无历史</p>
+          <ul id="history-list" class="history-list"></ul>
+        </div>
+
+        <div id="collapsed-status" class="collapsed-status" hidden>
+          <span id="collapsed-info"></span>
+          <button id="back-to-book" class="plain back-book" type="button" hidden>回到书</button>
+          <span class="collapsed-right">
+            <span class="muted">点击文本框展开编辑</span>
+          </span>
+        </div>
+      </section>
+    </div>
+
+    <!-- D3：右侧对话栏（宽屏）/ 全屏覆盖层（窄屏）。切片 1 为空占位，
+         唯一的 AI 出口（切片 2 接入对话）。不属于任何一个面。 -->
+    <aside id="d3" hidden aria-label="AI 对话栏">
+      <div class="d3-head">
+        <button id="d3-back" class="plain" type="button" aria-label="返回">‹</button>
+        <h2>AI 对话</h2>
+      </div>
+      <p class="d3-placeholder muted">对话栏在切片 2 接入。本切片只验证壳：开关本栏不得动阅读位置。</p>
+    </aside>
+  </div>
+
+  <!-- 壳自有的抽屉遮罩（与 app 的 #scrim 分开：那个归词卡用） -->
+  <div id="shell-scrim" hidden></div>
+
+  <!-- 拖选工具条：切片 1 只有「复制」；马克笔 / 写想法 / AI问书随切片 3/2 加入 -->
+  <div id="sel-toolbar" hidden>
+    <button id="sel-copy" type="button">复制</button>
+  </div>
+
+  <div id="scrim" hidden></div>
+  <div id="lookup-drawer" class="sheet" hidden>
+    <div class="handle"></div>
+    <div class="card" id="lookup-card"></div>
+  </div>
+  <div id="toc-drawer" class="drawer" hidden>
+    <h3>目录</h3>
+    <div id="toc-list" class="toc-list"></div>
+  </div>
+  <div id="library-overlay" class="overlay" hidden>
+    <div class="gate-card library-card">
+      <div class="library-head">
+        <h2>书库</h2>
+        <button id="library-close" class="btn secondary" type="button">关闭</button>
+      </div>
+      <div class="library-upload">
+        <label class="btn" id="upload-button">上传 epub<input id="upload-input" type="file"
+          accept=".epub,application/epub+zip" hidden></label>
+        <div class="upload-progress" id="upload-progress" hidden><i></i></div>
+        <span id="upload-status" class="muted"></span>
+      </div>
+      <p id="library-empty" class="muted" hidden>还没有书——上传一本 epub 开始阅读。</p>
+      <ul id="library-list" class="library-list"></ul>
+    </div>
+  </div>
+  <div id="profile-gate" class="overlay" hidden>
+    <div class="gate-card">
+      <h2>谁在读？</h2>
+      <p class="muted">选择一个档案开始（换设备会再问一次）。</p>
+      <div id="profile-choices" class="gate-list"></div>
+    </div>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="/js/app.js"></script>
+  <script type="module" src="/next/shell.js"></script>
+</body>
+</html>

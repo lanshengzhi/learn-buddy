@@ -373,6 +373,37 @@ class TestStaticServing(unittest.TestCase):
         finally:
             harness.close()
 
+    def test_next_shell_served_under_prefix(self):
+        static_dir = tempfile.mkdtemp()
+        with open(os.path.join(static_dir, "index.html"), "w") as fh:
+            fh.write("<h1>old shell</h1>")
+        next_dir = os.path.join(static_dir, "next")
+        os.makedirs(next_dir)
+        with open(os.path.join(next_dir, "index.html"), "w") as fh:
+            fh.write("<h1>new shell</h1>")
+        with open(os.path.join(next_dir, "shell.css"), "w") as fh:
+            fh.write("body{}")
+        harness = ServerHarness(static_dir, FakeSynthesizer())
+        try:
+            status, _, body = harness.get("/")
+            self.assertEqual(status, 200)
+            self.assertEqual(body, b"<h1>old shell</h1>")
+            status, _, body = harness.get("/next/")
+            self.assertEqual(status, 200)
+            self.assertEqual(body, b"<h1>new shell</h1>")
+            status, headers, body = harness.get("/next/shell.css")
+            self.assertEqual(status, 200)
+            self.assertEqual(body, b"body{}")
+            self.assertIn("text/css", headers["Content-Type"])
+            # The /next/ root must not be escapable, even onto a file that
+            # exists in the old shell's root.
+            status, _, _ = harness.get("/next/../index.html")
+            self.assertEqual(status, 404)
+            status, _, _ = harness.get("/next/%2e%2e/index.html")
+            self.assertEqual(status, 404)
+        finally:
+            harness.close()
+
     def test_path_traversal_is_blocked(self):
         harness = ServerHarness(self.static_dir if hasattr(self, "static_dir") else tempfile.mkdtemp(), FakeSynthesizer())
         try:

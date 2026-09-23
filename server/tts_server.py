@@ -487,10 +487,18 @@ class TtsHandler(BaseHTTPRequestHandler):
     # -- static ------------------------------------------------------------
 
     def _handle_static(self, path):
-        if path == "/":
-            path = "/index.html"
-        candidate = os.path.abspath(os.path.join(self.server.app.static_dir, unquote_plus(path).lstrip("/")))
         static_root = os.path.abspath(self.server.app.static_dir)
+        # The next-generation shell lives in <static_dir>/next/ and is served
+        # under /next/ while the old shell keeps / (ADR 0014). Same
+        # traversal guard, rooted at the subdirectory.
+        if path == "/next" or path.startswith("/next/"):
+            path = path[len("/next"):]
+            if path in ("", "/"):
+                path = "/index.html"
+            static_root = os.path.join(static_root, "next")
+        elif path == "/":
+            path = "/index.html"
+        candidate = os.path.abspath(os.path.join(static_root, unquote_plus(path).lstrip("/")))
         if not candidate.startswith(static_root + os.sep) and candidate != static_root:
             self._json_error(404, "not_found")
             return

@@ -1,0 +1,311 @@
+/**
+ * Family-hub shell layout (map #40, slice 1) — loaded AFTER /css/style.css.
+ * The reader internals are reused unchanged; this file only re-frames the
+ * page: nav column + reading pane + D3 on wide, drawer + fullscreen
+ * overlays on narrow. Breakpoint ~900px (spec §4.2: three columns need
+ * 238 + content + 378; at 834px only 218px remain for the text).
+ */
+
+/* ---- reframe: body was a flex column owned by the old shell ---- */
+
+body {
+  display: block;
+  overflow: hidden;
+}
+
+.app-header {
+  display: none;
+}
+
+#shell {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  height: 100dvh;
+}
+
+#shell-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---- left nav (238px; collapses to a 54px icon bar, §4.1) ---- */
+
+#shell-nav {
+  width: 238px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px 12px;
+}
+
+.nav-brand {
+  font-family: var(--reading-font);
+  font-size: 18px;
+  letter-spacing: 0.01em;
+}
+
+.nav-item,
+.nav-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav-sub {
+  padding-left: 22px;
+  font-size: 14px;
+  color: var(--muted, #6b6b62);
+}
+
+.nav-item:hover:not(:disabled),
+.nav-sub:hover:not(:disabled) {
+  background: var(--border);
+}
+
+.nav-item.active {
+  background: var(--border);
+  font-weight: 600;
+}
+
+.nav-item:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.nav-note {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted, #6b6b62);
+}
+
+.nav-spacer {
+  flex: 1;
+}
+
+#identity-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#identity-chip .chip-title {
+  font-size: 12px;
+  color: var(--muted, #6b6b62);
+}
+
+#identity-chip b {
+  font-size: 16px;
+}
+
+#identity-chip .chip-sub {
+  font-size: 12px;
+  color: var(--muted, #6b6b62);
+}
+
+/* collapsed: 54px icon bar — labels and the chip's text fold away */
+body.nav-collapsed #shell-nav {
+  width: 54px;
+  padding: 12px 6px;
+}
+
+body.nav-collapsed .nav-brand,
+body.nav-collapsed .nav-label,
+body.nav-collapsed .nav-note,
+body.nav-collapsed #identity-chip .chip-title,
+body.nav-collapsed #identity-chip .chip-sub {
+  display: none;
+}
+
+body.nav-collapsed .nav-item,
+body.nav-collapsed .nav-sub {
+  padding: 9px 0;
+  justify-content: center;
+}
+
+body.nav-collapsed .nav-item::before,
+body.nav-collapsed .nav-sub::before {
+  content: attr(data-icon);
+  font-size: 16px;
+}
+
+body.nav-collapsed #nav-collapse {
+  transform: rotate(180deg);
+}
+
+/* ---- D3: right column on wide (378px, §4.2's column math) ---- */
+
+#d3 {
+  width: 378px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+}
+
+#d3[hidden] {
+  display: none;
+}
+
+.d3-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.d3-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.d3-placeholder {
+  padding: 16px 14px;
+}
+
+/* ---- shell-owned scrim (the app's #scrim belongs to the lookup sheet) ---- */
+
+#shell-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  z-index: 35;
+}
+
+/* ---- selection toolbar (slice 1: copy only, §4.3) ---- */
+
+#sel-toolbar {
+  position: fixed;
+  z-index: 60;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--bg);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+#sel-toolbar button {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+/* ---- narrow shell (< ~900px, §4.2; verified by the narrow-IA prototype) ---- */
+
+#shell-topbar {
+  display: none;
+}
+
+@media (max-width: 899.98px) {
+  #shell {
+    grid-template-columns: 1fr;
+  }
+
+  #shell-topbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    padding-top: calc(8px + env(safe-area-inset-top));
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    z-index: 20;
+  }
+
+  #shell-topbar-title {
+    flex: 1;
+    font-weight: 600;
+  }
+
+  /* Re-frame again: the topbar sits above the grid */
+  body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  #shell {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+  }
+
+  /* nav becomes a drawer (☰ or left-edge affordance; §4.2) */
+  #shell-nav {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(80vw, 320px);
+    z-index: 40;
+    transform: translateX(-102%);
+    transition: transform 0.22s ease;
+    border-right: 1px solid var(--border);
+    box-shadow: 0 0 32px rgba(0, 0, 0, 0.18);
+  }
+
+  body.drawer-open #shell-nav {
+    transform: none;
+  }
+
+  /* D3 becomes a fullscreen overlay with its own ‹ (§4.2: ☰ and ‹ never
+     coexist — the topbar is covered while D3 is open) */
+  #d3 {
+    position: fixed;
+    inset: 0;
+    width: auto;
+    z-index: 50;
+    border-left: 0;
+  }
+
+  /* word card: bottom card capped at 62% (§4.2) */
+  #lookup-drawer.sheet {
+    max-height: 62%;
+  }
+
+  /* opening the card scrolls the looked-up sentence to just below the top
+     edge of the visible strip above the card (~24px, §4.2 #4); read live,
+     never from a cached offset (§4.2 #3) */
+  #book-scroll {
+    scroll-padding-top: 24px;
+  }
+}
