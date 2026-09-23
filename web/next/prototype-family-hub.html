@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f2ec">
+  <title>LearnBuddy · 家庭 AI 中枢原型</title>
+  <!--
+    PROTOTYPE ONLY — throw this route away after choosing a direction.
+    Question: which desktop/iPad shell makes independent Chat and Read feel simplest?
+    Three structurally different variants, switchable with ?variant=A|B|C.
+  -->
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f4f2ec;
+      --surface: #fffefa;
+      --surface-2: #f8f7f2;
+      --ink: #25332e;
+      --muted: #78827d;
+      --line: #e7e7df;
+      --accent: #356b5a;
+      --accent-dark: #234c3f;
+      --accent-soft: #e7f0e9;
+      --warm: #c88753;
+      --shadow: 0 18px 50px rgba(35, 52, 44, .08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--paper); color: var(--ink); }
+    button, input, textarea, select { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid #91bba8; outline-offset: 2px; }
+    .app { min-height: 100vh; }
+    .icon { display: inline-grid; place-items: center; width: 1.35em; height: 1.35em; font-size: 1rem; line-height: 1; }
+    .muted { color: var(--muted); }
+    .eyebrow { color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+    .small { color: var(--muted); font-size: .78rem; line-height: 1.5; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 750; letter-spacing: -.03em; }
+    .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 12px; background: var(--accent); color: white; font-size: .75rem; letter-spacing: .02em; }
+    .person-select { max-width: 190px; padding: 9px 34px 9px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); }
+    .person-wrap { display: flex; align-items: center; gap: 9px; }
+    .privacy-note { color: var(--muted); font-size: .7rem; }
+    .surface-nav { display: flex; gap: 5px; }
+    .surface-button, .nav-button, .quiet-button, .primary-button, .icon-button {
+      border: 0; cursor: pointer; transition: background .16s ease, color .16s ease, transform .16s ease;
+    }
+    .surface-button { display: flex; align-items: center; gap: 9px; padding: 11px 13px; border-radius: 12px; background: transparent; color: var(--muted); text-align: left; }
+    .surface-button:hover, .quiet-button:hover, .icon-button:hover { background: var(--surface-2); color: var(--ink); }
+    .surface-button[aria-current="page"] { background: var(--accent-soft); color: var(--accent-dark); font-weight: 700; }
+    .quiet-button { padding: 9px 12px; border-radius: 11px; background: transparent; color: var(--muted); }
+    .primary-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 14px; border-radius: 12px; background: var(--accent); color: white; font-weight: 700; }
+    .primary-button:hover { background: var(--accent-dark); transform: translateY(-1px); }
+    .icon-button { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: transparent; color: var(--muted); }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-dark); font-size: .74rem; font-weight: 700; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #5f9b7b; }
+
+    /* Variant A — persistent app rail + contextual list + working surface. */
+    .variant-a { display: grid; grid-template-columns: 76px 258px minmax(0, 1fr); min-height: 100vh; }
+    .a-rail { display: flex; flex-direction: column; align-items: center; gap: 13px; padding: 22px 10px 18px; border-right: 1px solid var(--line); background: #eeeee7; }
+    .a-rail .brand-mark { margin-bottom: 20px; }
+    .a-rail .surface-button { width: 54px; height: 52px; flex-direction: column; justify-content: center; gap: 4px; padding: 5px; font-size: .67rem; }
+    .a-rail .surface-button .icon { font-size: 1.1rem; }
+    .a-spacer { flex: 1; }
+    .a-list { min-width: 0; padding: 25px 14px; border-right: 1px solid var(--line); background: #f8f7f2; }
+    .a-list-head { display: flex; align-items: center; justify-content: space-between; min-height: 40px; margin-bottom: 18px; }
+    .a-list-head h2 { margin: 0; font-size: 1rem; }
+    .list-item { display: flex; width: 100%; flex-direction: column; gap: 5px; margin: 4px 0; padding: 12px; border: 0; border-radius: 12px; background: transparent; text-align: left; cursor: pointer; }
+    .list-item:hover, .list-item.active { background: #eeeee8; }
+    .list-item strong { overflow: hidden; font-size: .85rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+    .list-item span { color: var(--muted); font-size: .72rem; }
+    .a-main { display: flex; min-width: 0; min-height: 100vh; flex-direction: column; }
+    .a-topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 21px 30px; border-bottom: 1px solid var(--line); background: rgba(255,254,250,.78); }
+    .a-topbar h1 { margin: 3px 0 0; font-size: 1.15rem; letter-spacing: -.025em; }
+    .a-content { display: flex; flex: 1; min-height: 0; justify-content: center; padding: 32px clamp(22px, 5vw, 80px) 88px; }
+
+    /* Variant B — quiet top navigation; history and books live in the page. */
+    .variant-b { min-height: 100vh; }
+    .b-topbar { position: sticky; z-index: 5; top: 0; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 20px; padding: 16px clamp(20px, 4vw, 64px); border-bottom: 1px solid var(--line); background: rgba(255,254,250,.92); backdrop-filter: blur(16px); }
+    .b-topbar .person-wrap { justify-self: end; }
+    .b-tabs { display: flex; padding: 4px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); }
+    .b-tabs .surface-button { min-width: 104px; justify-content: center; }
+    .b-main { max-width: 1190px; min-height: calc(100vh - 72px); margin: 0 auto; padding: 34px clamp(20px, 4vw, 56px) 94px; }
+    .b-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; margin-bottom: 24px; }
+    .b-page-head h1 { margin: 5px 0 7px; font-size: clamp(1.5rem, 2vw, 2rem); letter-spacing: -.045em; }
+    .b-page-head p { max-width: 620px; margin: 0; color: var(--muted); line-height: 1.55; }
+    .b-chat { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 620px; }
+    .b-history { position: fixed; z-index: 8; inset: 73px auto 0 0; width: min(340px, 86vw); padding: 24px; border-right: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); transform: translateX(-105%); transition: transform .2s ease; }
+    .b-history.open { transform: translateX(0); }
+    .b-history-backdrop { position: fixed; z-index: 7; inset: 73px 0 0; border: 0; background: rgba(31,43,37,.18); }
+    .b-history-backdrop[hidden] { display: none; }
+
+    /* Variant C — a calm launchpad, then a focused full-width surface. */
+    .variant-c { min-height: 100vh; }
+    .c-topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px clamp(22px, 5vw, 72px); border-bottom: 1px solid var(--line); background: var(--surface); }
+    .c-topbar-left { display: flex; align-items: center; gap: 24px; }
+    .c-topbar .surface-nav { padding: 4px; border-radius: 14px; background: var(--surface-2); }
+    .c-main { max-width: 1180px; margin: 0 auto; padding: clamp(30px, 6vh, 68px) clamp(22px, 5vw, 72px) 100px; }
+    .c-welcome { margin-bottom: 32px; }
+    .c-welcome h1 { margin: 8px 0 10px; font-size: clamp(2rem, 4vw, 3.2rem); letter-spacing: -.06em; }
+    .c-welcome p { max-width: 600px; margin: 0; color: var(--muted); line-height: 1.6; }
+    .launch-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .launch-card { display: flex; min-height: 270px; flex-direction: column; align-items: flex-start; padding: clamp(24px, 4vw, 42px); border: 1px solid var(--line); border-radius: 24px; background: var(--surface); box-shadow: 0 10px 30px rgba(35,52,44,.035); text-align: left; cursor: pointer; transition: transform .18s ease, box-shadow .18s ease; }
+    .launch-card:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
+    .launch-icon { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: auto; border-radius: 17px; background: var(--accent-soft); color: var(--accent-dark); font-size: 1.35rem; }
+    .launch-card h2 { margin: 22px 0 6px; font-size: 1.35rem; }
+    .launch-card p { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
+
+    .chat-surface { display: flex; width: min(820px, 100%); min-height: 600px; flex-direction: column; }
+    .chat-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 0 0 18px; border-bottom: 1px solid var(--line); }
+    .chat-heading h2 { margin: 0 0 7px; font-size: 1.05rem; }
+    .chat-heading p { margin: 0; color: var(--muted); font-size: .83rem; }
+    .messages { display: flex; flex: 1; flex-direction: column; gap: 20px; padding: 28px 0 20px; }
+    .message { display: flex; align-items: flex-start; gap: 11px; max-width: 91%; }
+    .message.user { align-self: flex-end; flex-direction: row-reverse; }
+    .avatar { display: grid; flex: 0 0 30px; place-items: center; width: 30px; height: 30px; border-radius: 11px; background: var(--accent-soft); color: var(--accent-dark); font-size: .73rem; font-weight: 750; }
+    .message.user .avatar { background: #ece8df; color: #75634d; }
+    .bubble { padding: 12px 15px; border: 1px solid var(--line); border-radius: 5px 16px 16px 16px; background: var(--surface); line-height: 1.6; white-space: pre-wrap; }
+    .message.user .bubble { border-color: #e3e8df; border-radius: 16px 5px 16px 16px; background: #edf2ea; }
+    .empty-chat { display: grid; flex: 1; place-items: center; min-height: 260px; color: var(--muted); text-align: center; }
+    .empty-chat strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 1.1rem; }
+    .composer { display: flex; align-items: flex-end; gap: 11px; padding: 10px 11px 10px 16px; border: 1px solid #d9ded7; border-radius: 18px; background: var(--surface); box-shadow: 0 8px 24px rgba(40,55,46,.055); }
+    .composer textarea { width: 100%; min-height: 28px; max-height: 120px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--ink); line-height: 1.5; }
+    .composer textarea:focus { outline: 0; }
+    .send-button { display: grid; flex: 0 0 36px; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 12px; background: var(--accent); color: white; font-size: 1.2rem; cursor: pointer; }
+    .send-button:hover { background: var(--accent-dark); }
+    .chat-footnote { margin: 10px 3px 0; color: var(--muted); font-size: .7rem; text-align: center; }
+    .read-surface { width: 100%; }
+    .read-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+    .read-heading h2 { margin: 4px 0 7px; font-size: clamp(1.4rem, 2.4vw, 2rem); letter-spacing: -.04em; }
+    .read-heading p { margin: 0; color: var(--muted); }
+    .book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 18px; }
+    .book-card { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); text-align: left; cursor: pointer; transition: transform .16s ease, box-shadow .16s ease; }
+    .book-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+    .book-cover { display: grid; place-items: center; min-height: 185px; margin-bottom: 12px; padding: 20px; border-radius: 11px; background: linear-gradient(145deg, #d5e4d8, #eef0e5); color: #345143; text-align: center; }
+    .book-card:nth-child(2) .book-cover { background: linear-gradient(145deg, #ead9c8, #f2ece1); color: #785a3e; }
+    .book-card:nth-child(3) .book-cover { background: linear-gradient(145deg, #d9dce9, #eef0f5); color: #4a5472; }
+    .book-cover span { max-width: 130px; font-family: Georgia, serif; font-size: 1.16rem; line-height: 1.25; }
+    .book-meta strong { display: block; overflow: hidden; font-size: .9rem; text-overflow: ellipsis; white-space: nowrap; }
+    .book-meta small { display: block; margin-top: 5px; color: var(--muted); }
+    .progress-track { height: 5px; margin-top: 12px; overflow: hidden; border-radius: 99px; background: #e9ebe5; }
+    .progress-track span { display: block; height: 100%; border-radius: inherit; background: #75a288; }
+    .book-open { display: grid; grid-template-columns: minmax(0, 1fr) 230px; gap: clamp(20px, 5vw, 60px); max-width: 970px; margin: 0 auto; }
+    .reader-page { min-height: 510px; padding: clamp(30px, 5vw, 68px); border: 1px solid var(--line); border-radius: 18px; background: #fffefa; box-shadow: 0 10px 35px rgba(40,55,46,.04); }
+    .reader-page h3 { margin: 0 0 22px; font-family: Georgia, "Noto Serif SC", serif; font-size: 1.45rem; font-weight: 500; }
+    .reader-page p { color: #4b5751; font-family: Georgia, "Noto Serif SC", serif; font-size: 1.06rem; line-height: 2; }
+    .reader-aside { align-self: start; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+    .reader-aside h4 { margin: 0 0 16px; font-size: .85rem; }
+    .reader-progress-label { display: flex; justify-content: space-between; margin: 9px 0; font-size: .75rem; }
+    .book-list { display: flex; flex-direction: column; gap: 5px; }
+    .upload-control { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 13px; border: 1px dashed #b8c6b9; border-radius: 12px; background: var(--surface); color: var(--accent-dark); font-size: .82rem; font-weight: 700; cursor: pointer; }
+    .upload-control:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .upload-control input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; clip-path: inset(50%); }
+    .prototype-notice { margin-top: 14px; padding: 10px 12px; border-radius: 11px; background: #f2efe6; color: #776f5f; font-size: .74rem; line-height: 1.45; }
+    .notice-card { margin: 0 0 18px; padding: 12px 14px; border: 1px solid #e7e0ce; border-radius: 12px; background: #faf7ee; color: #786e5a; font-size: .78rem; line-height: 1.5; }
+    .b-history .list-item { padding: 12px; }
+    .b-history h2 { margin: 0 0 18px; font-size: 1rem; }
+    .b-history .a-list-head { margin-bottom: 10px; }
+    .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin: 30px 0 15px; }
+    .section-heading h3 { margin: 0; font-size: 1rem; }
+    .section-heading span { color: var(--muted); font-size: .75rem; }
+    .c-surface-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 26px; }
+    .c-surface-head h1 { margin: 2px 0 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -.05em; }
+    .c-back { margin-right: 8px; }
+    .list-empty { padding: 18px 12px; color: var(--muted); font-size: .82rem; line-height: 1.5; }
+    .proto-switcher { position: fixed; z-index: 20; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 11px; min-height: 48px; padding: 6px 9px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px; background: #263a32; color: white; box-shadow: 0 8px 28px rgba(22,34,28,.25); transform: translateX(-50%); }
+    .proto-switcher button { display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 50%; background: rgba(255,255,255,.1); color: white; font-size: 1.1rem; cursor: pointer; }
+    .proto-switcher button:hover { background: rgba(255,255,255,.23); }
+    .proto-label { min-width: 150px; font-size: .76rem; font-weight: 700; text-align: center; }
+    .proto-hint { position: fixed; right: 12px; bottom: max(18px, env(safe-area-inset-bottom)); z-index: 19; color: #7b837e; font-size: .68rem; }
+
+    @media (max-width: 1050px) {
+      .variant-a { grid-template-columns: 68px 220px minmax(0, 1fr); }
+      .a-topbar { padding-inline: 22px; }
+      .a-content { padding-inline: 28px; }
+      .book-open { grid-template-columns: minmax(0, 1fr) 190px; gap: 20px; }
+    }
+    @media (max-width: 850px) {
+      .variant-a { grid-template-columns: 62px minmax(0,1fr); }
+      .variant-a .a-list { display: none; }
+      .variant-a .a-main { grid-column: 2; }
+      .a-content { padding: 24px 20px 88px; }
+      .b-topbar { grid-template-columns: auto 1fr auto; gap: 12px; padding-inline: 18px; }
+      .b-tabs { justify-self: center; }
+      .b-tabs .surface-button { min-width: 80px; padding-inline: 10px; }
+      .b-topbar .brand-word { display: none; }
+      .b-main { padding-inline: 22px; }
+      .person-wrap { gap: 0; }
+      .privacy-note { display: none; }
+      .c-topbar { padding-inline: 22px; }
+      .c-topbar-left { gap: 12px; }
+      .c-main { padding-inline: 22px; }
+    }
+    @media (max-width: 640px) {
+      .person-select { max-width: 128px; }
+      .a-topbar { align-items: flex-start; flex-direction: column; gap: 12px; padding: 18px; }
+      .a-content { padding: 20px 14px 88px; }
+      .b-topbar { grid-template-columns: 1fr auto; }
+      .b-tabs { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
+      .b-topbar .person-wrap { grid-column: 2; grid-row: 1; }
+      .b-main { padding: 22px 16px 88px; }
+      .b-page-head, .read-heading { align-items: flex-start; flex-direction: column; }
+      .launch-grid { grid-template-columns: 1fr; }
+      .launch-card { min-height: 220px; }
+      .book-open { grid-template-columns: 1fr; }
+      .reader-aside { order: -1; }
+      .c-topbar { align-items: flex-start; flex-direction: column; }
+      .c-topbar-left { width: 100%; justify-content: space-between; }
+      .c-topbar > .person-wrap { width: 100%; justify-content: flex-end; }
+      .c-main { padding: 28px 16px 90px; }
+      .proto-hint { display: none; }
+      .proto-label { min-width: 125px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="app"></div>
+  <nav class="proto-switcher" aria-label="原型布局切换">
+    <button type="button" data-variant-step="-1" aria-label="上一个布局">‹</button>
+    <span id="variant-label" class="proto-label">A · 侧栏工作台</span>
+    <button type="button" data-variant-step="1" aria-label="下一个布局">›</button>
+  </nav>
+  <div class="proto-hint">方向键 ← / → 也可切换</div>
+  <script>
+    const PEOPLE = ['我', '家人 A', '家人 B'];
+    const VARIANTS = [
+      { key: 'A', name: '侧栏工作台' },
+      { key: 'B', name: '顶部切换' },
+      { key: 'C', name: '双入口启动页' },
+    ];
+    const booksByPerson = {
+      '我': [
+        { title: '海边的周末', file: 'weekend.epub', progress: 38 },
+        { title: '小小旅行计划', file: 'travel-notes.epub', progress: 12 },
+      ],
+      '家人 A': [{ title: 'EPUB 示例书', file: 'sample-a.epub', progress: 64 }],
+      '家人 B': [{ title: '我的第一本书', file: 'first-book.epub', progress: 0 }],
+    };
+    const threadsByPerson = {
+      '我': ['周末安排', '旅行清单', '写一封简短的邮件'],
+      '家人 A': ['晚餐想法', '简单的待办清单'],
+      '家人 B': ['一个好奇的问题'],
+    };
+    const initialMessages = [
+      { role: 'user', text: '帮我列一份简单的周末待办清单。' },
+      { role: 'assistant', text: '当然。可以先分成三件小事：\n\n1. 整理需要带的物品\n2. 确认出发时间和交通方式\n3. 留一点自由活动的时间\n\n你可以随时告诉我需要调整的部分。' },
+    ];
+    const messagesByPerson = {
+      '我': initialMessages.map(message => ({ ...message })),
+      '家人 A': [
+        { role: 'user', text: '帮我把这个想法说得更清楚。' },
+        { role: 'assistant', text: '可以先写出你最想表达的一句话，再补充对象和语气。我也可以帮你一起修改。' },
+      ],
+      '家人 B': [
+        { role: 'user', text: '为什么天空看起来是蓝色的？' },
+        { role: 'assistant', text: '主要是因为空气分子会更强地散射短波长的蓝光。简单来说，阳光经过空气时，蓝色更容易向四面散开。' },
+      ],
+    };
+    const params = new URLSearchParams(location.search);
+    const initialVariant = VARIANTS.some(v => v.key === params.get('variant')) ? params.get('variant') : 'A';
+    const state = {
+      variant: initialVariant,
+      surface: initialVariant === 'C' ? 'home' : 'chat',
+      person: PEOPLE[0],
+      book: null,
+      historyOpen: false,
+      activeThread: 0,
+      messages: messagesByPerson[PEOPLE[0]],
+      uploaded: {},
+    };
+    const app = document.getElementById('app');
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+    }
+    function currentVariant() { return VARIANTS.find(v => v.key === state.variant); }
+    function setVariant(key) {
+      state.variant = key;
+      state.surface = key === 'C' ? 'home' : (state.surface === 'home' ? 'chat' : state.surface);
+      state.book = null;
+      const next = new URL(location.href);
+      next.searchParams.set('variant', key);
+      history.replaceState(null, '', next);
+      render();
+    }
+    function selectPerson() {
+      return `<div class="person-wrap"><label class="small" for="person-select">当前档案</label><select id="person-select" class="person-select" aria-label="选择成员档案">${PEOPLE.map(person => `<option ${person === state.person ? 'selected' : ''}>${person}</option>`).join('')}</select><span class="privacy-note">仅用于整理记录</span></div>`;
+    }
+    function surfaceButton(surface, compact = false) {
+      const chat = surface === 'chat';
+      const label = chat ? 'Chat' : 'Read';
+      const icon = chat ? '◌' : '▤';
+      return `<button class="surface-button" type="button" data-surface="${surface}" aria-current="${state.surface === surface ? 'page' : 'false'}"><span class="icon" aria-hidden="true">${icon}</span>${compact ? `<span>${label}</span>` : `<span>${label}</span>`}</button>`;
+    }
+    function messagesMarkup() {
+      if (!state.messages.length) return `<div class="empty-chat"><div><strong>开始一段新对话</strong><span>输入一条消息，看看 Chat 的基础体验。</span></div></div>`;
+      return state.messages.map(message => `<article class="message ${message.role === 'user' ? 'user' : ''}"><span class="avatar" aria-hidden="true">${message.role === 'user' ? escapeHtml(state.person.slice(0, 1)) : 'AI'}</span><div class="bubble">${escapeHtml(message.text)}</div></article>`).join('');
+    }
+    function chatSurface() {
+      const title = state.activeThread >= 0 ? (threadsByPerson[state.person] || [])[state.activeThread] || '新对话' : '新对话';
+      return `<section class="chat-surface" aria-label="Chat 对话">
+        <header class="chat-heading"><div><h2>${escapeHtml(title)}</h2><p>独立的文字对话，不会读取 Read 中的书籍。</p></div><button class="quiet-button" type="button" data-action="new-chat">＋ 新对话</button></header>
+        <div class="messages" aria-live="polite">${messagesMarkup()}</div>
+        <form class="composer" data-chat-form><textarea name="message" rows="1" aria-label="输入消息" placeholder="给 Chat 发消息…"></textarea><button class="send-button" type="submit" aria-label="发送">↑</button></form>
+        <p class="chat-footnote">正式使用时，对话内容会发送给配置的模型服务商；本原型不会发送消息。</p>
+      </section>`;
+    }
+    function bookListMarkup() {
+      const books = [...(booksByPerson[state.person] || []), ...(state.uploaded[state.person] || [])];
+      if (!books.length) return `<p class="list-empty">还没有书。上传一本 EPUB 开始阅读。</p>`;
+      return books.map((book, i) => `<button type="button" class="list-item ${state.book === book.title ? 'active' : ''}" data-open-book="${escapeHtml(book.title)}"><strong>${escapeHtml(book.title)}</strong><span>${book.progress || 0}% · ${escapeHtml(book.file)}</span></button>`).join('');
+    }
+    function bookCardsMarkup() {
+      const books = [...(booksByPerson[state.person] || []), ...(state.uploaded[state.person] || [])];
+      return books.map((book, i) => `<button type="button" class="book-card" data-open-book="${escapeHtml(book.title)}"><div class="book-cover"><span>${escapeHtml(book.title)}</span></div><div class="book-meta"><strong>${escapeHtml(book.title)}</strong><small>${escapeHtml(book.file)}</small><div class="progress-track" aria-label="阅读进度 ${book.progress || 0}%"><span style="width:${book.progress || 0}%"></span></div><small>${book.progress || 0}% · ${book.progress ? '继续阅读' : '尚未开始'}</small></div></button>`).join('');
+    }
+    function uploadControl() {
+      return `<label class="upload-control"><input type="file" accept=".epub,application/epub+zip" data-upload-epub>＋ 上传 EPUB</label>`;
+    }
+    function readerMarkup() {
+      if (!state.book) return `<div class="read-surface"><header class="read-heading"><div><div class="eyebrow">READ · ${escapeHtml(state.person)}</div><h2>你的书架</h2><p>从自己的 EPUB 开始，阅读进度按档案整理。</p></div>${uploadControl()}</header>${state.uploaded[state.person]?.length ? `<p class="notice-card">${escapeHtml(state.uploaded[state.person].length)} 本书已加入当前原型档案。原型只显示文件名，不会上传或解析文件。</p>` : ''}<div class="book-grid">${bookCardsMarkup()}</div><div class="prototype-notice">界面原型：书籍为示例内容；上传只在当前页面演示，不会保存到服务器。</div></div>`;
+      const books = [...(booksByPerson[state.person] || []), ...(state.uploaded[state.person] || [])];
+      const book = books.find(item => item.title === state.book) || { title: state.book, file: '', progress: 0 };
+      return `<div class="read-surface"><div class="c-surface-head"><div><button type="button" class="quiet-button c-back" data-action="close-book">‹ 返回书架</button><div class="eyebrow">READ · ${escapeHtml(state.person)}</div><h1>${escapeHtml(book.title)}</h1></div><span class="pill"><span class="dot"></span>阅读进度 ${book.progress || 0}%</span></div><div class="book-open"><article class="reader-page"><h3>一段示例文字</h3><p>这里展示的是阅读区域的版式示例。阅读页保持安静，让文字成为中心；当前原型不读取上传的 EPUB 内容。</p><p>你可以在不同布局中比较书架、阅读位置和个人档案入口是否清楚。</p><p>阅读进度会跟随当前档案保存——这是界面示意，并未连接任何后端。</p></article><aside class="reader-aside"><h4>阅读位置</h4><div class="reader-progress-label"><span>本书进度</span><strong>${book.progress || 0}%</strong></div><div class="progress-track"><span style="width:${book.progress || 0}%"></span></div><p class="small">${escapeHtml(book.file)}</p><div class="prototype-notice">Read 与 Chat 相互独立。</div></aside></div></div>`;
+    }
+    function aList() {
+      if (state.surface === 'chat') {
+        const threads = threadsByPerson[state.person] || [];
+        return `<aside class="a-list"><div class="a-list-head"><h2>最近对话</h2><button class="icon-button" type="button" data-action="new-chat" aria-label="新对话">＋</button></div>${threads.map((thread, i) => `<button type="button" class="list-item ${i === state.activeThread ? 'active' : ''}" data-thread="${i}"><strong>${escapeHtml(thread)}</strong><span>${i === 0 ? '刚刚' : `${i + 2} 天前`}</span></button>`).join('')}<p class="list-empty">对话记录按档案整理。</p></aside>`;
+      }
+      const books = [...(booksByPerson[state.person] || []), ...(state.uploaded[state.person] || [])];
+      return `<aside class="a-list"><div class="a-list-head"><h2>书架</h2>${uploadControl()}</div>${bookListMarkup()}<div class="prototype-notice">只显示当前档案的阅读记录。</div></aside>`;
+    }
+    function renderA() {
+      return `<div class="variant-a"><nav class="a-rail" aria-label="主导航"><div class="brand-mark" title="LearnBuddy">LB</div>${surfaceButton('chat', true)}${surfaceButton('read', true)}<div class="a-spacer"></div><span class="small">原型 A</span></nav>${aList()}<main class="a-main"><header class="a-topbar"><div><div class="eyebrow">LEARNBUDDY · ${state.surface === 'chat' ? 'CHAT' : 'READ'}</div><h1>${state.surface === 'chat' ? '随时开始一段对话' : '安静地继续阅读'}</h1></div>${selectPerson()}</header><div class="a-content">${state.surface === 'chat' ? chatSurface() : (state.book ? readerMarkup() : `<section class="read-surface"><header class="read-heading"><div><div class="eyebrow">READ · ${escapeHtml(state.person)}</div><h2>继续阅读</h2><p>书架和阅读进度按档案整理。</p></div>${uploadControl()}</header><div class="book-grid">${bookCardsMarkup()}</div><div class="prototype-notice">界面原型：上传只显示文件名，不会保存或解析 EPUB。</div></section>`)}</div></main></div>`;
+    }
+    function renderB() {
+      const nav = `<header class="b-topbar"><div class="brand"><span class="brand-mark">LB</span><span class="brand-word">LearnBuddy</span></div><nav class="b-tabs" aria-label="切换体验">${surfaceButton('chat')}${surfaceButton('read')}</nav>${selectPerson()}</header>`;
+      const history = `<button class="b-history-backdrop" type="button" data-action="toggle-history" aria-label="关闭历史记录" ${state.historyOpen ? '' : 'hidden'}></button><aside class="b-history ${state.historyOpen ? 'open' : ''}" aria-label="最近对话"><div class="a-list-head"><h2>最近对话</h2><button class="icon-button" type="button" data-action="new-chat" aria-label="新对话">＋</button></div>${(threadsByPerson[state.person] || []).map((thread, i) => `<button class="list-item ${i === state.activeThread ? 'active' : ''}" type="button" data-thread="${i}"><strong>${escapeHtml(thread)}</strong><span>${i === 0 ? '刚刚' : `${i + 2} 天前`}</span></button>`).join('')}<p class="list-empty">历史记录按档案整理。</p></aside>`;
+      let body;
+      if (state.surface === 'chat') {
+        body = `<div class="b-page-head"><div><div class="eyebrow">CHAT</div><h1>一段新的对话</h1><p>轻量的文字聊天。Read 中的书籍不会自动进入对话。</p></div><button class="quiet-button" type="button" data-action="toggle-history">☷ 最近对话</button></div><div class="b-chat">${chatSurface()}</div>`;
+      } else if (state.book) {
+        body = readerMarkup();
+      } else {
+        body = `<header class="read-heading"><div><div class="eyebrow">READ · ${escapeHtml(state.person)}</div><h2>继续阅读，或从书架开始</h2><p>只管理你添加的 EPUB 与阅读进度。</p></div>${uploadControl()}</header><div class="book-grid">${bookCardsMarkup()}</div><div class="prototype-notice">界面原型：上传只显示文件名，不会保存或解析 EPUB。</div>`;
+      }
+      return `<div class="variant-b">${nav}${history}<main class="b-main">${body}</main></div>`;
+    }
+    function renderC() {
+      const nav = `<header class="c-topbar"><div class="c-topbar-left"><div class="brand"><span class="brand-mark">LB</span><span>LearnBuddy</span></div>${state.surface !== 'home' ? `<nav class="surface-nav" aria-label="切换体验">${surfaceButton('chat')}${surfaceButton('read')}</nav>` : ''}</div>${selectPerson()}</header>`;
+      if (state.surface === 'home') {
+        return `<div class="variant-c">${nav}<main class="c-main"><section class="c-welcome"><div class="eyebrow">一个家的私人空间</div><h1>今天想做什么？</h1><p>Chat 和 Read 是两个独立的体验。选择一个开始；对话不会读取书架内容。</p></section><div class="launch-grid"><button class="launch-card" type="button" data-surface="chat"><span class="launch-icon">◌</span><h2>Chat</h2><p>打开文字对话，继续最近的聊天或开始新话题。</p><span class="pill">进入 Chat　→</span></button><button class="launch-card" type="button" data-surface="read"><span class="launch-icon">▤</span><h2>Read</h2><p>从个人书架打开 EPUB，或上传一本自己的书。</p><span class="pill">进入 Read　→</span></button></div><div class="prototype-notice">当前档案：${escapeHtml(state.person)}。档案用于整理记录，不提供成员间权限隔离。</div></main></div>`;
+      }
+      const heading = state.surface === 'chat' ? `<div class="c-surface-head"><div><button class="quiet-button c-back" type="button" data-action="back-home">‹ 首页</button><div class="eyebrow">CHAT</div><h1>对话</h1></div><button class="quiet-button" type="button" data-action="toggle-history">最近对话</button></div>` : '';
+      const body = state.surface === 'chat' ? `${heading}<div class="b-history ${state.historyOpen ? 'open' : ''}" style="position:static;display:${state.historyOpen ? 'block' : 'none'};width:auto;max-width:450px;min-height:120px;margin:0 0 24px;border:1px solid var(--line);border-radius:16px;box-shadow:none;transform:none">${(threadsByPerson[state.person] || []).map((thread, i) => `<button class="list-item" type="button" data-thread="${i}"><strong>${escapeHtml(thread)}</strong><span>${i === 0 ? '刚刚' : `${i + 2} 天前`}</span></button>`).join('')}</div>${chatSurface()}` : state.book ? `<div class="c-surface-head"><div><button class="quiet-button c-back" type="button" data-action="back-home">‹ 首页</button><button class="quiet-button" type="button" data-action="close-book">返回书架</button></div></div>${readerMarkup()}` : `<div class="c-surface-head"><div><button class="quiet-button c-back" type="button" data-action="back-home">‹ 首页</button><div class="eyebrow">READ · ${escapeHtml(state.person)}</div><h1>你的书架</h1></div>${uploadControl()}</div><div class="book-grid">${bookCardsMarkup()}</div><div class="prototype-notice">界面原型：上传只显示文件名，不会保存或解析 EPUB。</div>`;
+      return `<div class="variant-c">${nav}<main class="c-main">${body}</main></div>`;
+    }
+    function render() {
+      document.documentElement.dataset.variant = state.variant;
+      app.innerHTML = state.variant === 'A' ? renderA() : state.variant === 'B' ? renderB() : renderC();
+      const v = currentVariant();
+      document.getElementById('variant-label').textContent = `${v.key} · ${v.name}`;
+      document.title = `LearnBuddy · ${v.key} ${v.name} 原型`;
+    }
+    function chooseVariant(step) {
+      const index = VARIANTS.findIndex(v => v.key === state.variant);
+      setVariant(VARIANTS[(index + step + VARIANTS.length) % VARIANTS.length].key);
+    }
+
+    document.querySelector('.proto-switcher').addEventListener('click', event => {
+      const button = event.target.closest('[data-variant-step]');
+      if (button) chooseVariant(Number(button.dataset.variantStep));
+    });
+    document.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      const target = event.target;
+      if (target.matches('input, textarea, select, [contenteditable="true"]')) return;
+      event.preventDefault();
+      chooseVariant(event.key === 'ArrowRight' ? 1 : -1);
+    });
+    app.addEventListener('click', event => {
+      const surfaceButton = event.target.closest('[data-surface]');
+      if (surfaceButton) {
+        state.surface = surfaceButton.dataset.surface;
+        state.book = null;
+        state.historyOpen = false;
+        render();
+        return;
+      }
+      const variantStep = event.target.closest('[data-variant-step]');
+      if (variantStep) return;
+      const openBook = event.target.closest('[data-open-book]');
+      if (openBook) { state.book = openBook.dataset.openBook; render(); return; }
+      const thread = event.target.closest('[data-thread]');
+      if (thread) { state.activeThread = Number(thread.dataset.thread); state.messages = messagesByPerson[state.person] || []; render(); return; }
+      const action = event.target.closest('[data-action]')?.dataset.action;
+      if (action === 'new-chat') { state.activeThread = -1; state.messages = []; messagesByPerson[state.person] = state.messages; state.historyOpen = false; render(); }
+      if (action === 'close-book') { state.book = null; render(); }
+      if (action === 'back-home') { state.surface = 'home'; state.book = null; state.historyOpen = false; render(); }
+      if (action === 'toggle-history') { state.historyOpen = !state.historyOpen; render(); }
+    });
+    app.addEventListener('change', event => {
+      if (event.target.id === 'person-select') { state.person = event.target.value; state.book = null; state.activeThread = 0; state.messages = messagesByPerson[state.person] || []; render(); }
+      if (event.target.matches('[data-upload-epub]')) {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        const title = file.name.replace(/\.epub$/i, '');
+        state.uploaded[state.person] ||= [];
+        state.uploaded[state.person].unshift({ title, file: file.name, progress: 0 });
+        state.book = title;
+        render();
+      }
+    });
+    app.addEventListener('submit', event => {
+      if (!event.target.matches('[data-chat-form]')) return;
+      event.preventDefault();
+      const input = event.target.elements.message;
+      const text = input.value.trim();
+      if (!text) return;
+      state.messages.push({ role: 'user', text });
+      state.messages.push({ role: 'assistant', text: '这是一条原型示例回复。正式版本会通过 Pi 调用配置的模型服务；此页面不会发送你的消息。' });
+      state.activeThread = -1;
+      render();
+      app.querySelector('textarea[name="message"]')?.focus();
+    });
+
+    render();
+  </script>
+</body>
+</html>
