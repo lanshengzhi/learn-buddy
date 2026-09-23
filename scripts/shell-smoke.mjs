@@ -1,9 +1,7 @@
 /**
  * Slice-1 shell smoke (dev machine — like browser-smoke.mjs). Needs the backend on
- * :8123 with the repo data dir. Verifies #44's acceptance on real chromium:
- * wide 3-column + nav collapse + D3 toggle, narrow drawer + fullscreen D3 +
- * bottom word card + selection toolbar, and §4.2 #2/#3: scroll position
- * survives D3 open/close.
+ * :8123 with the repo data dir. Verifies Read purity, Learn flow, face
+ * round-trip position preservation, narrow drawer behavior, and old-shell parity.
  */
 import { createRequire } from 'module';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
@@ -15,7 +13,7 @@ import path from 'path';
 const require = createRequire(import.meta.url);
 const { chromium } = require('/home/lansy/.local/share/mise/installs/npm-playwright/1.62.1/lib/node_modules/playwright');
 
-const BASE = 'http://127.0.0.1:8123';
+const BASE = process.env.LEARNBUDDY_BASE ?? 'http://127.0.0.1:8123';
 mkdirSync('shots-shell', { recursive: true });
 const errors = [];
 let failures = 0;
@@ -28,7 +26,11 @@ const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome-
 
 function watch(page, tag) {
   page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`${tag}: ${msg.text()} [${msg.location()?.url ?? ''}]`);
+    // The Learn smoke stubs /tts with an empty audio payload after verifying
+    // its request path; Chrome reports that synthetic blob as a decode error.
+    if (msg.type() === 'error' && !msg.text().includes('ERR_REQUEST_RANGE_NOT_SATISFIABLE')) {
+      errors.push(`${tag}: ${msg.text()} [${msg.location()?.url ?? ''}]`);
+    }
   });
   page.on('pageerror', (err) => errors.push(`${tag}: ${err}`));
 }
@@ -101,17 +103,32 @@ await wp.waitForSelector('#shelf-list .shelf-item.active');
 check('wide: shelf marks the open book active', true);
 check('wide: shelf opens the book in the workspace',
   (await wp.locator('#chapter-body .sent').count()) > 0);
-const scrollBefore = await wp.locator('#book-scroll').evaluate((el) => (el.scrollTop = 500));
-await wp.locator('#d3-trigger').click();
-check('wide: D3 opens as a column', await wp.locator('#d3').isVisible());
-await wp.screenshot({ path: 'shots-shell/wide-d3.png' });
-await wp.locator('#d3-back').click();
-check('wide: D3 closes', !(await wp.locator('#d3').isVisible()));
-
-// 阅读记录 entry → existing History panel
+await wp.locator('#chapter-body .sent').nth(3).click();
+await wp.locator('#book-scroll').evaluate((el) => (el.scrollTop = 500));
+const scrollBefore = await wp.locator('#book-scroll').evaluate((el) => el.scrollTop);
+const wideSelectedBefore = await wp.locator('#chapter-body .sent.selected').getAttribute('data-sentence');
+check('wide: Read hides playback, lookup, paste editor, and legacy library controls',
+  !(await wp.locator('#bottom-bar').isVisible())
+  && !(await wp.locator('#tab-lookup').isVisible())
+  && !(await wp.locator('#editor-region').isVisible())
+  && !(await wp.locator('#library-overlay').isVisible())
+  && !(await wp.locator('#hl-toggle').isVisible())
+  && !(await wp.locator('#library-btn').isVisible()));
+await wp.locator('#nav-learn').click();
+check('wide: Learn shows paste editor, playback, and history entry',
+  await wp.locator('#editor-region').isVisible()
+  && await wp.locator('#bottom-bar').isVisible()
+  && await wp.locator('#nav-history').isVisible());
+const wideRoundTrip = await wp.locator('#book-scroll').evaluate((el) => el.scrollTop);
+const wideSentenceCount = await wp.locator('#chapter-body .sent').count();
+const wideSelectedAfter = await wp.locator('#chapter-body .sent.selected').getAttribute('data-sentence');
+check(`wide: face round-trip preserves reader DOM and position (${wideSelectedBefore}→${wideSelectedAfter}; scroll ${scrollBefore}→${wideRoundTrip})`,
+  wideRoundTrip === scrollBefore && wideSelectedBefore === wideSelectedAfter && wideSentenceCount > 0);
+await wp.locator('#nav-read').click();
+check('wide: 阅读记录 belongs to Learn', !(await wp.locator('#nav-history').isVisible()));
+await wp.locator('#nav-learn').click();
 await wp.locator('#nav-history').click();
-check('wide: 阅读记录 opens History pane', await wp.locator('#history-pane').isVisible());
-await wp.keyboard.press('Escape');
+check('wide: 阅读记录 opens History pane on Learn', await wp.locator('#history-pane').isVisible());
 
 // ---------- narrow (390×844 touch) ----------
 const narrow = await browser.newContext({
@@ -141,36 +158,20 @@ check('narrow: shelf opens the book in the workspace',
   (await np.locator('#chapter-body .sent').count()) > 0);
 
 await openFirstBook(np);
+await np.locator('#chapter-body .sent').nth(3).click();
 await np.locator('#book-scroll').evaluate((el) => (el.scrollTop = 300));
 await np.waitForTimeout(100);
 const nBefore = await np.locator('#book-scroll').evaluate((el) => el.scrollTop);
-await np.locator('#d3-trigger-narrow').click();
-const d3Box = await np.locator('#d3').boundingBox();
-check('narrow: D3 is a fullscreen overlay', Math.abs(d3Box.width - 390) < 2 && Math.abs(d3Box.height - 844) < 2);
-const nDuring = await np.locator('#book-scroll').evaluate((el) => el.scrollTop);
-await np.screenshot({ path: 'shots-shell/narrow-d3.png' });
-await np.keyboard.press('Escape');
-check('narrow: Escape closes D3', !(await np.locator('#d3').isVisible()));
+const nSelectedBefore = await np.locator('#chapter-body .sent.selected').getAttribute('data-sentence');
+await np.locator('#shell-nav-toggle').click();
+await np.locator('#nav-learn').click();
+check('narrow: Learn editor remains available after drawer switch', await np.locator('#editor-region').isVisible());
+await np.locator('#shell-nav-toggle').click();
+await np.locator('#nav-read').click();
 const nAfter = await np.locator('#book-scroll').evaluate((el) => el.scrollTop);
-check(`narrow: scroll survives D3 toggle (§4.2 #2/#3, ${nBefore}→${nDuring}→${nAfter})`,
-  nBefore === nDuring && nDuring === nAfter);
-
-// word card: touch long-press (HOLD_MS=420) on a word span opens the card
-await np.evaluate(() => {
-  const word = document.querySelectorAll('#chapter-body .sent')[3].querySelector('.w');
-  const rect = word.getBoundingClientRect();
-  word.dispatchEvent(new PointerEvent('pointerdown', {
-    bubbles: true, clientX: rect.x + 2, clientY: rect.y + 2, pointerType: 'touch',
-  }));
-});
-await np.waitForSelector('#lookup-drawer:not([hidden])');
-const cardBox = await np.locator('#lookup-drawer').boundingBox();
-check(`narrow: word card ≤ 62% viewport (${Math.round(cardBox.height)}px)`, cardBox.height <= 0.62 * 844 + 4);
-const sentTop = await np.locator('#chapter-body .sent').nth(3).evaluate((el) => el.getBoundingClientRect().top);
-check(`narrow: looked-up sentence in the visible strip (§4.2 #4, top=${Math.round(sentTop)})`,
-  sentTop > -10 && sentTop < 0.45 * 844);
-await np.screenshot({ path: 'shots-shell/narrow-wordcard.png' });
-await np.keyboard.press('Escape');
+const nSelectedAfter = await np.locator('#chapter-body .sent.selected').getAttribute('data-sentence');
+check(`narrow: Read → Learn → Read preserves position (${nSelectedBefore}→${nSelectedAfter}; scroll ${nBefore}→${nAfter})`,
+  nBefore === nAfter && nSelectedBefore === nSelectedAfter);
 
 // selection toolbar: select >3 chars across spans
 const selLen = await np.evaluate(() => {
@@ -189,12 +190,14 @@ check(`narrow: toolbar appears for a long selection (${selLen} chars)`,
 await np.keyboard.press('Escape');
 check('narrow: Escape peels the toolbar', !(await np.locator('#sel-toolbar').isVisible()));
 
-// wide: a long selection shows the shell toolbar, not the book's lookup card
+// wide: a long selection in Read still opens the copy toolbar, not a lookup card
+await wp.locator('#nav-read').click();
 const wideSel = await wp.evaluate(() => {
-  const spans = [...document.querySelectorAll('#chapter-body .sent')[5].querySelectorAll('.w')];
+  const sentence = document.querySelectorAll('#chapter-body .sent')[5];
+  const text = document.createTreeWalker(sentence, NodeFilter.SHOW_TEXT).nextNode();
   const range = document.createRange();
-  range.setStartBefore(spans[0]);
-  range.setEndAfter(spans[Math.min(6, spans.length - 1)]);
+  range.setStart(text, 0);
+  range.setEnd(text, Math.min(12, text.textContent.length));
   const sel = window.getSelection();
   sel.removeAllRanges();
   sel.addRange(range);
@@ -207,21 +210,46 @@ const wideSel = await wp.evaluate(() => {
 await wp.waitForTimeout(400);
 check(`wide: toolbar owns long selections (§4.3, ${wideSel} chars)`,
   wideSel > 3 && (await wp.locator('#sel-toolbar').isVisible()));
-check('wide: book lookup drawer did not hijack the selection',
+check('wide: Read keeps the lookup drawer hidden',
   !(await wp.locator('#lookup-drawer').isVisible()));
 await wp.keyboard.press('Escape');
 
 // ---------- ticket #46: resume + per-Person positions ----------
 // Selecting a sentence writes the Reading position back (debounced 1.2 s);
 // TTS may fail in a dev env, but the selection — and so the position — is
-// recorded before the audio request.
-await wp.locator('#chapter-body .sent').nth(2).click();
-await wp.waitForTimeout(1600);
+// recorded before the audio request. Playback may auto-advance (loop mode All)
+// or stop on its own, so wait until the server's stored position has been
+// stable for longer than the debounce window before reloading; then the
+// resume contract is exact: reload lands on the stored position.
+const readStoredPosition = () =>
+  wp.evaluate(async () => {
+    const bookId = window.learnbuddyRead.currentBookId();
+    const profile = localStorage.getItem('lb.profile');
+    const response = await fetch(`/books/${bookId}?profile=${encodeURIComponent(profile)}`);
+    return (await response.json()).book?.reading?.sentence ?? null;
+  });
+const positionWrite = wp.waitForResponse((response) => response.url().includes('/position'));
+await wp.locator('#chapter-body .sent').nth(2).evaluate((el) => el.click());
+await wp.waitForFunction(() => document.querySelector('#chapter-body .sent.selected')?.dataset.sentence === '2');
+await positionWrite;
+let storedBefore = await readStoredPosition();
+let stableSince = Date.now();
+for (let i = 0; i < 40; i += 1) {
+  await wp.waitForTimeout(600);
+  const now = await readStoredPosition();
+  if (now !== storedBefore) {
+    storedBefore = now;
+    stableSince = Date.now();
+  } else if (Date.now() - stableSince >= 2400) {
+    break;
+  }
+}
 await wp.reload({ waitUntil: 'networkidle' });
 await wp.waitForSelector('body[data-ready]');
 check('wide: reload resumes the last book', await wp.locator('#book-view').isVisible());
 const resumed = await wp.locator('#chapter-body .sent.selected').getAttribute('data-sentence');
-check(`wide: resume lands on the saved sentence (${resumed})`, resumed === '2');
+check(`wide: reload lands on the stored Reading position (${storedBefore}→${resumed})`,
+  Number(storedBefore) >= 2 && Number(resumed) === Number(storedBefore));
 
 // Switching Person must never cross positions: the next Person's shelf shows
 // the same Book as unread. The gate reloads the page by design.
@@ -292,6 +320,42 @@ try {
     await cp.locator('#profile-choices button').first().click();
   }
   await cp.waitForSelector('body[data-ready]');
+  check('read: empty state is Read-specific and learning controls stay hidden',
+    (await cp.locator('#read-empty').textContent()).includes('书架打开一本书')
+      && !(await cp.locator('#bottom-bar').isVisible())
+      && !(await cp.locator('#editor-region').isVisible()));
+  let ttsRequested = false;
+  await cp.route('**/tts**', async (route) => {
+    ttsRequested = true;
+    await route.fulfill({ status: 200, contentType: 'audio/mpeg', body: Buffer.from('') });
+  });
+  await cp.locator('#nav-learn').click();
+  await cp.locator('#text-input').fill('Hello there. This is a study passage.');
+  await cp.locator('#update-button').click();
+  await cp.waitForSelector('#sentence-list li');
+  check('learn: paste and 断句 renders sentence cards', (await cp.locator('#sentence-list li').count()) >= 2);
+  await cp.locator('#sentence-list li').first().evaluate((el) => {
+    const text = el.firstChild;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, Math.min(5, text.textContent.length));
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await cp.waitForSelector('#sel-toolbar:not([hidden])');
+  await cp.locator('#sel-lookup').click();
+  await cp.waitForSelector('#lookup-drawer:not([hidden])');
+  check(`learn: selected pasted word opens existing lookup word card (seam=${await cp.evaluate(() => typeof window.learnbuddyLookup)})`,
+    await cp.locator('#lookup-card .card-word').isVisible());
+  await cp.locator('#lookup-card .card-actions button').last().click();
+  check('learn: playback controls are available', await cp.locator('#play-button').isEnabled());
+  await cp.locator('#play-button').click();
+  await cp.waitForTimeout(300);
+  check('learn: play path requests speech audio', ttsRequested);
+  await cp.locator('#nav-read').click();
+  check('read: learning cards and editor hidden again',
+    !(await cp.locator('#editor-region').isVisible()) && !(await cp.locator('#bottom-bar').isVisible()));
 
   check('chat: nav entry enabled', !(await cp.locator('#nav-chat').isDisabled()));
   await cp.locator('#nav-chat').click();

@@ -1,9 +1,8 @@
 /**
  * Family-hub shell layout (map #40, slice 1) — loaded AFTER /css/style.css.
  * The reader internals are reused unchanged; this file only re-frames the
- * page: nav column + reading pane + D3 on wide, drawer + fullscreen
- * overlays on narrow. Breakpoint ~900px (spec §4.2: three columns need
- * 238 + content + 378; at 834px only 218px remain for the text).
+ * page: nav column + reading workspace, with the active face's list in the
+ * nav and drawer behavior on narrow screens. Breakpoint ~900px (spec §4.2).
  */
 
 /* ---- reframe: body was a flex column owned by the old shell ---- */
@@ -19,7 +18,7 @@ body {
 
 #shell {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr);
   height: 100dvh;
 }
 
@@ -268,39 +267,65 @@ body.nav-collapsed #nav-collapse {
   transform: rotate(180deg);
 }
 
-/* ---- D3: right column on wide (378px, §4.2's column math) ---- */
-
-#d3 {
-  width: 378px;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg);
-  border-left: 1px solid var(--border);
+/* Read remains a pure book surface; keep legacy learning/library DOM alive
+   for app.js selectors, but never expose those controls in /next Read. */
+#library-overlay,
+#lookup-drawer,
+#tab-lookup,
+#hl-toggle,
+#library-btn,
+#reader-body,
+#bottom-bar,
+#editor-region,
+#cards-view {
+  display: none !important;
 }
 
-#d3[hidden] {
-  display: none;
+#learn-face #cards-view,
+#learn-face #bottom-bar,
+#learn-face #editor-region {
+  display: flex !important;
 }
 
-.d3-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
+#learn-face #cards-view {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.d3-head h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+#learn-face #reader-body {
+  display: block !important;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-.d3-placeholder {
-  padding: 16px 14px;
+#learn-face #cards-view[hidden],
+body[data-face="learn"] #lookup-drawer[hidden] {
+  display: none !important;
 }
 
-/* ---- shell-owned scrim (the app's #scrim belongs to the lookup sheet) ---- */
+body[data-face="learn"] #lookup-drawer:not([hidden]) {
+  display: block !important;
+}
+
+body[data-face="learn"] #back-to-book {
+  display: none !important;
+}
+
+#learn-face #bottom-bar[hidden],
+#learn-face #editor-region[hidden] {
+  display: none !important;
+}
+
+.read-empty {
+  margin: auto;
+  padding: 24px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ---- shell-owned scrim ---- */
 
 #shell-scrim {
   position: fixed;
@@ -390,16 +415,6 @@ body.nav-collapsed #nav-collapse {
     transform: none;
   }
 
-  /* D3 becomes a fullscreen overlay with its own ‹ (§4.2: ☰ and ‹ never
-     coexist — the topbar is covered while D3 is open) */
-  #d3 {
-    position: fixed;
-    inset: 0;
-    width: auto;
-    z-index: 50;
-    border-left: 0;
-  }
-
   /* word card: bottom card capped at 62% (§4.2) */
   #lookup-drawer.sheet {
     max-height: 62%;
@@ -419,6 +434,13 @@ body.nav-collapsed #nav-collapse {
    The face itself: a column filling #shell-main, always mounted — the face
    switch only toggles `hidden` (§4.2 #2). */
 
+#reading-area[hidden],
+#learn-face[hidden],
+#chat-face[hidden] {
+  display: none !important;
+}
+
+#learn-face,
 #chat-face {
   flex: 1 1 0%;
   min-height: 0;
