@@ -14,6 +14,7 @@
  */
 
 import { ShellController, Layer } from '/js/core/shell-controller.js';
+import { initShelf } from './shelf.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -59,8 +60,11 @@ shellScrim.addEventListener('click', () => shell.close(Layer.Drawer));
 // 阅读记录入口：现役 History 面板（编辑区「历史」按钮的既有行为）。
 $('nav-history').addEventListener('click', () => $('history-button').click());
 
-// Chat：切片 1 惰性占位（按钮 disabled，这里仅防御）。
+// Chat：本票（#46）明确保持未启用（按钮 disabled，这里仅防御）；#47 接入。
 $('nav-chat').addEventListener('click', () => {});
+
+// Read 面的上下文书架（#46）：列出当前 Person 的书、上传 EPUB、点开即读。
+initShelf({ shell });
 
 // --- identity chip: proxies the existing profile gate ------------------------
 

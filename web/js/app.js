@@ -193,6 +193,15 @@ async function boot() {
   void renderHistory();
   applyState();
 
+  // A-layout seam (#46): the /next shelf opens Books and reads which one is
+  // current through this handle. Purely additive — the old shell at / never
+  // touches it. BookView exists here, right after a Person was chosen.
+  window.learnbuddyRead = {
+    openBook: (bookId) => bookView?.openBook(bookId),
+    currentBookId: () => bookView?.book?.id ?? null,
+  };
+  document.dispatchEvent(new CustomEvent('learnbuddy:read-ready'));
+
   const lastBook = state.lastBook;
   if (lastBook) {
     try {
