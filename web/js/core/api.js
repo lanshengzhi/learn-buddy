@@ -172,6 +172,33 @@ export class ServerApi {
     });
   }
 
+  // -- Chat / Conversations (ticket #47) ------------------------------------
+  // Conversations are LearnBuddy-owned server records, scoped by this
+  // instance's profile like every other learner record.
+
+  async listConversations() {
+    return (await this.#request(this.#withProfile('/conversations')))?.conversations ?? [];
+  }
+
+  async createConversation() {
+    return (await this.#request(this.#withProfile('/conversations'), { method: 'POST', body: {} }))
+      ?.conversation ?? null;
+  }
+
+  async getConversation(conversationId) {
+    return (await this.#request(
+      this.#withProfile(`/conversations/${encodeURIComponent(conversationId)}`),
+    ))?.conversation ?? null;
+  }
+
+  /** One turn: the server appends the reply and answers the full Conversation. */
+  async sendChatMessage(conversationId, text) {
+    return this.#request(this.#withProfile(`/conversations/${encodeURIComponent(conversationId)}/messages`), {
+      method: 'POST',
+      body: { text },
+    });
+  }
+
   // -- Lookup / AI (ADR 0008) ------------------------------------------------
 
   async lookup(lang, word, signal) {

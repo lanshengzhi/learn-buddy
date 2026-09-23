@@ -10,10 +10,19 @@ copied from the TTS exception vocabulary:
 - `ai_not_configured` — LEARNBUDDY_AI_URL unset (tab shows the copy, entry stays)
 - `ai_upstream_error` — the service answered non-200 or unusable
 - `ai_timeout`        — 20 s elapse without an answer (retryable in the tab)
+- `ai_usage_limit`    — the sidecar flagged a usage wall (ADR 0013); copy
+  says 用量受限, never "quota exhausted"
 
 Requests carry only the target word, its sentence, source language and
 explanation locale — never Profile identity. The explanation locale defaults
 to zh-CN so Chinese-native learners get a truthful, explicit contract.
+
+Chat (ticket #47): `chat()` is the sibling turn call — the current
+Conversation's text history plus the new message, nothing else (ADR 0015).
+Chat replies are Person-scoped conversation state, so they are NEVER cached
+in the shared ai-cache (that cache is for Person-independent language
+facts). Upstream provider error text is never forwarded (spec §9.2): only
+the fixed codes above cross the HTTP boundary.
 """
 
 import hashlib
@@ -53,6 +62,31 @@ class AiProxy:
         answer = self._ask(word, sentence, language, explanation_locale)
         self._write_cache(key, answer)
         return answer
+
+    def chat(self, messages):
+        """One Chat turn: `messages` is exactly the current Conversation's
+        text history plus the new user message (assembled by
+        conversations.py, ADR 0015). Uncached by design."""
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("messages must be a non-empty list")
+        cleaned = []
+        for message in messages:
+            if not isinstance(message, dict) or message.get("role") not in ("user", "assistant") \
+                    or not isinstance(message.get("content"), str) or not message["content"].strip():
+                raise ValueError("messages must be {role: user|assistant, content} entries")
+            cleaned.append({"role": message["role"], "content": message["content"]})
+        if cleaned[-1]["role"] != "user":
+            raise ValueError("the last message must be the new user message")
+        if not self.url:
+            raise LookupError("ai_not_configured")
+        body = json.dumps({"messages": cleaned}, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            self.url.rstrip("/") + "/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        return self._urlopen(request, self.timeout)
 
     # -- internals ----------------------------------------------------------
 
@@ -103,7 +137,17 @@ def _default_urlopen(request, timeout, urlopen=None):
         with open_url(request, timeout=timeout) as response:
             answer = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
-        raise LookupError("ai_upstream_error") from error
+        # The sidecar flags a usage wall with {"error": "usage_limit"} so the
+        # family sees 用量受限 instead of a generic failure (ADR 0013). Only
+        # the fixed code is read — the upstream's own text is discarded.
+        code = "ai_upstream_error"
+        try:
+            payload = json.loads(error.read().decode("utf-8"))
+            if isinstance(payload, dict) and payload.get("error") == "usage_limit":
+                code = "ai_usage_limit"
+        except (ValueError, UnicodeDecodeError):
+            pass
+        raise LookupError(code) from error
     except (TimeoutError, urllib.error.URLError, ValueError) as error:
         # A read timeout surfaces as a bare TimeoutError (no .reason); a connect
         # timeout arrives wrapped in URLError. Both mean the 20 s budget is out.
