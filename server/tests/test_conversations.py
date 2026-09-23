@@ -253,5 +253,57 @@ class TestConversationFailures(ApiTestCase):
         self.assertFalse(os.path.isdir(cache_dir) and os.listdir(cache_dir))
 
 
+class TestConversationLimits(ApiTestCase):
+    """Over-limit turns are refused with a clear, mapped `too_large` (413)
+    before the model is ever called — never a degenerate upstream failure —
+    and the stored Conversation stays untouched (spec user story 13)."""
+
+    def test_message_over_max_chars_is_rejected_without_a_model_call(self):
+        proxy = self.harness.httpd.app.ai
+        calls = []
+        fake_ai(proxy, calls=calls)
+        conversation = self.body(self.json_request("POST", "/conversations?profile=dad", {}))["conversation"]
+
+        status, _, body = self.json_request(
+            "POST", f"/conversations/{conversation['id']}/messages?profile=dad",
+            {"text": "字" * 8001})
+        self.assertEqual(status, 413)
+        self.assertEqual(json.loads(body)["error"], "too_large")
+        self.assertEqual(calls, [])  # the model was never asked
+        stored = self.body(self.get(f"/conversations/{conversation['id']}?profile=dad"))["conversation"]
+        self.assertEqual(stored["messages"], [])
+
+    def test_oversize_history_is_refused_before_the_model_call(self):
+        # The sidecar's /chat cap (MAX_CHAT_BODY_BYTES) comfortably exceeds
+        # the worst-case legitimate Conversation, so this only fires on state
+        # written outside the normal limits; it must still be a clean 413.
+        import conversations as conversations_module
+
+        proxy = self.harness.httpd.app.ai
+        calls = []
+        fake_ai(proxy, calls=calls)
+        conversation = self.body(self.json_request("POST", "/conversations?profile=dad", {}))["conversation"]
+        original = conversations_module.MAX_CHAT_BODY_BYTES
+        conversations_module.MAX_CHAT_BODY_BYTES = 1
+        try:
+            status, _, body = self.json_request(
+                "POST", f"/conversations/{conversation['id']}/messages?profile=dad",
+                {"text": "第一句"})
+        finally:
+            conversations_module.MAX_CHAT_BODY_BYTES = original
+        self.assertEqual(status, 413)
+        self.assertEqual(json.loads(body)["error"], "too_large")
+        self.assertEqual(calls, [])
+        stored = self.body(self.get(f"/conversations/{conversation['id']}?profile=dad"))["conversation"]
+        self.assertEqual(stored["messages"], [])  # nothing written
+
+        # Recovery: the same Conversation accepts a normal turn afterwards.
+        status, _, body = self.json_request(
+            "POST", f"/conversations/{conversation['id']}/messages?profile=dad",
+            {"text": "第一句"})
+        self.assertEqual(status, 200)
+        self.assertEqual(len(json.loads(body)["conversation"]["messages"]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

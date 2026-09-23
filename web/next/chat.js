@@ -14,6 +14,7 @@ import { ServerApi } from '/js/core/api.js';
 import { Chat } from '/js/core/chat.js';
 import { Layer, Face } from '/js/core/shell-controller.js';
 import { storedProfile } from '/js/browser/profile.js';
+import { onReadReady } from './read-ready.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -39,9 +40,6 @@ export function initChat({ shell }) {
 
   let chat = null;
 
-  // Same boot seam as the shelf: the reader announces itself once app.js
-  // boot has chosen a Person (so `lb.profile` is set). The event normally
-  // fires after this module evaluated; the fallback covers a cached page.
   const start = () => {
     if (chat || !window.learnbuddyRead) return;
     chat = new Chat({ api: new ServerApi({ profile: storedProfile() }), onEvent: render });
@@ -50,8 +48,7 @@ export function initChat({ shell }) {
     // announced itself) — load the list now that a Person is known.
     if (shell.state.activeFace === Face.Chat) void chat.refresh();
   };
-  if (window.learnbuddyRead) start();
-  else document.addEventListener('learnbuddy:read-ready', start, { once: true });
+  onReadReady(start);
 
   function render() {
     if (!chat) return;
@@ -85,7 +82,9 @@ export function initChat({ shell }) {
     const li = document.createElement('li');
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'conversation-item';
+    // .panel-item carries the shared style (shell.css); .conversation-item
+    // stays as the per-concept hook (shell smoke selects it).
+    button.className = 'panel-item conversation-item';
     const active = conversation.id === activeId;
     button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'true');
@@ -93,7 +92,7 @@ export function initChat({ shell }) {
     const title = document.createElement('b');
     title.textContent = conversation.title || '新对话';
     const meta = document.createElement('span');
-    meta.className = 'conversation-meta';
+    meta.className = 'panel-meta';
     meta.textContent = timeLabel(conversation.updatedAt);
 
     button.append(title, meta);

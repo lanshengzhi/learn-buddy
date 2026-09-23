@@ -29,9 +29,15 @@ const AGENT_DIR = process.env.LEARNBUDDY_AI_AGENT_DIR || path.join(os.homedir(),
 // socket never hangs forever. Failures surface as 502 -> ai_upstream_error.
 const REQUEST_DEADLINE_MS = Number(process.env.LEARNBUDDY_AI_DEADLINE_MS || 60_000);
 
-// Chat turns carry a whole Conversation's text history; explain payloads are
-// tiny. 256 KB is far past any text-only conversation turn.
-const MAX_BODY_BYTES = 262_144;
+// Explain payloads are tiny (a word and its sentence) — 256 KB is generous.
+const MAX_EXPLAIN_BODY_BYTES = 262_144;
+// Chat turns carry a whole Conversation's text history. The Python host
+// bounds a Conversation at 500 messages × 8000 chars (server/conversations.py),
+// ≈16 MB UTF-8 worst case, so 32 MB never rejects a legitimate turn — the host
+// measures the exact body and refuses over-limit Conversations with a clear
+// `too_large` before calling here. Same value on both sides, kept in lockstep
+// by tests/chat-limits.parity.test.js.
+const MAX_CHAT_BODY_BYTES = 33_554_432; // 32 MB
 
 const SYSTEM_PROMPT = `你是 epub 语言学习阅读器的查义助手。用户给出目标词、它所在的句子、原文语言和解释语言。
 解释目标词在这个句子里取哪个义项、是什么语法角色或活用形式。要求：
@@ -113,7 +119,7 @@ async function main() {
       return;
     }
     if (request.method === "POST" && request.url === "/chat") {
-      readBody(request).then((body) => {
+      readBody(request, MAX_CHAT_BODY_BYTES).then((body) => {
         const messages = normalizeMessages(body);
         if (!messages) {
           json(response, 400, { error: "bad_request" });
@@ -138,7 +144,7 @@ async function main() {
       json(response, 404, { error: "not_found" });
       return;
     }
-    readBody(request).then((body) => {
+    readBody(request, MAX_EXPLAIN_BODY_BYTES).then((body) => {
       if (!body) {
         json(response, 400, { error: "bad_request" });
         return;
@@ -175,18 +181,18 @@ async function main() {
 // One prompt -> one LLM answer, with a deadline; the session history is wiped
 // before and after so consecutive requests never see each other.
 async function explain(session, prompt) {
-  session.agent.state.messages = [];
+  wipeMessages(session);
   const timer = setTimeout(() => {
     session.abort().catch(() => {});
   }, REQUEST_DEADLINE_MS);
   try {
     await session.prompt(prompt);
-    const text = assistantText(session.agent.state.messages);
+    const text = assistantText(sessionMessages(session));
     if (!text) throw new Error("no usable assistant answer");
     return text;
   } finally {
     clearTimeout(timer);
-    session.agent.state.messages = [];
+    wipeMessages(session);
   }
 }
 
@@ -200,19 +206,30 @@ async function chat(session, messages) {
     .map((message) => `${message.role === "user" ? "用户" : "助手"}：${message.content}`)
     .join("\n");
   const prompt = `以下是当前对话到目前为止的全部文字记录（按时间先后）。请接着最后一条用户消息回复，只输出回复正文。\n\n${transcript}`;
-  session.agent.state.messages = [];
+  wipeMessages(session);
   const timer = setTimeout(() => {
     session.abort().catch(() => {});
   }, REQUEST_DEADLINE_MS);
   try {
     await session.prompt(prompt);
-    const text = assistantText(session.agent.state.messages);
+    const text = assistantText(sessionMessages(session));
     if (!text) throw new Error("no usable assistant answer");
     return text;
   } finally {
     clearTimeout(timer);
-    session.agent.state.messages = [];
+    wipeMessages(session);
   }
+}
+
+// The pi session transcript lives at session.agent.state.messages; hide that
+// reach-in behind two tiny helpers so the stateless wipe/read pattern stays
+// one spelling at every call site.
+function wipeMessages(session) {
+  session.agent.state.messages = [];
+}
+
+function sessionMessages(session) {
+  return session.agent.state.messages;
 }
 
 // pi surfaces a usage wall as one ordinary English sentence — a reset hint
@@ -253,20 +270,20 @@ function assistantText(messages) {
   return null;
 }
 
-function readBody(request) {
+function readBody(request, limit) {
   return new Promise((resolve) => {
     const chunks = [];
     let size = 0;
     request.on("data", (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         resolve(null);
         return;
       }
       chunks.push(chunk);
     });
     request.on("end", () => {
-      if (size > MAX_BODY_BYTES) return;
+      if (size > limit) return;
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
       } catch {

@@ -20,6 +20,7 @@ other Conversations, never the Person or any other profile's record
 for the family's Conversation history.
 """
 
+import json
 import os
 import re
 import time
@@ -29,7 +30,15 @@ from library import ApiError, _read_json, _write_json
 DEFAULT_TITLE = "新对话"
 TITLE_CHARS = 24
 MAX_MESSAGES = 500
+# The composer's maxlength in web/next/index.html carries the same number —
+# tests/chat-limits.parity.test.js keeps the two spellings in lockstep.
 MAX_MESSAGE_CHARS = 8000
+# The sidecar's /chat body cap (MAX_CHAT_BODY_BYTES in ai-service/index.mjs).
+# The worst-case legitimate turn is MAX_MESSAGES × MAX_MESSAGE_CHARS ≈ 16 MB
+# UTF-8, so 32 MB never rejects a real Conversation — post_message measures
+# the exact payload and refuses with a clear `too_large` instead of letting
+# an oversize turn degenerate into an upstream failure (spec user story 13).
+MAX_CHAT_BODY_BYTES = 33_554_432  # 32 MB
 
 _ID_RE = re.compile(r"[0-9]{6}")
 
@@ -90,6 +99,11 @@ class Conversations:
             for message in conversation["messages"]
         ]
         history.append({"role": "user", "content": text})
+        # Refuse a turn the sidecar's /chat body cap would reject — a clear
+        # `too_large` (413) here, not a 502 from an unreadable upstream.
+        payload = json.dumps({"messages": history}, ensure_ascii=False).encode("utf-8")
+        if len(payload) > MAX_CHAT_BODY_BYTES:
+            raise ApiError("too_large", "conversation history exceeds the chat body limit")
         answer = ask(history)  # LookupError(code) on model failure — nothing written
         reply = answer.get("text", "").strip() if isinstance(answer, dict) else ""
         if not reply:

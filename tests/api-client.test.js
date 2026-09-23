@@ -216,3 +216,18 @@ test('a failed send surfaces the server’s degrade code', async () => {
     return true;
   });
 });
+
+test('an over-limit Conversation surfaces too_large, not a generic failure', async () => {
+  // The server refuses an over-limit turn with its own mapped code (413)
+  // instead of letting it degenerate into a sidecar rejection.
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async () => response({ error: 'too_large' }, 413),
+  });
+
+  await assert.rejects(api.sendChatMessage('000001', 'hi'), (error) => {
+    assert.equal(error.code, 'too_large');
+    assert.equal(error.status, 413);
+    return true;
+  });
+});

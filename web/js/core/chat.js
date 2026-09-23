@@ -26,6 +26,10 @@ export function chatErrorMessage(error) {
       return 'Chat 还没有配置好，暂时不可用。';
     case 'conversation_not_found':
       return '这段对话不存在了——另选一段或新建。';
+    case 'too_large':
+      // Message over the limit, a full Conversation, or a history payload
+      // past the sidecar's chat body cap — all recoverable by the family.
+      return '内容太长了——缩短这条消息，或另起一段新对话。';
     default:
       // ai_upstream_error / ai_timeout / network_failure / …
       return 'Chat 暂时不可用，请稍后再试——之前的对话都还在。';

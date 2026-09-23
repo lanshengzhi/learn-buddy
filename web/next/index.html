@@ -32,14 +32,14 @@
       </button>
       <!-- Chat 面的上下文列表面板（#47）：当前 Person 的 Conversation 列表。
            窄屏时随导航一起进抽屉，与书架同一机制，不另做布局。 -->
-      <section id="nav-conversations" aria-label="对话" hidden>
-        <div class="conversation-head">
-          <span class="conversation-title">对话</span>
-          <button id="conversation-new" class="plain" type="button">＋ 新对话</button>
+      <section id="nav-conversations" class="nav-panel" aria-label="对话" hidden>
+        <div class="panel-head">
+          <span class="panel-title">对话</span>
+          <button id="conversation-new" class="plain panel-action" type="button">＋ 新对话</button>
         </div>
-        <p id="conversation-notice" class="conversation-notice" hidden></p>
-        <p id="conversation-empty" class="muted" hidden>还没有对话——在右侧直接发一条消息开始。</p>
-        <ul id="conversation-list"></ul>
+        <p id="conversation-notice" class="panel-note" hidden></p>
+        <p id="conversation-empty" class="muted panel-note" hidden>还没有对话——在右侧直接发一条消息开始。</p>
+        <ul id="conversation-list" class="panel-list"></ul>
       </section>
       <button class="nav-item active" id="nav-read" type="button" aria-current="page" data-icon="📖">
         <span class="nav-label">Read</span>
@@ -49,16 +49,16 @@
       </button>
       <!-- Read 面的上下文列表面板（#46）：当前 Person 的书架 + 上传。
            窄屏时随导航一起进抽屉，不另做布局。 -->
-      <section id="nav-shelf" aria-label="书架">
-        <div class="shelf-head">
-          <span class="shelf-title">书架</span>
-          <button id="shelf-upload" class="plain" type="button">＋ 上传 EPUB</button>
+      <section id="nav-shelf" class="nav-panel" aria-label="书架">
+        <div class="panel-head">
+          <span class="panel-title">书架</span>
+          <button id="shelf-upload" class="plain panel-action" type="button">＋ 上传 EPUB</button>
           <input id="shelf-upload-input" type="file" accept=".epub,application/epub+zip" hidden>
         </div>
         <div class="upload-progress" id="shelf-upload-progress" hidden><i></i></div>
-        <p id="shelf-notice" class="shelf-notice" hidden></p>
-        <p id="shelf-empty" class="muted" hidden>书架还是空的——上传一本 EPUB 开始阅读。</p>
-        <ul id="shelf-list"></ul>
+        <p id="shelf-notice" class="panel-note" hidden></p>
+        <p id="shelf-empty" class="muted panel-note" hidden>书架还是空的——上传一本 EPUB 开始阅读。</p>
+        <ul id="shelf-list" class="panel-list"></ul>
       </section>
       <div class="nav-spacer"></div>
       <!-- slice-1 占位：切片 2 由词卡「追问 →」/ AI问书接管 D3 触发 -->
@@ -207,6 +207,8 @@
         <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
         <p id="chat-empty" class="muted">开始一段新对话——在下方直接输入第一条消息。</p>
         <form id="chat-composer" class="chat-composer">
+          <!-- maxlength 与 server/conversations.py 的 MAX_MESSAGE_CHARS 同值；
+               tests/chat-limits.parity.test.js 保持两边一致。 -->
           <textarea id="chat-input" rows="2" maxlength="8000"
             placeholder="输入消息，Enter 发送，Shift+Enter 换行" aria-label="消息输入"></textarea>
           <button id="chat-send" type="submit" aria-label="发送">↑</button>
@@ -264,7 +266,7 @@
   <div id="profile-gate" class="overlay" hidden>
     <div class="gate-card">
       <h2>现在是谁？</h2>
-      <p class="muted">档案只用来整理各自的书和阅读进度——不设密码，家人都可以随时切换。</p>
+      <p class="muted">档案只用来整理各自的对话、书和阅读进度——不设密码，家人都可以随时切换。</p>
       <div id="profile-choices" class="gate-list"></div>
     </div>
   </div>

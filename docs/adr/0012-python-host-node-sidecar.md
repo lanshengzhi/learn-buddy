@@ -2,7 +2,7 @@
 
 Date: 2026-09-22
 Status: Accepted
-Tickets: [#33](https://github.com/lanshengzhi/learn-buddy/issues/33) (this decision), [#29](https://github.com/lanshengzhi/learn-buddy/issues/29) (engine = pi), [#32](https://github.com/lanshengzhi/learn-buddy/issues/32) (pi's measured limits), [#36](https://github.com/lanshengzhi/learn-buddy/issues/36) (v1 conversations have no tools)
+Tickets: [#33](https://github.com/lanshengzhi/learn-buddy/issues/33) (this decision), [#29](https://github.com/lanshengzhi/learn-buddy/issues/29) (engine = pi), [#32](https://github.com/lanshengzhi/learn-buddy/issues/32) (pi's measured limits), [#36](https://github.com/lanshengzhi/learn-buddy/issues/36) (v1 conversations have no tools). Amended by [#39](https://github.com/lanshengzhi/learn-buddy/issues/39) (per-Person cwd) and spec [#45](https://github.com/lanshengzhi/learn-buddy/issues/45) (Chat ownership — see the amendment section).
 
 The family hub keeps the Python backend as the host and a Node sidecar as the pi runtime. All family data — and the browser-facing surface — stay in Python; the sidecar owns sessions, model access and streaming, and **no family data at all**.
 
@@ -17,7 +17,7 @@ The family hub keeps the Python backend as the host and a Node sidecar as the pi
 
 - **The host stays Python.** It owns the library, epub parsing, dictionaries, TTS and its cache, Person records, reading positions, History, word states, highlights and notes, the browser-facing HTTP API — and the shell itself.
 - **The sidecar stays Node and owns only conversations.** It holds pi sessions (content and resume), model access, credentials and token streaming. **It owns no family data**: Python assembles the context for one turn and hands it over; Node never reads the library, the dictionaries or any Person record.
-- **The conversation list is Node's, proxied by Python.** Chat already depends on the sidecar, so a list that disappears with it adds no new loss; a Python copy would create two sources of truth, and a stateless Node would throw away pi's first-class session resume.
+- **The conversation list is Node's, proxied by Python.** Chat already depends on the sidecar, so a list that disappears with it adds no new loss; a Python copy would create two sources of truth, and a stateless Node would throw away pi's first-class session resume. *(Superseded for Chat by the 2026-09-23 amendment below, spec #45.)*
 - **Node does not know the concept of a Person.** Python derives a **per-Person working directory** and tells the sidecar which session to resume. *(Amended 2026-09-22, issue #39: pi stores sessions under `<agentDir>/sessions/--<encoded-cwd>--/` — `session-manager.js:238-246` — so a per-Person `cwd` makes the directory itself the mapping and no recorded mapping table is needed.)*
 - **Exactly one sidecar process.** pi's unlocked session files make a second writer a silent-corruption risk. One process, `Restart=on-failure`, no multi-instance unit.
 - **One pi agent dir**, `/var/lib/learnbuddy/ai-agent/`, owned by `learnbuddy`, `auth.json` at `0600`. Not one per Person: credential refresh rotates the token, so two copies would invalidate each other.
@@ -26,13 +26,23 @@ The family hub keeps the Python backend as the host and a Node sidecar as the pi
 ## Considered Options
 
 - **Rewrite everything in Node/TypeScript** — rejected: the port would have to re-earn map #9's verified parsing work, and the only way to avoid that is to keep a Python parser process alongside — which is a sidecar again.
-- **Python owns the whole conversation; Node is stateless per turn** — rejected: it discards pi's first-class session resume and re-sends the history every turn.
+- **Python owns the whole conversation; Node is stateless per turn** — rejected: it discards pi's first-class session resume and re-sends the history every turn. *(Later chosen for Chat: see the 2026-09-23 amendment below, spec #45.)*
 - **Python keeps a conversation index beside Node's sessions** — rejected: two sources of truth for one list.
 - **One pi agent dir per Person** — rejected: credential refresh rotation makes multiple copies invalidate one another.
 
 ## Consequences
 
 - The reader survives a sidecar outage completely: reading, playback, lookup, word marks, highlights and position all keep working; only Chat and the AI panel degrade.
-- `ai-service/` is promoted from "one-shot explainer" to "conversation runtime": it gains session resume and token streaming, and loses the per-request session wipe it performs today.
+- `ai-service/` is promoted from "one-shot explainer" to "conversation runtime": it gains session resume and token streaming, and loses the per-request session wipe it performs today. *(Superseded for Chat by the 2026-09-23 amendment below, spec #45: the per-turn wipe stays.)*
 - Python gains a streaming proxy path (browser → Python → sidecar → Python → browser) where today it relays only a small JSON request/response.
 - The single-writer rule is an operational invariant: scaling the sidecar horizontally would corrupt conversations, not merely slow them.
+
+## Amendment — 2026-09-23, spec #45 (family hub v1)
+
+Spec #45's Implementation Decisions supersede this ADR's conversation-ownership and session-resume decisions **for Chat as shipped in tickets #46/#47** (the spec's Further Notes declare the older ADRs historical references for this surface):
+
+- **Conversations are LearnBuddy product data owned by the Python host** — one JSON file per Conversation under `state/<profile>/conversations/`, written `.tmp` + atomic rename like the rest of the library (spec §6.2). The decision "The conversation list is Node's, proxied by Python" no longer applies to Chat.
+- **The sidecar is stateless per turn.** Python assembles exactly the current Conversation's text history plus the new message and hands it over (ADR 0015); the pi session's message list is wiped before and after every call, and pi session resume is deliberately **not** used — pi's own runtime/session files are not the source of truth for the family's Conversation history. The option rejected above ("Python owns the whole conversation; Node is stateless per turn") is the chosen one for Chat.
+- Correspondingly, the per-Person `cwd` mapping (the #39 amendment above) is unused by Chat v1: the sidecar receives no Person knowledge at all, not even a `cwd` key.
+
+Everything else in this ADR stands: the host stays Python, exactly one sidecar process, one pi agent dir, and the sidecar still owns model access, credentials and streaming while holding no family data.

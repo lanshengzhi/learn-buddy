@@ -14,6 +14,7 @@ import { ServerApi } from '/js/core/api.js';
 import { Shelf, readingLabel, readingFraction } from '/js/core/shelf.js';
 import { Layer } from '/js/core/shell-controller.js';
 import { storedProfile } from '/js/browser/profile.js';
+import { onReadReady } from './read-ready.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,10 +32,6 @@ export function initShelf({ shell }) {
 
   let shelf = null;
 
-  // The reader announces itself once app.js boot has constructed BookView
-  // (which only happens after a Person is chosen, so `lb.profile` is set).
-  // The event normally fires after this module evaluated; the fallback
-  // covers a fast boot on a cached page.
   const start = () => {
     if (shelf || !window.learnbuddyRead) return;
     const api = new ServerApi({ profile: storedProfile() });
@@ -46,8 +43,7 @@ export function initShelf({ shell }) {
     shelf.markActive(window.learnbuddyRead.currentBookId());
     void shelf.refresh();
   };
-  if (window.learnbuddyRead) start();
-  else document.addEventListener('learnbuddy:read-ready', start, { once: true });
+  onReadReady(start);
 
   function render() {
     if (!shelf) return;
@@ -70,7 +66,9 @@ export function initShelf({ shell }) {
     const li = document.createElement('li');
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'shelf-item';
+    // .panel-item carries the shared style (shell.css); .shelf-item stays
+    // as the per-concept hook (shell smoke selects it).
+    button.className = 'panel-item shelf-item';
     const active = book.id === activeBookId;
     button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'true');
@@ -79,7 +77,7 @@ export function initShelf({ shell }) {
     title.textContent = book.title || book.fileName || '未命名';
 
     const meta = document.createElement('span');
-    meta.className = 'shelf-meta';
+    meta.className = 'panel-meta';
     meta.textContent = [book.author, `${book.chapters} 章`].filter(Boolean).join(' · ');
 
     const track = document.createElement('span');
@@ -89,7 +87,7 @@ export function initShelf({ shell }) {
     track.append(fill);
 
     const progress = document.createElement('span');
-    progress.className = 'shelf-reading';
+    progress.className = 'panel-meta shelf-reading';
     progress.textContent = readingLabel(book);
 
     button.append(title, meta, track, progress);

@@ -135,9 +135,12 @@ body {
   color: var(--muted, #6b6b62);
 }
 
-/* ---- contextual shelf: the Read face's book list (ticket #46) ---- */
+/* ---- contextual panels (tickets #46/#47): the active face's list column ----
+   One shared class set for both the shelf and the conversation panel — the
+   two concepts differ only in their hooks (ids, .shelf-item/.shelf-track/
+   .shelf-reading, .conversation-item). */
 
-#nav-shelf {
+.nav-panel {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -145,46 +148,37 @@ body {
   padding-bottom: 4px;
 }
 
-.shelf-head {
+.panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 10px;
 }
 
-.shelf-title {
+.panel-title {
   font-size: 12px;
   letter-spacing: 0.08em;
   color: var(--text-muted);
 }
 
-#shelf-upload {
+.panel-action {
   font-size: 12px;
   padding: 2px 6px;
 }
 
-/* the shared .upload-progress is a flex filler in the library overlay;
-   in the nav it is a plain full-width bar */
-#shelf-upload-progress {
-  flex: none;
-  min-width: 0;
-  margin: 4px 10px;
-}
-
-.shelf-notice,
-#shelf-empty {
+.panel-note {
   margin: 2px 10px;
   font-size: 12px;
   color: var(--text-secondary);
 }
 
-#shelf-list {
+.panel-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-.shelf-item {
+.panel-item {
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -199,12 +193,12 @@ body {
   cursor: pointer;
 }
 
-.shelf-item:hover,
-.shelf-item.active {
+.panel-item:hover,
+.panel-item.active {
   background: var(--border);
 }
 
-.shelf-item b {
+.panel-item b {
   font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
@@ -212,12 +206,20 @@ body {
   text-overflow: ellipsis;
 }
 
-.shelf-meta,
-.shelf-reading {
+.panel-meta {
   font-size: 12px;
   color: var(--text-muted);
 }
 
+/* the shared .upload-progress is a flex filler in the library overlay;
+   in the nav it is a plain full-width bar */
+#shelf-upload-progress {
+  flex: none;
+  min-width: 0;
+  margin: 4px 10px;
+}
+
+/* shelf-only: the per-Book reading progress track */
 .shelf-track {
   height: 3px;
   border-radius: 999px;
@@ -246,7 +248,7 @@ body.nav-collapsed #identity-chip .chip-sub {
   display: none;
 }
 
-body.nav-collapsed #nav-shelf {
+body.nav-collapsed .nav-panel {
   display: none;
 }
 
@@ -411,88 +413,12 @@ body.nav-collapsed #nav-collapse {
   }
 }
 
-/* ---- Chat face (ticket #47): contextual Conversation list + workspace ---- */
-
-/* The nav's conversation section mirrors the shelf section, one spelling
-   per concept: Conversations are not Books. */
-#nav-conversations {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 10px;
-  padding-bottom: 4px;
-}
-
-.conversation-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 10px;
-}
-
-.conversation-title {
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-}
-
-#conversation-new {
-  font-size: 12px;
-  padding: 2px 6px;
-}
-
-.conversation-notice,
-#conversation-empty {
-  margin: 2px 10px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-#conversation-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.conversation-item {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: none;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.conversation-item:hover,
-.conversation-item.active {
-  background: var(--border);
-}
-
-.conversation-item b {
-  font-size: 14px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.conversation-meta {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-body.nav-collapsed #nav-conversations {
-  display: none;
-}
-
-/* The face itself: a column filling #shell-main, always mounted — the face
+/* ---- Chat face (ticket #47): contextual Conversation list + workspace ----
+   The nav's conversation panel shares the .nav-panel/.panel-* class set with
+   the shelf above — one spelling per structure; Conversations are not Books.
+   The face itself: a column filling #shell-main, always mounted — the face
    switch only toggles `hidden` (§4.2 #2). */
+
 #chat-face {
   flex: 1 1 0%;
   min-height: 0;

@@ -250,6 +250,13 @@ test('chat failure lines are fixed and safe — never upstream text', () => {
     chatErrorMessage(Object.assign(new Error('500 Internal…'), { code: 'ai_upstream_error' })),
     'Chat 暂时不可用，请稍后再试——之前的对话都还在。',
   );
+  // An over-limit Conversation is its own mapped code (413 too_large), not a
+  // generic upstream failure — the family can shorten the message or start
+  // a new Conversation (spec user story 13: recoverable, history intact).
+  assert.equal(
+    chatErrorMessage(Object.assign(new Error('x'), { code: 'too_large' })),
+    '内容太长了——缩短这条消息，或另起一段新对话。',
+  );
   assert.equal(chatErrorMessage(new Error('socket hang up')), 'Chat 暂时不可用，请稍后再试——之前的对话都还在。');
 });
 

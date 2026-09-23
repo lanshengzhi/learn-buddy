@@ -93,14 +93,14 @@ check('wide: upload through the shelf reports its outcome', true);
 check('wide: shelf still lists the books after upload',
   (await wp.locator('#shelf-list .shelf-item').count()) >= shelfCount);
 
-// open a book straight from the shelf
+// open a book straight from the shelf — wait for the active mark, which
+// lands only after openBook resolves (the chapter is rendered); counting
+// sentences right after the click races the chapter re-render.
 await wp.locator('#shelf-list .shelf-item').first().click();
-await wp.waitForSelector('#book-view:not([hidden])');
-check('wide: shelf opens the book in the workspace',
-  (await wp.locator('#chapter-body .sent').count()) > 0);
-// the open resolves after restore-scroll's rAF — wait for the mark itself
 await wp.waitForSelector('#shelf-list .shelf-item.active');
 check('wide: shelf marks the open book active', true);
+check('wide: shelf opens the book in the workspace',
+  (await wp.locator('#chapter-body .sent').count()) > 0);
 const scrollBefore = await wp.locator('#book-scroll').evaluate((el) => (el.scrollTop = 500));
 await wp.locator('#d3-trigger').click();
 check('wide: D3 opens as a column', await wp.locator('#d3').isVisible());
@@ -135,6 +135,7 @@ check('narrow: shelf rides in the drawer', await np.locator('#nav-shelf').isVisi
 await np.locator('#shelf-list .shelf-item').first().click();
 check('narrow: picking from the shelf closes the drawer',
   !(await np.evaluate(() => document.body.classList.contains('drawer-open'))));
+await np.waitForSelector('#shelf-list .shelf-item.active');
 await np.waitForSelector('#book-view:not([hidden])');
 check('narrow: shelf opens the book in the workspace',
   (await np.locator('#chapter-body .sent').count()) > 0);
