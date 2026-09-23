@@ -263,6 +263,26 @@ class TestBooksEndpoint(ApiTestCase):
         self.assertEqual(status, 415)
         self.assertEqual(json.loads(body)["error"], "not_epub")
 
+    def test_failed_uploads_preserve_books_and_positions(self):
+        # #46: an invalid/unreadable upload must never corrupt the shelf or
+        # the Reading positions already stored for any profile.
+        book_id = json.loads(self.upload()[2])["book"]["id"]
+        status, _, _ = self.json_request(
+            "PUT", f"/books/{book_id}/position?profile=dad", {"chapter": 1, "sentence": 2})
+        self.assertEqual(status, 204)
+
+        status, _, body = self.upload(name="junk.epub", data=b"definitely not a zip")
+        self.assertEqual(status, 415)
+        broken = _zip({"META-INF/container.xml": CONTAINER, "OEBPS/content.opf": SPINELESS_OPF})
+        status, _, body = self.upload(name="broken.epub", data=broken)
+        self.assertEqual(status, 422)
+
+        books = json.loads(self.get("/books?profile=dad")[2])["books"]
+        self.assertEqual([b["id"] for b in books], [book_id])
+        self.assertEqual(books[0]["reading"], {"chapter": 1, "sentence": 2})
+        chapter = json.loads(self.get(f"/books/{book_id}/chapters/1?profile=dad")[2])
+        self.assertEqual(chapter["reading"], {"sentence": 2})
+
     def test_unreadable_epub_is_422(self):
         data = _zip({"META-INF/container.xml": CONTAINER, "OEBPS/content.opf": SPINELESS_OPF})
         status, _, body = self.upload(name="broken.epub", data=data)

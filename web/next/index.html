@@ -27,9 +27,9 @@
         <span class="nav-brand">LearnBuddy</span>
         <button id="nav-collapse" class="plain" type="button" aria-label="收起导航">«</button>
       </div>
-      <button class="nav-item" id="nav-chat" type="button" disabled title="切片 2 接入" data-icon="💬">
+      <button class="nav-item" id="nav-chat" type="button" disabled title="Chat 还没有开放，后续版本接入" data-icon="💬">
         <span class="nav-label">Chat</span>
-        <span class="nav-note">切片 2</span>
+        <span class="nav-note">未启用</span>
       </button>
       <button class="nav-item active" id="nav-read" type="button" aria-current="page" data-icon="📖">
         <span class="nav-label">Read</span>
@@ -37,6 +37,19 @@
       <button class="nav-sub" id="nav-history" type="button" data-icon="🕘">
         <span class="nav-label">阅读记录</span>
       </button>
+      <!-- Read 面的上下文列表面板（#46）：当前 Person 的书架 + 上传。
+           窄屏时随导航一起进抽屉，不另做布局。 -->
+      <section id="nav-shelf" aria-label="书架">
+        <div class="shelf-head">
+          <span class="shelf-title">书架</span>
+          <button id="shelf-upload" class="plain" type="button">＋ 上传 EPUB</button>
+          <input id="shelf-upload-input" type="file" accept=".epub,application/epub+zip" hidden>
+        </div>
+        <div class="upload-progress" id="shelf-upload-progress" hidden><i></i></div>
+        <p id="shelf-notice" class="shelf-notice" hidden></p>
+        <p id="shelf-empty" class="muted" hidden>书架还是空的——上传一本 EPUB 开始阅读。</p>
+        <ul id="shelf-list"></ul>
+      </section>
       <div class="nav-spacer"></div>
       <!-- slice-1 占位：切片 2 由词卡「追问 →」/ AI问书接管 D3 触发 -->
       <button id="d3-trigger" class="nav-sub" type="button" title="切片 1 占位：验证开关 D3 不动阅读位置" data-icon="✨">
@@ -217,8 +230,8 @@
   </div>
   <div id="profile-gate" class="overlay" hidden>
     <div class="gate-card">
-      <h2>谁在读？</h2>
-      <p class="muted">选择一个档案开始（换设备会再问一次）。</p>
+      <h2>现在是谁？</h2>
+      <p class="muted">档案只用来整理各自的书和阅读进度——不设密码，家人都可以随时切换。</p>
       <div id="profile-choices" class="gate-list"></div>
     </div>
   </div>

@@ -104,3 +104,18 @@ test('D3 toggle emits only layer events — the reader is never touched (§4.2 #
     { type: 'layer-closed', layer: Layer.D3 },
   ]);
 });
+
+test('setFace to the current face is a no-op (no event, no state churn)', () => {
+  const { events, onEvent } = recorder();
+  const shell = new ShellController({ onEvent });
+  shell.setFace('read');
+  assert.equal(shell.state.activeFace, 'read');
+  assert.deepEqual(events, []);
+});
+
+test('setFace emits face-changed for the A layout’s primary nav', () => {
+  const { events, onEvent } = recorder();
+  const shell = new ShellController({ onEvent });
+  shell.setFace('chat');
+  assert.deepEqual(events, [{ type: 'face-changed', face: 'chat' }]);
+});
