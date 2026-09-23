@@ -217,19 +217,39 @@ await wp.keyboard.press('Escape');
 // ---------- ticket #46: resume + per-Person positions ----------
 // Selecting a sentence writes the Reading position back (debounced 1.2 s);
 // TTS may fail in a dev env, but the selection — and so the position — is
-// recorded before the audio request.
+// recorded before the audio request. Playback may auto-advance (loop mode All)
+// or stop on its own, so wait until the server's stored position has been
+// stable for longer than the debounce window before reloading; then the
+// resume contract is exact: reload lands on the stored position.
+const readStoredPosition = () =>
+  wp.evaluate(async () => {
+    const bookId = window.learnbuddyRead.currentBookId();
+    const profile = localStorage.getItem('lb.profile');
+    const response = await fetch(`/books/${bookId}?profile=${encodeURIComponent(profile)}`);
+    return (await response.json()).book?.reading?.sentence ?? null;
+  });
 const positionWrite = wp.waitForResponse((response) => response.url().includes('/position'));
 await wp.locator('#chapter-body .sent').nth(2).evaluate((el) => el.click());
 await wp.waitForFunction(() => document.querySelector('#chapter-body .sent.selected')?.dataset.sentence === '2');
 await positionWrite;
-await wp.waitForTimeout(1600);
-const resumeExpected = await wp.locator('#chapter-body .sent.selected').getAttribute('data-sentence');
+let storedBefore = await readStoredPosition();
+let stableSince = Date.now();
+for (let i = 0; i < 40; i += 1) {
+  await wp.waitForTimeout(600);
+  const now = await readStoredPosition();
+  if (now !== storedBefore) {
+    storedBefore = now;
+    stableSince = Date.now();
+  } else if (Date.now() - stableSince >= 2400) {
+    break;
+  }
+}
 await wp.reload({ waitUntil: 'networkidle' });
 await wp.waitForSelector('body[data-ready]');
 check('wide: reload resumes the last book', await wp.locator('#book-view').isVisible());
 const resumed = await wp.locator('#chapter-body .sent.selected').getAttribute('data-sentence');
-check(`wide: reload restores a valid Reading position (${resumeExpected}→${resumed})`,
-  resumed != null && Number.isInteger(Number(resumed)) && Number(resumed) >= 0);
+check(`wide: reload lands on the stored Reading position (${storedBefore}→${resumed})`,
+  Number(storedBefore) >= 2 && Number(resumed) === Number(storedBefore));
 
 // Switching Person must never cross positions: the next Person's shelf shows
 // the same Book as unread. The gate reloads the page by design.
