@@ -6,7 +6,12 @@
  * survives D3 open/close.
  */
 import { createRequire } from 'module';
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { spawn } from 'child_process';
+import http from 'http';
+import net from 'net';
+import os from 'os';
+import path from 'path';
 const require = createRequire(import.meta.url);
 const { chromium } = require('/home/lansy/.local/share/mise/installs/npm-playwright/1.62.1/lib/node_modules/playwright');
 
@@ -66,8 +71,8 @@ check('wide: nav re-expands', (await wp.locator('#shell-nav').boundingBox()).wid
 
 // ---------- ticket #46: A-layout shelf (the Read face's contextual list) ----------
 check('wide: shelf section visible in the nav', await wp.locator('#nav-shelf').isVisible());
-check('wide: Chat entry present but clearly disabled',
-  (await wp.locator('#nav-chat').isDisabled()) && (await wp.locator('#nav-chat .nav-note').textContent()).includes('未启用'));
+check('wide: Chat entry enabled (#47)',
+  !(await wp.locator('#nav-chat').isDisabled()) && (await wp.locator('#nav-chat .nav-note').count()) === 0);
 const shelfCount = await wp.locator('#shelf-list .shelf-item').count();
 check(`wide: shelf lists the Person's books (${shelfCount})`, shelfCount > 0);
 
@@ -230,6 +235,151 @@ const op = await boot(wide, '/', 'old');
 check('old: no shell chrome at /', (await op.locator('#shell-nav').count()) === 0);
 check('old: reader intact at /', (await op.locator('#text-input').count()) === 1);
 
+// ---------- ticket #47: Chat flow (self-contained: stub sidecar + throwaway
+// backend on a temp data dir; no model provider is ever touched) ----------
+const freePort = () =>
+  new Promise((resolve) => {
+    const srv = net.createServer().listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+
+const stubRequests = [];
+let stubUp = true;
+const stub = http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/chat') {
+    let raw = '';
+    req.on('data', (chunk) => (raw += chunk));
+    req.on('end', () => {
+      stubRequests.push(JSON.parse(raw));
+      res.writeHead(stubUp ? 200 : 502, { 'Content-Type': 'application/json' });
+      res.end(stubUp ? JSON.stringify({ text: `stub 回复 ${stubRequests.length}` }) : JSON.stringify({ error: 'upstream_error' }));
+    });
+    return;
+  }
+  res.writeHead(404);
+  res.end();
+});
+await new Promise((resolve) => stub.listen(0, '127.0.0.1', resolve));
+const stubPort = stub.address().port;
+
+const chatPort = await freePort();
+const chatData = mkdtempSync(path.join(os.tmpdir(), 'learnbuddy-chat-smoke-'));
+const chatBackend = spawn(
+  process.env.LEARNBUDDY_PYTHON ?? 'python3',
+  ['server/tts_server.py', '--port', String(chatPort), '--data-dir', chatData],
+  { env: { ...process.env, LEARNBUDDY_AI_URL: `http://127.0.0.1:${stubPort}` }, stdio: 'ignore' },
+);
+try {
+  const CHAT_BASE = `http://127.0.0.1:${chatPort}`;
+  let up = false;
+  for (let i = 0; i < 60 && !up; i += 1) {
+    try {
+      up = (await fetch(`${CHAT_BASE}/profiles`)).ok;
+    } catch {
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+  check('chat: throwaway backend booted with a stub sidecar', up);
+
+  const chatCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const cp = await chatCtx.newPage();
+  watch(cp, 'chat');
+  await cp.goto(`${CHAT_BASE}/next/`, { waitUntil: 'networkidle' });
+  if (await cp.locator('#profile-gate').isVisible()) {
+    await cp.locator('#profile-choices button').first().click();
+  }
+  await cp.waitForSelector('body[data-ready]');
+
+  check('chat: nav entry enabled', !(await cp.locator('#nav-chat').isDisabled()));
+  await cp.locator('#nav-chat').click();
+  check('chat: face shows', await cp.locator('#chat-face').isVisible());
+  check('chat: reading area hidden (not rebuilt)', !(await cp.locator('#reading-area').isVisible()));
+  check('chat: conversation panel swaps in', await cp.locator('#nav-conversations').isVisible());
+  check('chat: shelf hidden on the Chat face', !(await cp.locator('#nav-shelf').isVisible()));
+  check('chat: provider disclosure stated',
+    (await cp.locator('.chat-footnote').textContent()).includes('模型服务商'));
+
+  // first message on a fresh thread creates the Conversation and answers
+  await cp.locator('#chat-input').fill('你好，Pi');
+  await cp.locator('#chat-send').click();
+  await cp.waitForSelector('.chat-message.assistant .bubble');
+  check('chat: reply rendered', (await cp.locator('.chat-message.assistant .bubble').textContent()).includes('stub 回复'));
+  check('chat: sidecar got exactly the one user message',
+    stubRequests.length === 1
+      && stubRequests[0].messages.length === 1
+      && stubRequests[0].messages[0].role === 'user'
+      && stubRequests[0].messages[0].content === '你好，Pi');
+  check('chat: conversation listed', (await cp.locator('#conversation-list .conversation-item').count()) === 1);
+
+  // follow-up carries only this Conversation's text history
+  await cp.locator('#chat-input').fill('接着问');
+  await cp.locator('#chat-send').click();
+  await cp.waitForFunction(() => document.querySelectorAll('.chat-message').length === 4);
+  check('chat: follow-up context is the current Conversation only',
+    stubRequests.length === 2
+      && stubRequests[1].messages.map((m) => m.role).join(',') === 'user,assistant,user'
+      && !('profile' in stubRequests[1]));
+
+  // persistence: reload → the stored Conversation reopens
+  await cp.reload({ waitUntil: 'networkidle' });
+  await cp.waitForSelector('body[data-ready]');
+  await cp.locator('#nav-chat').click();
+  await cp.waitForSelector('.chat-message');
+  check('chat: reload reopens the stored Conversation', (await cp.locator('.chat-message').count()) === 4);
+
+  // failure: sidecar down → safe line, draft kept, history intact
+  stubUp = false;
+  await cp.locator('#chat-input').fill('会失败的');
+  await cp.locator('#chat-send').click();
+  await cp.waitForSelector('#chat-notice:not([hidden])');
+  check('chat: failure shows the safe unavailable line',
+    (await cp.locator('#chat-notice').textContent()).includes('暂时不可用'));
+  check('chat: draft kept for retry', (await cp.locator('#chat-input').inputValue()) === '会失败的');
+  check('chat: history intact after failure', (await cp.locator('.chat-message').count()) === 4);
+  stubUp = true;
+  await cp.screenshot({ path: 'shots-shell/chat-face.png' });
+
+  // Chat/Read independence: open a book, scroll, switch to Chat and back —
+  // the reading pane is never rebuilt (spec §4.2 #2, user story 20).
+  await cp.locator('#nav-read').click();
+  check('chat: Read face back', await cp.locator('#reading-area').isVisible());
+  await cp.locator('#shelf-upload-input').setInputFiles('server/tests/fixtures/nav.epub');
+  await cp.waitForFunction(() =>
+    /已加入书架|已有这本书/.test(document.getElementById('shelf-notice').textContent));
+  await cp.locator('#shelf-list .shelf-item').first().click();
+  await cp.waitForSelector('#chapter-body .sent');
+  // The fixture chapter is short (no overflow), so instead of a scroll
+  // offset, mark the pane itself: a rebuild would drop the marker.
+  await cp.evaluate(() => {
+    document.getElementById('chapter-body').dataset.smokeMark = 'alive';
+  });
+  await cp.locator('#nav-chat').click();
+  await cp.waitForSelector('#chat-face:not([hidden])');
+  await cp.locator('#nav-read').click();
+  const paneSurvived = await cp.evaluate(
+    () => document.getElementById('chapter-body').dataset.smokeMark === 'alive',
+  );
+  check('chat: face round-trip never rebuilds the reading pane (§4.2 #2)', paneSurvived);
+  check('chat: book view intact after the round-trip', (await cp.locator('#chapter-body .sent').count()) > 0);
+
+  // Person switching swaps which Conversations show
+  await cp.locator('#nav-chat').click();
+  await cp.locator('#identity-chip').click();
+  await cp.locator('#profile-choices button').nth(1).click();
+  await cp.waitForSelector('body[data-ready]');
+  await cp.locator('#nav-chat').click();
+  await cp.waitForSelector('#chat-face:not([hidden])');
+  await cp.waitForTimeout(300);
+  check('chat: another Person sees their own (empty) list',
+    (await cp.locator('#conversation-list .conversation-item').count()) === 0);
+  await chatCtx.close();
+} finally {
+  chatBackend.kill();
+  stub.close();
+}
+
 await browser.close();
 // Optional services degrade by design (ADR 0012): without dicts or an AI
 // sidecar, /lookup and /ai answer 503 and the reader keeps working. And the
@@ -238,10 +388,14 @@ await browser.close();
 // console errors are expected.
 const DEGRADED_OK = /\/(lookup|ai)(\?|$)/;
 const REJECTED_UPLOAD = /\/books\?/;
+// The chat section deliberately kills the stub sidecar — the resulting 502
+// on the message send is the product's degrade path (#47), not a failure.
+const DEGRADED_CHAT = /\/conversations\/[^/]+\/messages/;
 const unexpected = errors
   .filter((e) => !/favicon|sw\.js|service worker|manifest/i.test(e))
   .filter((e) => !(e.includes('503') && DEGRADED_OK.test(e)))
-  .filter((e) => !(/ 4\d\d /.test(e) && REJECTED_UPLOAD.test(e)));
+  .filter((e) => !(/ 4\d\d /.test(e) && REJECTED_UPLOAD.test(e)))
+  .filter((e) => !(/ 502 /.test(e) && DEGRADED_CHAT.test(e)));
 check(`no console errors (${unexpected.length})`, unexpected.length === 0);
 if (unexpected.length) console.log(unexpected.join('\n'));
 console.log(failures ? `\n${failures} FAILURES` : '\nALL PASS');

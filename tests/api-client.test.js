@@ -129,3 +129,90 @@ test('a rejected upload/books request surfaces the server’s error code', async
     return true;
   });
 });
+
+// --- Chat / Conversations (ticket #47: every request stays inside the
+// active profile; a turn carries only the new text — the server assembles
+// the Conversation context, so nothing else can leak from the client) ---
+
+test('listConversations asks for the active profile’s Conversations', async () => {
+  const calls = [];
+  const api = new ServerApi({
+    profile: 'mom',
+    fetchImpl: async (path) => {
+      calls.push(path);
+      return response({ conversations: [{ id: '000001', title: '早安', updatedAt: 1 }] });
+    },
+  });
+
+  const conversations = await api.listConversations();
+
+  assert.equal(calls[0], '/conversations?profile=mom');
+  assert.equal(conversations.length, 1);
+  assert.equal(conversations[0].id, '000001');
+});
+
+test('createConversation posts an empty object and returns the Conversation', async () => {
+  const calls = [];
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      return response({ conversation: { id: '000001', title: '新对话', messages: [] } }, 201);
+    },
+  });
+
+  const conversation = await api.createConversation();
+
+  assert.equal(calls[0].path, '/conversations?profile=dad');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].options.body), {});
+  assert.equal(conversation.id, '000001');
+});
+
+test('getConversation stays inside the active profile', async () => {
+  const calls = [];
+  const api = new ServerApi({
+    profile: 'd1',
+    fetchImpl: async (path) => {
+      calls.push(path);
+      return response({ conversation: { id: '000002', messages: [] } });
+    },
+  });
+
+  await api.getConversation('000002');
+
+  assert.deepEqual(calls, ['/conversations/000002?profile=d1']);
+});
+
+test('sendChatMessage carries exactly the new text — nothing else crosses', async () => {
+  const calls = [];
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      return response({ conversation: { id: '000001', messages: [] } });
+    },
+  });
+
+  await api.sendChatMessage('000001', '今天怎么样？');
+
+  assert.equal(calls[0].path, '/conversations/000001/messages?profile=dad');
+  assert.equal(calls[0].options.method, 'POST');
+  // The exact client-side boundary: {text} only — no history, no book, no
+  // position, no other Conversation (the server owns context assembly).
+  assert.deepEqual(JSON.parse(calls[0].options.body), { text: '今天怎么样？' });
+});
+
+test('a failed send surfaces the server’s degrade code', async () => {
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async () => response({ error: 'ai_usage_limit' }, 503),
+  });
+
+  await assert.rejects(api.sendChatMessage('000001', 'hi'), (error) => {
+    assert.equal(error.code, 'ai_usage_limit');
+    assert.equal(error.status, 503);
+    assert.equal(error.message, 'AI 用量受限，请稍后再试。');
+    return true;
+  });
+});

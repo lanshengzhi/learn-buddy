@@ -42,7 +42,8 @@ export function ttsErrorToMessage(code) {
  * `bad_request`, `profile_not_found`, `book_not_found`, `chapter_not_found`,
  * `entry_not_found`, `not_found`, `too_large`, `not_epub`, `parse_failed`,
  * `lookup_unavailable`, `ai_not_configured`, `ai_upstream_error`, `ai_timeout`
- * (plus `unknown` and the TTS exception codes).
+ * (plus `unknown` and the TTS exception codes), and Chat (ticket #47):
+ * `conversation_not_found`, `ai_usage_limit`.
  */
 export const API_ERROR_CODES = Object.freeze({
   BAD_REQUEST: 'bad_request',
@@ -58,6 +59,8 @@ export const API_ERROR_CODES = Object.freeze({
   AI_NOT_CONFIGURED: 'ai_not_configured',
   AI_UPSTREAM_ERROR: 'ai_upstream_error',
   AI_TIMEOUT: 'ai_timeout',
+  CONVERSATION_NOT_FOUND: 'conversation_not_found',
+  AI_USAGE_LIMIT: 'ai_usage_limit',
 });
 
 /** Learner-facing wording per API error code. */
@@ -75,6 +78,10 @@ const API_ERROR_MESSAGES = {
   [API_ERROR_CODES.AI_NOT_CONFIGURED]: '未配置 AI 解释。',
   [API_ERROR_CODES.AI_UPSTREAM_ERROR]: 'AI 服务暂时不可用。',
   [API_ERROR_CODES.AI_TIMEOUT]: 'AI 响应超时，可在本卡内重试。',
+  [API_ERROR_CODES.CONVERSATION_NOT_FOUND]: '这段对话不存在了。',
+  // ADR 0013: 用量受限, never "quota exhausted" — the wall and a transient
+  // throttle are indistinguishable, so the copy stays calm.
+  [API_ERROR_CODES.AI_USAGE_LIMIT]: 'AI 用量受限，请稍后再试。',
 };
 
 /**

@@ -13,6 +13,10 @@ WorkingDirectory=/opt/learnbuddy/ai
 User=learnbuddy
 Group=learnbuddy
 Environment=LEARNBUDDY_AI_AGENT_DIR=/var/lib/learnbuddy/ai-agent
+# Chat (ticket #47) upgrades pi past the one-shot explainer: pin the agent
+# dir for pi itself too — without a TTY it silently degrades to print mode
+# when this is unset (spec §7).
+Environment=PI_CODING_AGENT_DIR=/var/lib/learnbuddy/ai-agent
 ExecStart=/usr/bin/node /opt/learnbuddy/ai/index.mjs
 Restart=on-failure
 RestartSec=3
