@@ -14,9 +14,9 @@ LearnBuddy is a single-household app with three independent experiences: Chat fo
 
 **Conversation history (对话历史)**: A Person's collection of Conversations and their messages. It is not cross-Conversation recall of personal facts.
 
-**Read**: The ebook-reading experience for a Person's books: shelf, chapters, and reading position. Language-learning tools are not part of Read; they live in Learn.
+**Read**: The ebook-reading experience for a Person's books: shelf, chapters, reading position, read-aloud, and word lookup. It does not study text: paste-and-segment, single-sentence looping, and passage history live in Learn.
 
-**Learn (学习)**: The text-study experience for pasted text: sentence segmentation, playback, lookup, and passage history. It does not open Books.
+**Learn (学习)**: The text-study experience for pasted text: sentence segmentation, per-sentence listening with looping, word lookup, and passage history. It does not open Books.
 
 **Book (书)**: A digital book a Person has added to Read.
 
@@ -30,4 +30,4 @@ LearnBuddy is a single-household app with three independent experiences: Chat fo
 | `Memory` | `Conversation history` | The current model stores conversations; it does not recall personal facts across conversations. |
 | `Reference` from Read into Chat | — | Chat and Read are independent and do not share content or context. |
 | `agent` or `bot` as a product entity | `Chat` / `AI service` | Pi and model providers are runtime vocabulary, not household product entities. |
-| Language-learning tools inside Read | `Learn` | Read is pure reading; playback, lookup, vocabulary marking, and paste-and-segment belong to Learn. |
+| Study tools inside Read | `Learn` | Read offers reading affordances (read-aloud, word lookup); paste-and-segment, single-sentence looping, and passage history belong to Learn. |
