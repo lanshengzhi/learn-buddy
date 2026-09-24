@@ -13,6 +13,8 @@
 
 import { detectLanguage, defaultVoiceFor } from './language.js';
 import { nextLoopMode, LoopMode } from './loop-mode.js';
+
+const defaultNextLoopMode = nextLoopMode;
 import { DEFAULT_RATE_PRESET } from './rate-presets.js';
 import { TTS_ERROR_CODES, ttsErrorToMessage } from './errors.js';
 import { TtsClientError } from './tts-client.js';
@@ -29,7 +31,7 @@ export class ReaderController {
    * @param {(index: number) => void} [deps.onHistoryProgress]
    * @param {(state: object) => void} [deps.onStateChange] — fired after every state mutation
    */
-  constructor({ segmentation, tts, player, prefs, makeObjectUrl, revokeObjectUrl, onHistoryProgress, onStateChange, wrapLoopAll = true }) {
+  constructor({ segmentation, tts, player, prefs, makeObjectUrl, revokeObjectUrl, onHistoryProgress, onStateChange, wrapLoopAll = true, nextLoopMode = defaultNextLoopMode }) {
     this.segmentation = segmentation;
     this.tts = tts;
     this.player = player;
@@ -37,6 +39,7 @@ export class ReaderController {
     // The paste flow wraps Loop-all back to the first sentence; the book
     // reader sets this false so a chapter ends at its last sentence (#16).
     this.wrapLoopAll = wrapLoopAll;
+    this.nextLoopMode = nextLoopMode;
     this.makeObjectUrl = makeObjectUrl ?? ((blob) => URL.createObjectURL(blob));
     this.revokeObjectUrl = revokeObjectUrl ?? ((url) => URL.revokeObjectURL(url));
     this.onHistoryProgress = onHistoryProgress ?? (() => {});
@@ -92,6 +95,16 @@ export class ReaderController {
     if (sentence) this.#startAudioJob(sentence);
   }
 
+  /** Selects a sentence without starting audio (Read's reading-position path). */
+  selectSentence(index) {
+    const sentence = this.#sentenceAt(index);
+    if (!sentence) return;
+    this.#cancelJob();
+    this.player.stop();
+    this.#set({ selectedSentenceIndex: index, playingSentenceIndex: null, isAudioLoading: false, isAudioPaused: false });
+    this.#progress(index);
+  }
+
   onPlayClicked() {
     const sentence = this.#sentenceAt(this.state.selectedSentenceIndex);
     if (sentence) this.#startAudioJob(sentence);
@@ -140,7 +153,7 @@ export class ReaderController {
     // The toggle is the single authority over the playback mode. Switching
     // mid-playback never interrupts the current sentence: the new state
     // applies when it finishes.
-    const nextMode = nextLoopMode(this.state.loopMode);
+    const nextMode = this.nextLoopMode(this.state.loopMode);
     this.#set({ loopMode: nextMode });
     this.prefs.saveLoopMode(nextMode);
   }

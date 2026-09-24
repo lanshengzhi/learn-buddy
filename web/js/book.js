@@ -36,7 +36,7 @@ export class BookView {
    * @param {Set<string>} deps.knownWords — the Profile's 我认识 keys (mutated in place)
    * @param {() => string} deps.rateSsml — the current Rate preset's SSML value
    */
-  constructor({ api, isWide, onView, loadChapter, followPlaying, toast, onSentenceTap, knownWords, rateSsml }) {
+  constructor({ api, isWide, onView, loadChapter, followPlaying, toast, onSentenceTap, knownWords, rateSsml, lookupEnabled = () => true }) {
     this.api = api;
     this.isWide = isWide;
     this.onView = onView;
@@ -46,6 +46,7 @@ export class BookView {
     this.onSentenceTap = onSentenceTap;
     this.knownWords = knownWords;
     this.rateSsml = rateSsml;
+    this.lookupEnabled = lookupEnabled;
 
     this.hlMode = 'underline';
     this.book = null;
@@ -114,6 +115,10 @@ export class BookView {
       this.toast(error.message ?? '书打不开了。');
       return;
     }
+    // Flush the previous Book's pending position while this.book/chapterIndex
+    // still belong to it: after the switch the same flush would send the old
+    // chapter under the new Book's id and the server rejects it (#52).
+    this.flushPosition();
     this.book = book;
     this.bookTitle.textContent = book.title || '未命名';
     this.toc = toc;
@@ -323,7 +328,7 @@ export class BookView {
   onSentenceTap = null;
 
   #onPointerOver(event) {
-    if (!isFinePointer() || this.holdActive) return;
+    if (!this.lookupEnabled() || !isFinePointer() || this.holdActive) return;
     const word = event.target.closest?.('.w');
     if (!word) return;
     clearTimeout(this.hoverTimer);
@@ -339,7 +344,7 @@ export class BookView {
   }
 
   #onPointerDown(event) {
-    if (isFinePointer()) return;
+    if (!this.lookupEnabled() || isFinePointer()) return;
     const word = event.target.closest?.('.w');
     if (!word) return;
     this.holdStart = { x: event.clientX, y: event.clientY };
@@ -381,7 +386,7 @@ export class BookView {
   }
 
   #onSelection(event) {
-    if (event.pointerType === 'touch') return;
+    if (!this.lookupEnabled() || event.pointerType === 'touch') return;
     const selection = window.getSelection?.();
     const text = selection?.toString().trim();
     if (!text || text.length > 30) return;
@@ -391,18 +396,19 @@ export class BookView {
   }
 
   #showCardFor(wordSpan) {
+    if (!this.lookupEnabled()) return;
     const sentence = wordSpan.closest('.sent');
     if (!sentence) return;
     this.#showCard({ surface: wordSpan.textContent, sentenceIndex: Number(sentence.dataset.sentence) });
   }
 
-  #showCard({ surface, sentenceIndex, selected = false }) {
-    this.cardTarget = { surface, sentenceIndex, selected };
+  #showCard({ surface, sentenceIndex, selected = false, context = null, language = null, learn = false }) {
+    this.cardTarget = { surface, sentenceIndex, selected, context, language, learn };
     this.cardState = 'loading';
     this.cardEntry = null;
     this.cardAiOpen = false;
     this.cardAi = undefined;
-    if (this.isWide()) {
+    if (this.isWide() && !learn) {
       this.#showAsideTab('lookup');
       this.followPlaying();
     } else {
@@ -410,7 +416,7 @@ export class BookView {
       this.scrim.hidden = false;
     }
     this.renderCard();
-    void this.#requestLookup(surface);
+    void this.#requestLookup(surface, language);
   }
 
   closeCard() {
@@ -419,8 +425,8 @@ export class BookView {
     this.cardTarget = null;
   }
 
-  async #requestLookup(surface) {
-    const lang = this.book?.lang ?? 'en';
+  async #requestLookup(surface, language = null) {
+    const lang = language ?? this.book?.lang ?? 'en';
     let state = 'ready';
     let entry = null;
     try {
@@ -488,6 +494,7 @@ export class BookView {
 
   /** Opens the lookup card for a word found by the `n` scan and scrolls there. */
   openWord(sentenceIndex, surface) {
+    if (!this.lookupEnabled()) return;
     this.#showCard({ surface, sentenceIndex });
     const target = document.querySelector(`.sent[data-sentence="${sentenceIndex}"]`);
     if (target) target.scrollIntoView({ behavior: 'instant', block: 'center' });
@@ -498,6 +505,18 @@ export class BookView {
     if (!this.cardTarget) return;
     const key = this.cardEntry?.key;
     if (key) void this.markKnown(key);
+  }
+
+  /** Learn-only entry point; reuses the existing dictionary card and API. */
+  lookupText({ word, sentence, language }) {
+    this.#showCard({
+      surface: word,
+      sentenceIndex: -1,
+      selected: true,
+      context: sentence,
+      language,
+      learn: true,
+    });
   }
 
   /** PC shortcut `a`: switches the card to the AI section (requesting it). */
@@ -638,7 +657,7 @@ export class BookView {
   renderCard() {
     if (!this.cardTarget) return;
     const card = this.#buildCard();
-    if (this.isWide()) {
+    if (this.isWide() && !this.cardTarget.learn) {
       const existing = this.asideBody.querySelector('.card');
       if (existing) existing.replaceWith(card);
       else this.asideBody.replaceChildren(card);
@@ -648,7 +667,7 @@ export class BookView {
   }
 
   #buildCard() {
-    const { surface, sentenceIndex, selected } = this.cardTarget;
+    const { surface, sentenceIndex, selected, context } = this.cardTarget;
     const entry = this.cardEntry;
     const card = document.createElement('div');
     card.className = 'card lookup-card';
@@ -704,7 +723,8 @@ export class BookView {
     }
 
     const sentence = this.chapter?.sentences[sentenceIndex];
-    if (sentence) card.append(paragraph(sentence.t, 'muted card-context'));
+    const contextText = context ?? sentence?.t;
+    if (contextText) card.append(paragraph(contextText, 'muted card-context'));
 
     const actions = document.createElement('div');
     actions.className = 'card-actions';

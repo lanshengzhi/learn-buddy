@@ -3,21 +3,17 @@
  * 1): the active face, nav collapse, and the layer stack. DOM-free; the DOM
  * adapter (web/next/shell.js) subscribes via onEvent and renders from state.
  *
- * The layer stack follows spec §4.2: D3 is a fullscreen overlay that belongs
- * to no face; back() peels layers in visual stacking order —
- * D3 → WordCard → Identity → Note → Toolbar → Drawer. The ordering is a
+ * The layer stack follows spec §4.2: back() peels layers in visual stacking order —
+ * WordCard → Identity → Note → Toolbar → Drawer. The ordering is a
  * fixed priority, not a push order, because the layers are not freely
- * composable (the drawer and D3 never coexist — structurally, no D3 trigger
- * is reachable while the drawer is open).
+ * composable.
  *
  * The controller's contract is its event stream. It deliberately has no
- * reader-facing vocabulary: the narrow-IA prototype lost the reading
- * position twice by rebuilding / cache-shadowing the reading pane on D3
- * toggles (spec §4.2 #2/#3), so no event here may name the reader.
+ * reader-facing vocabulary: every face and layer change must preserve the
+ * mounted reading pane (spec §4.2 #2/#3), so no event here may name or rebuild the reader.
  */
 
 export const Layer = Object.freeze({
-  D3: 'd3',
   WordCard: 'wordcard',
   Identity: 'identity',
   Note: 'note',
@@ -27,7 +23,6 @@ export const Layer = Object.freeze({
 
 /** back() priority: visually topmost first (spec §4.2). */
 const BACK_PRIORITY = [
-  Layer.D3,
   Layer.WordCard,
   Layer.Identity,
   Layer.Note,
@@ -35,7 +30,7 @@ const BACK_PRIORITY = [
   Layer.Drawer,
 ];
 
-export const Face = Object.freeze({ Read: 'read', Chat: 'chat' });
+export const Face = Object.freeze({ Read: 'read', Chat: 'chat', Learn: 'learn' });
 
 export class ShellController {
   /**

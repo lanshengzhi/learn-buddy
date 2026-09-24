@@ -27,6 +27,7 @@ import { detectLanguage, normalizeLanguage } from './core/language.js';
 import { storedProfile, switchProfile, storeProfile } from './browser/profile.js';
 import { ServerPlaybackPreferences } from './browser/server-playback-preferences.js';
 import { BookView } from './book.js';
+import { createLearnLookupBridge } from './core/learn-lookup.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -41,18 +42,14 @@ const listEl = $('sentence-list');
 const readerBody = $('reader-body');
 const cardsView = $('cards-view');
 const bookViewEl = $('book-view');
-const bottomBar = $('bottom-bar');
-const prevButton = $('prev-button');
-const replayButton = $('replay-button');
-const playButton = $('play-button');
-const nextButton = $('next-button');
-const rateSelect = $('rate-select');
-const loopButton = $('loop-button');
-const loopIcons = {
-  [LoopMode.Off]: $('loop-off-icon'),
-  [LoopMode.All]: $('loop-all-icon'),
-  [LoopMode.One]: $('loop-one-icon'),
-};
+const isNextShell = Boolean($('learn-face'));
+const controls = (prefix = '') => ({
+  bar: $(`${prefix}bottom-bar`), prev: $(`${prefix}prev-button`), replay: $(`${prefix}replay-button`),
+  play: $(`${prefix}play-button`), next: $(`${prefix}next-button`), rate: $(`${prefix}rate-select`), loop: $(`${prefix}loop-button`),
+  icons: { [LoopMode.Off]: $(`${prefix}loop-off-icon`), [LoopMode.All]: $(`${prefix}loop-all-icon`), [LoopMode.One]: $(`${prefix}loop-one-icon`) },
+});
+const bookControls = controls();
+const learnControls = isNextShell ? controls('learn-') : bookControls;
 
 const editorRegion = $('editor-region');
 const editorTabs = $('editor-tabs');
@@ -109,8 +106,10 @@ let editorCollapsed = true;
 let debounceTimer = null;
 let cards = [];
 
-let mode = 'cards'; // 'cards' (pasted passage) | 'book' (open Book)
-let controller = null;
+let mode = 'cards'; // legacy surface mode; /next visibility is face-driven
+let controller = null; // book controller; remains the only controller on /
+let learnController = null;
+const pasteController = () => isNextShell ? learnController : controller;
 let prefs = null;
 let historyRepository = null;
 let bookView = null;
@@ -166,16 +165,23 @@ async function boot() {
   }
   historyRepository = createHistoryRepository(api);
 
-  controller = new ReaderController({
-    segmentation: activeSegmentation,
-    tts: { speak: (request) => ttsClient.speak(request) },
-    player,
-    prefs,
-    onHistoryProgress: onProgress,
-    onStateChange: applyState,
-    wrapLoopAll: false, // book chapters end at the last sentence; the paste
-    // flow re-enables wrap when it owns the surface (#16 vs the paste loop)
+  const readPrefs = isNextShell ? {
+    ratePreset: () => prefs.ratePreset(),
+    loopMode: () => prefs.loopMode() === LoopMode.One ? LoopMode.All : prefs.loopMode(),
+    saveRatePreset: (preset) => prefs.saveRatePreset(preset),
+    saveLoopMode: (loop) => prefs.saveLoopMode(loop),
+  } : prefs;
+  const makeController = ({ audioPlayer, onHistoryProgress, onStateChange, wrapLoopAll, nextLoopMode, controllerPrefs = prefs }) => new ReaderController({
+    segmentation: activeSegmentation, tts: { speak: (request) => ttsClient.speak(request) },
+    player: audioPlayer, prefs: controllerPrefs, onHistoryProgress, onStateChange, wrapLoopAll,
+    ...(nextLoopMode ? { nextLoopMode } : {}),
   });
+  controller = makeController({ audioPlayer: player, controllerPrefs: readPrefs, onHistoryProgress: (index) => isNextShell ? bookView?.reportPosition(index) : onProgress(index), onStateChange: applyState, wrapLoopAll: false,
+    ...(isNextShell ? { nextLoopMode: (current) => current === LoopMode.Off ? LoopMode.All : LoopMode.Off } : {}) });
+  if (isNextShell) {
+    learnController = makeController({ audioPlayer: new HtmlAudioPlayer(), onHistoryProgress: (index) => historyRepository.updateLastSelectedIndex(text, index), onStateChange: applyLearnState, wrapLoopAll: true });
+    await learnController.loadText('');
+  }
 
   bookView = new BookView({
     api,
@@ -184,7 +190,7 @@ async function boot() {
     loadChapter: loadChapter,
     followPlaying,
     toast: showToast,
-    onSentenceTap: (index) => controller.onSentenceClicked(index),
+    onSentenceTap: (index) => isNextShell ? controller.selectSentence(index) : controller.onSentenceClicked(index),
     knownWords,
     rateSsml: () => controller.state.ratePreset.ssmlRate,
   });
@@ -200,6 +206,10 @@ async function boot() {
     openBook: (bookId) => bookView?.openBook(bookId),
     currentBookId: () => bookView?.book?.id ?? null,
   };
+  // Additive /next seam only; keep it absent from the live legacy shell.
+  if (document.getElementById('learn-face')) {
+    window.learnbuddyLookup = createLearnLookupBridge(bookView);
+  }
   document.dispatchEvent(new CustomEvent('learnbuddy:read-ready'));
 
   const lastBook = state.lastBook;
@@ -290,23 +300,30 @@ function setMode(next) {
   mode = next;
   if (controller) controller.wrapLoopAll = mode !== 'book';
   document.body.dataset.view = mode;
-  cardsView.hidden = mode === 'book';
-  bookViewEl.hidden = mode !== 'book';
+  if (!isNextShell) {
+    cardsView.hidden = mode === 'book';
+    bookViewEl.hidden = mode !== 'book';
+  } else if (mode === 'book') {
+    bookViewEl.hidden = false;
+  }
   backToBook.hidden = mode === 'book';
   applyState();
 }
 
 /** Empty paste surface: invites paste or upload (no book open yet). */
 function showCardsEmpty() {
-  if (!controller) return; // boot may fail before the controller exists — fatal() shows the message
+  const paste = pasteController();
+  if (!paste) return; // boot may fail before the controller exists — fatal() shows the message
   setMode('cards');
   setText('');
-  void controller.loadText('');
-  renderSentences(controller.state.sentences);
-  applyState();
-  emptyEl.textContent = '在书库选一本书开始阅读，或在下方粘贴文本。';
-  emptyEl.hidden = false;
-  $('empty-library-btn').hidden = false;
+  void paste.loadText('');
+  renderSentences(paste.state.sentences);
+  applyLearnState();
+  if (!isNextShell) {
+    emptyEl.textContent = '在书库选一本书开始阅读，或在下方粘贴文本。';
+    emptyEl.hidden = false;
+    $('empty-library-btn').hidden = false;
+  }
   setEditorCollapsed(false);
 }
 
@@ -417,17 +434,18 @@ function setText(value) {
  */
 async function resegment({ commit = false, initialIndex = -1 } = {}) {
   setMode('cards');
-  const current = controller.state.sentences[controller.state.selectedSentenceIndex];
-  controller.dispose();
+  const paste = pasteController();
+  const current = paste.state.sentences[paste.state.selectedSentenceIndex];
+  paste.dispose();
   let index = initialIndex;
   if (index < 0 && current && mode === 'cards') {
     const locale = detectLanguage(text);
     index = segmentationService.segment(text, locale).indexOf(current.text);
   }
   if (commit) await ensureHistoryEntry();
-  await controller.loadText(text, index);
-  renderSentences(controller.state.sentences);
-  applyState();
+  await paste.loadText(text, index);
+  renderSentences(paste.state.sentences);
+  applyLearnState();
   if (commit) await renderHistory();
 }
 
@@ -492,7 +510,7 @@ function renderSentences(sentences) {
     li.tabIndex = 0;
     li.textContent = sentence.text;
     const playSentence = () => {
-      controller.onSentenceClicked(sentence.index);
+      pasteController().onSentenceClicked(sentence.index);
       // Tapping a sentence means listening, not editing — collapse the editor.
       if (!editorCollapsed) setEditorCollapsed(true);
     };
@@ -509,15 +527,17 @@ function renderSentences(sentences) {
 }
 
 function updateStatus() {
-  if (mode === 'book' && bookView?.book) {
+  const paste = pasteController();
+  if (!paste) return;
+  if (!isNextShell && mode === 'book' && bookView?.book) {
     const summary = `《${bookView.book.title || '未命名'}》 第 ${(bookView.chapterIndex ?? 0) + 1} 章 · 选中第 ${(controller.state.selectedSentenceIndex ?? -1) + 1} 句`;
     editorStatus.textContent = summary;
     collapsedInfo.textContent = summary;
     langBadge.hidden = true;
     return;
   }
-  const n = controller.state.sentences.length;
-  const selected = controller.state.selectedSentenceIndex;
+  const n = paste.state.sentences.length;
+  const selected = paste.state.selectedSentenceIndex;
   const summary =
     n > 0
       ? `${n} 句 · 选中第 ${(selected ?? -1) + 1} 句 · ${languageLabel(detectLanguage(text))}`
@@ -527,35 +547,48 @@ function updateStatus() {
   langBadge.textContent = languageLabel(detectLanguage(text));
 }
 
+function renderBar(s, c, keepVisible = false) {
+  if (!c.bar) return;
+  c.prev.disabled = s.selectedSentenceIndex == null || s.selectedSentenceIndex <= 0;
+  c.next.disabled = s.selectedSentenceIndex == null || s.selectedSentenceIndex >= s.sentences.length - 1;
+  c.replay.disabled = s.selectedSentenceIndex == null;
+  const active = (s.playingSentenceIndex != null && !s.isAudioPaused) || s.isAudioLoading;
+  c.play.disabled = s.selectedSentenceIndex == null && s.playingSentenceIndex == null && !s.isAudioLoading;
+  const iconPrefix = isNextShell && c === learnControls ? 'learn-' : '';
+  $(`${iconPrefix}play-icon`).toggleAttribute('hidden', active);
+  $(`${iconPrefix}pause-icon`).toggleAttribute('hidden', !active);
+  c.play.setAttribute('aria-label', active ? '暂停' : '播放');
+  c.rate.value = s.ratePreset.name;
+  const label = s.loopMode === LoopMode.Off ? '关' : s.loopMode === LoopMode.All ? '全部' : '单句';
+  c.loop.setAttribute('aria-label', `循环：${label}`);
+  for (const [kind, icon] of Object.entries(c.icons)) icon.toggleAttribute('hidden', kind !== s.loopMode);
+  c.loop.classList.toggle('tinted', s.loopMode !== LoopMode.Off);
+  c.bar.hidden = !keepVisible && s.sentences.length === 0;
+}
+
 function applyState() {
   if (!controller) return;
   const s = controller.state;
-  if (mode === 'book') applyBookState(s);
-  else applyCardsState(s);
-
-  const selected = s.selectedSentenceIndex;
-  prevButton.disabled = selected == null || selected <= 0;
-  nextButton.disabled = selected == null || selected >= s.sentences.length - 1;
-  replayButton.disabled = selected == null;
-  const isActive = (s.playingSentenceIndex != null && !s.isAudioPaused) || s.isAudioLoading;
-  playButton.disabled = selected == null && s.playingSentenceIndex == null && !s.isAudioLoading;
-  // SVGElement has no `hidden` IDL — assigning `.hidden` on an SVG icon is a
-  // non-reflecting expando, and CSS `[hidden] { display: none }` matches the
-  // ATTRIBUTE. Use toggleAttribute so the triangle actually leaves.
-  $('play-icon').toggleAttribute('hidden', isActive);
-  $('pause-icon').toggleAttribute('hidden', !isActive);
-  playButton.setAttribute('aria-label', isActive ? '暂停' : '播放');
-
-  rateSelect.value = s.ratePreset.name;
-  const loopLabel =
-    s.loopMode === LoopMode.Off ? '关' : s.loopMode === LoopMode.All ? '全部' : '单句';
-  loopButton.setAttribute('aria-label', `循环：${loopLabel}`);
-  for (const [iconMode, icon] of Object.entries(loopIcons)) {
-    icon.toggleAttribute('hidden', iconMode !== s.loopMode);
+  if (!isNextShell) {
+    if (mode === 'book') applyBookState(s);
+    else applyCardsState(s);
+    renderBar(s, bookControls);
+    followPlaying();
+    updateStatus();
+    return;
   }
-  loopButton.classList.toggle('tinted', s.loopMode !== LoopMode.Off);
-
+  applyBookState(s);
+  renderBar(s, bookControls, true);
   followPlaying();
+}
+
+function applyLearnState() {
+  const paste = pasteController();
+  if (!paste) return;
+  const s = paste.state;
+  applyCardsState(s);
+  renderBar(s, learnControls);
+  followLearnPlaying();
   updateStatus();
 }
 
@@ -564,7 +597,7 @@ function applyCardsState(s) {
   errorEl.hidden = !s.errorMessage;
   if (s.errorMessage) errorEl.textContent = s.errorMessage;
   emptyEl.hidden = s.isLoading || s.sentences.length > 0;
-  bottomBar.hidden = s.sentences.length === 0;
+  if (!isNextShell) learnControls.bar.hidden = s.sentences.length === 0;
 
   for (const card of cards) {
     const index = Number(card.dataset.index);
@@ -581,7 +614,7 @@ function applyCardsState(s) {
 }
 
 function applyBookState(s) {
-  bottomBar.hidden = s.sentences.length === 0;
+  if (!isNextShell) bookControls.bar.hidden = s.sentences.length === 0;
   const sentences = bookView?.chapterBody?.querySelectorAll('.sent') ?? [];
   for (const sentence of sentences) {
     const index = Number(sentence.dataset.sentence);
@@ -603,26 +636,20 @@ function applyBookState(s) {
 // decision lives in core/visual-follow.js (node-tested); this binding only
 // executes the returned action. The viewport is #reader-body or #book-scroll
 // — the list's scroll container — never the content element itself.
-function followPlaying() {
-  if (!controller) return;
-  const playing = controller.state.playingSentenceIndex;
+function followController(controllerToFollow, container, selector) {
+  const playing = controllerToFollow?.state.playingSentenceIndex;
   if (playing == null) return;
-  const container = mode === 'book' ? $('book-scroll') : readerBody;
-  const selector = mode === 'book' ? '.sent' : '.sentence-list li';
-  const card = [...document.querySelectorAll(selector)].find(
-    (el) => Number(el.dataset.sentence ?? el.dataset.index) === playing,
-  );
+  const card = [...document.querySelectorAll(selector)].find((el) => Number(el.dataset.sentence ?? el.dataset.index) === playing);
   if (!card) return;
-  const action = computeFollowAction(
-    container.getBoundingClientRect(),
-    card.getBoundingClientRect(),
-  );
-  if (action === 'jump-top-instant') {
-    card.scrollIntoView({ behavior: 'instant', block: 'start' });
-  } else if (action === 'scroll-top-smooth') {
-    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
+  const action = computeFollowAction(container.getBoundingClientRect(), card.getBoundingClientRect());
+  if (action === 'jump-top-instant') card.scrollIntoView({ behavior: 'instant', block: 'start' });
+  else if (action === 'scroll-top-smooth') card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+function followPlaying() {
+  if (!isNextShell && mode !== 'book') followController(controller, readerBody, '.sentence-list li');
+  else followController(controller, $('book-scroll'), '.sent');
+}
+function followLearnPlaying() { followController(pasteController(), readerBody, '.sentence-list li'); }
 
 // Layout changes mid-playback (window resize, editor collapse/expand) can
 // newly cover the playing sentence without any state change — re-run the
@@ -646,35 +673,31 @@ readingArea.addEventListener('transitionend', (e) => {
 // --- controls ----------------------------------------------------------------------
 
 function bindControls() {
-  for (const preset of RATE_PRESETS) {
-    const option = document.createElement('option');
-    option.value = preset.name;
-    option.textContent = preset.label;
-    rateSelect.append(option);
-  }
-
-  prevButton.addEventListener('click', () => controller?.onPreviousClicked());
-  replayButton.addEventListener('click', () => controller?.onReplayClicked());
-  nextButton.addEventListener('click', () => controller?.onNextClicked());
-  playButton.addEventListener('click', () => {
-    if (!controller) return;
-    if (controller.state.playingSentenceIndex != null || controller.state.isAudioLoading) {
-      controller.onPauseClicked();
-    } else {
-      controller.onPlayClicked();
+  for (const c of [bookControls, ...(isNextShell ? [learnControls] : [])]) {
+    for (const preset of RATE_PRESETS) {
+      const option = document.createElement('option'); option.value = preset.name; option.textContent = preset.label; c.rate.append(option);
     }
-  });
-  loopButton.addEventListener('click', () => controller?.onLoopToggleClicked());
-  rateSelect.addEventListener('change', () => {
-    const preset = RATE_PRESETS.find((p) => p.name === rateSelect.value);
-    if (preset) controller?.onRateSelected(preset);
-  });
+    const target = c === bookControls ? () => controller : pasteController;
+    c.prev.addEventListener('click', () => target()?.onPreviousClicked());
+    c.replay.addEventListener('click', () => target()?.onReplayClicked());
+    c.next.addEventListener('click', () => target()?.onNextClicked());
+    c.play.addEventListener('click', () => {
+      const playerController = target(); if (!playerController) return;
+      if (playerController.state.playingSentenceIndex != null || playerController.state.isAudioLoading) playerController.onPauseClicked();
+      else playerController.onPlayClicked();
+    });
+    c.loop.addEventListener('click', () => target()?.onLoopToggleClicked());
+    c.rate.addEventListener('change', () => {
+      const preset = RATE_PRESETS.find((p) => p.name === c.rate.value);
+      if (preset) target()?.onRateSelected(preset);
+    });
+  }
 
   // --- editor ----------------------------------------------------------------
 
   textInput.addEventListener('input', () => {
     setText(textInput.value);
-    if (autoToggle.checked && controller && text.trim() !== '') {
+    if (autoToggle.checked && pasteController() && text.trim() !== '') {
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => void resegment(), 800);
     }
@@ -715,12 +738,12 @@ function bindControls() {
   });
 
   updateButton.addEventListener('click', () => {
-    if (text.trim() === '' || !controller) return;
+    if (text.trim() === '' || !pasteController()) return;
     void resegment({ commit: true }).then(() => setEditorCollapsed(true));
   });
 
   autoToggle.addEventListener('change', () => {
-    if (autoToggle.checked && text.trim() !== '' && controller) void resegment();
+    if (autoToggle.checked && text.trim() !== '' && pasteController()) void resegment();
   });
 
   tabEdit.addEventListener('click', () => setEditorTab('edit'));
@@ -777,14 +800,18 @@ function handleKeydown(e) {
     if (!editorCollapsed) setEditorCollapsed(true);
     return;
   }
-  if (e.target === textInput) return;
+  if (e.target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
   if (e.key === ' ') {
     e.preventDefault();
-    playButton.click();
+    (document.body.dataset.face === 'read' ? bookControls.play : learnControls.play).click();
     return;
   }
-  if (e.key === 'ArrowRight') nextButton.click();
-  if (e.key === 'ArrowLeft') prevButton.click();
+  if (e.key === 'ArrowRight') (document.body.dataset.face === 'read' ? bookControls.next : learnControls.next).click();
+  if (e.key === 'ArrowLeft') (document.body.dataset.face === 'read' ? bookControls.prev : learnControls.prev).click();
+  if (isNextShell) {
+    if (e.key === 'a' && document.body.dataset.face === 'read') bookView.openAiTab();
+    return;
+  }
   if (mode !== 'book') return;
   if (e.key === 'k') void bookView.markCurrentKnown();
   if (e.key === 'n') {
