@@ -42,16 +42,14 @@ async function boot(context, path, tag) {
   if (await page.locator('#profile-gate').isVisible()) {
     await page.locator('#profile-choices button').first().click();
   }
-  await page.waitForSelector('body[data-ready]');
+  try { await page.waitForSelector('body[data-ready]', { timeout: 15000 }); }
+  catch (error) { console.error(`${tag} boot diagnostics`, await page.locator('body').getAttribute('data-ready'), errors.slice(-5), await page.locator('#profile-gate').isVisible()); throw error; }
   return page;
 }
 
 async function openFirstBook(page) {
-  if (await page.locator('#book-view').isVisible()) return; // already reading
-  const opener = page.locator('#empty-library-btn');
-  await opener.click();
-  await page.locator('#library-list li').first().waitFor();
-  await page.locator('#library-list li').first().click();
+  if (await page.locator('#book-view').isVisible()) return;
+  await page.locator('#shelf-list .shelf-item').first().click();
   await page.waitForSelector('#book-view:not([hidden])');
   await page.waitForSelector('#chapter-body .sent');
 }
@@ -59,6 +57,11 @@ async function openFirstBook(page) {
 // ---------- wide (1280×900) ----------
 const wide = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 const wp = await boot(wide, '/next/', 'wide');
+const speechBodies = [];
+await wp.route('**/tts**', async (route) => {
+  speechBodies.push(route.request().url());
+  await route.fulfill({ status: 200, contentType: 'audio/mpeg', body: Buffer.from('') });
+});
 check('wide: nav visible', await wp.locator('#shell-nav').isVisible());
 check('wide: topbar hidden', !(await wp.locator('#shell-topbar').isVisible()));
 await wp.waitForTimeout(300);
@@ -103,21 +106,28 @@ await wp.waitForSelector('#shelf-list .shelf-item.active');
 check('wide: shelf marks the open book active', true);
 check('wide: shelf opens the book in the workspace',
   (await wp.locator('#chapter-body .sent').count()) > 0);
+const tapPosition = wp.waitForResponse((response) => response.url().includes('/position'));
 await wp.locator('#chapter-body .sent').nth(3).click();
+await tapPosition;
+check('wide: Read sentence tap selects/writes position without TTS', speechBodies.length === 0);
+await wp.locator('#play-button').click();
+await wp.waitForFunction(() => document.querySelector('#pause-icon') && !document.querySelector('#pause-icon').hasAttribute('hidden'));
+check('wide: Read bar requests speech for the selected chapter sentence', speechBodies.length > 0 && new URL(speechBodies.at(-1)).searchParams.get('text') === (await wp.locator('#chapter-body .sent.selected').textContent()).trim());
+await wp.locator('#play-button').click();
 await wp.locator('#book-scroll').evaluate((el) => (el.scrollTop = 500));
 const scrollBefore = await wp.locator('#book-scroll').evaluate((el) => el.scrollTop);
 const wideSelectedBefore = await wp.locator('#chapter-body .sent.selected').getAttribute('data-sentence');
-check('wide: Read hides playback, lookup, paste editor, and legacy library controls',
-  !(await wp.locator('#bottom-bar').isVisible())
-  && !(await wp.locator('#tab-lookup').isVisible())
+check('wide: Read shows read-aloud and lookup, hides study/library controls',
+  await wp.locator('#bottom-bar').isVisible()
+  && await wp.locator('#tab-lookup').isVisible()
   && !(await wp.locator('#editor-region').isVisible())
   && !(await wp.locator('#library-overlay').isVisible())
   && !(await wp.locator('#hl-toggle').isVisible())
   && !(await wp.locator('#library-btn').isVisible()));
 await wp.locator('#nav-learn').click();
-check('wide: Learn shows paste editor, playback, and history entry',
+check('wide: Learn shows paste editor and history; its own bar is mounted',
   await wp.locator('#editor-region').isVisible()
-  && await wp.locator('#bottom-bar').isVisible()
+  && await wp.locator('#learn-bottom-bar').count() === 1
   && await wp.locator('#nav-history').isVisible());
 const wideRoundTrip = await wp.locator('#book-scroll').evaluate((el) => el.scrollTop);
 const wideSentenceCount = await wp.locator('#chapter-body .sent').count();
@@ -271,7 +281,7 @@ const learnGeometryBefore = await np.evaluate(() => {
   return {
     editor: rect('#editor-region'),
     cards: rect('#reader-body'),
-    playback: rect('#bottom-bar'),
+    playback: rect('#learn-bottom-bar'),
     topbar: rect('#shell-topbar'),
   };
 });
@@ -283,7 +293,7 @@ const learnGeometryFocused = await np.evaluate(() => {
   return {
     editor: rect('#editor-region'),
     cards: rect('#reader-body'),
-    playback: rect('#bottom-bar'),
+    playback: rect('#learn-bottom-bar'),
     topbar: rect('#shell-topbar'),
   };
 });
@@ -299,7 +309,7 @@ const learnGeometryBlurred = await np.evaluate(() => {
   return {
     editor: rect('#editor-region'),
     cards: rect('#reader-body'),
-    playback: rect('#bottom-bar'),
+    playback: rect('#learn-bottom-bar'),
   };
 });
 check('narrow: Learn cards and playback return after editor blur',
@@ -311,6 +321,14 @@ check('narrow: Learn cards and playback return after editor blur',
 const op = await boot(wide, '/', 'old');
 check('old: no shell chrome at /', (await op.locator('#shell-nav').count()) === 0);
 check('old: reader intact at /', (await op.locator('#text-input').count()) === 1);
+let oldTts = 0;
+await op.route('**/tts**', async (route) => { oldTts += 1; await route.fulfill({ status: 200, contentType: 'audio/mpeg', body: Buffer.from('') }); });
+await op.locator('#text-input').fill('Legacy tap-to-play remains.');
+await op.locator('#update-button').click();
+await op.waitForSelector('#sentence-list li');
+await op.locator('#sentence-list li').first().click();
+await op.waitForFunction(() => document.querySelector('#pause-icon') && !document.querySelector('#pause-icon').hasAttribute('hidden'));
+check('old: / tap-to-play remains enabled', oldTts > 0);
 
 // ---------- ticket #47: Chat flow (self-contained: stub sidecar + throwaway
 // backend on a temp data dir; no model provider is ever touched) ----------
@@ -368,13 +386,16 @@ try {
     await cp.locator('#profile-choices button').first().click();
   }
   await cp.waitForSelector('body[data-ready]');
-  check('read: empty state is Read-specific and learning controls stay hidden',
+  check('read: empty state shows read-aloud bar and keeps study controls hidden',
     (await cp.locator('#read-empty').textContent()).includes('书架打开一本书')
-      && !(await cp.locator('#bottom-bar').isVisible())
+      && await cp.locator('#bottom-bar').isVisible()
+      && !(await cp.locator('#hl-toggle').isVisible())
+      && !(await cp.locator('#library-btn').isVisible())
+      && !(await cp.locator('#library-overlay').isVisible())
       && !(await cp.locator('#editor-region').isVisible()));
-  let ttsRequested = false;
+  const pastedSpeech = [];
   await cp.route('**/tts**', async (route) => {
-    ttsRequested = true;
+    pastedSpeech.push(route.request().url());
     await route.fulfill({ status: 200, contentType: 'audio/mpeg', body: Buffer.from('') });
   });
   await cp.locator('#nav-learn').click();
@@ -382,6 +403,7 @@ try {
   await cp.locator('#update-button').click();
   await cp.waitForSelector('#sentence-list li');
   check('learn: paste and 断句 renders sentence cards', (await cp.locator('#sentence-list li').count()) >= 2);
+  check('learn: its dedicated playback bar becomes visible for pasted sentences', await cp.locator('#learn-bottom-bar').isVisible());
   await cp.locator('#sentence-list li').first().evaluate((el) => {
     const text = el.firstChild;
     const range = document.createRange();
@@ -397,13 +419,14 @@ try {
   check(`learn: selected pasted word opens existing lookup word card (seam=${await cp.evaluate(() => typeof window.learnbuddyLookup)})`,
     await cp.locator('#lookup-card .card-word').isVisible());
   await cp.locator('#lookup-card .card-actions button').last().click();
-  check('learn: playback controls are available', await cp.locator('#play-button').isEnabled());
-  await cp.locator('#play-button').click();
+  check('learn: playback controls are available', await cp.locator('#learn-play-button').isEnabled());
+  await cp.locator('#learn-play-button').click();
   await cp.waitForTimeout(300);
-  check('learn: play path requests speech audio', ttsRequested);
+  check('learn: play path speaks pasted sentence text', pastedSpeech.length > 0 && new URL(pastedSpeech.at(-1)).searchParams.get('text') === 'Hello there.');
+  check('learn: status does not contain a Book title/chapter', !(await cp.locator('#editor-status').textContent()).includes('《'));
   await cp.locator('#nav-read').click();
   check('read: learning cards and editor hidden again',
-    !(await cp.locator('#editor-region').isVisible()) && !(await cp.locator('#bottom-bar').isVisible()));
+    !(await cp.locator('#editor-region').isVisible()) && await cp.locator('#bottom-bar').isVisible());
 
   check('chat: nav entry enabled', !(await cp.locator('#nav-chat').isDisabled()));
   await cp.locator('#nav-chat').click();
@@ -463,6 +486,24 @@ try {
     /已加入书架|已有这本书/.test(document.getElementById('shelf-notice').textContent));
   await cp.locator('#shelf-list .shelf-item').first().click();
   await cp.waitForSelector('#chapter-body .sent');
+  check('read: opened Book exposes the 查义 tab and hides legacy book tools',
+    await cp.locator('#bottom-bar').isVisible()
+      && await cp.locator('#tab-lookup').isVisible()
+      && !(await cp.locator('#hl-toggle').isVisible())
+      && !(await cp.locator('#library-btn').isVisible())
+      && !(await cp.locator('#library-overlay').isVisible()));
+  await cp.locator('#nav-learn').click();
+  await cp.locator('#text-input').fill('Book remains open. Pasted sentence only.');
+  await cp.locator('#update-button').click();
+  await cp.waitForSelector('#sentence-list li');
+  await cp.locator('#learn-play-button').click();
+  await cp.waitForFunction(() => document.querySelector('#learn-pause-icon') && !document.querySelector('#learn-pause-icon').hasAttribute('hidden'));
+  check('regression: Learn bar speaks pasted sentence and status excludes Book title',
+    new URL(pastedSpeech.at(-1)).searchParams.get('text') === 'Book remains open.'
+      && !(await cp.locator('#editor-status').textContent()).includes('《'));
+  await cp.locator('#nav-read').click();
+  check('regression: paste does not hide the already-open Read book',
+    await cp.locator('#book-view').isVisible() && !(await cp.locator('#read-empty').isVisible()));
   // The fixture chapter is short (no overflow), so instead of a scroll
   // offset, mark the pane itself: a rebuild would drop the marker.
   await cp.evaluate(() => {
