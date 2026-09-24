@@ -224,6 +224,34 @@ check('wide: Read keeps the lookup drawer hidden',
   !(await wp.locator('#lookup-drawer').isVisible()));
 await wp.keyboard.press('Escape');
 
+// #52: switching Books must flush the previous Book's pending position to the
+// PREVIOUS Book — flushing after the switch would send the old chapter under
+// the new Book's id and the server rejects it. Assert on the wire: the flush
+// must PUT sentence 6 to book1 right after the switch begins (if the flush
+// were missing, the debounced write would fire against book2's URL instead and
+// this would time out).
+await wp.locator('#nav-read').click();
+await wp.evaluate(() => window.getSelection()?.removeAllRanges());
+await wp.locator('#chapter-body .sent').nth(6).click();
+await wp.waitForFunction(() => document.querySelector('#chapter-body .sent.selected')?.dataset.sentence === '6');
+const firstBookId = await wp.evaluate(() => window.learnbuddyRead.currentBookId());
+const flushSent = wp
+  .waitForRequest(
+    (request) => request.url().includes(`/books/${firstBookId}/position`)
+      && (request.postData() ?? '').includes('"sentence":6'),
+    { timeout: 4000 },
+  )
+  .catch(() => null);
+await wp.locator('#shelf-list .shelf-item').nth(1).click();
+const flushRequest = await flushSent;
+const flushStatus = flushRequest ? (await flushRequest.response())?.status() : null;
+check(`regression(#52): pending position flushed to the previous Book (HTTP ${flushStatus})`,
+  flushStatus === 204);
+// …and return to the first Book so later checks see the original state.
+await wp.locator('#shelf-list .shelf-item').first().click();
+await wp.waitForSelector('#shelf-list .shelf-item.active');
+await wp.waitForSelector('#chapter-body .sent');
+
 // ---------- ticket #46: resume + per-Person positions ----------
 // Selecting a sentence writes the Reading position back (debounced 1.2 s);
 // TTS may fail in a dev env, but the selection — and so the position — is
