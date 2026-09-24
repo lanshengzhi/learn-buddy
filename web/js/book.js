@@ -115,6 +115,10 @@ export class BookView {
       this.toast(error.message ?? '书打不开了。');
       return;
     }
+    // Flush the previous Book's pending position while this.book/chapterIndex
+    // still belong to it: after the switch the same flush would send the old
+    // chapter under the new Book's id and the server rejects it (#52).
+    this.flushPosition();
     this.book = book;
     this.bookTitle.textContent = book.title || '未命名';
     this.toc = toc;

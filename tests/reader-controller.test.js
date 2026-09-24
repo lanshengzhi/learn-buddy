@@ -84,7 +84,7 @@ class FakePrefs {
   saveLoopMode(m) { this._loopMode = m; this.saved.push(['loop', m]); }
 }
 
-function setup({ text = 'Hello world. This is a test.', prefs } = {}) {
+function setup({ text = 'Hello world. This is a test.', prefs, nextLoopMode } = {}) {
   const player = new FakePlayer();
   const tts = new FakeTts();
   const progress = [];
@@ -96,6 +96,7 @@ function setup({ text = 'Hello world. This is a test.', prefs } = {}) {
     makeObjectUrl: (blob) => `blob:${blob.size}`,
     revokeObjectUrl: () => {},
     onHistoryProgress: (index) => progress.push(index),
+    ...(nextLoopMode ? { nextLoopMode } : {}),
   });
   return { controller, player, tts, progress };
 }
@@ -251,6 +252,27 @@ test('next / previous move selection and play, clamping at the ends', async () =
   controller.onPreviousClicked();
   controller.onPreviousClicked(); // clamped to first
   assert.equal(controller.state.selectedSentenceIndex, 0);
+});
+
+test('selectSentence updates selection and position without requesting audio', async () => {
+  const { controller, tts, player, progress } = setup();
+  await load(controller, 'One. Two. Three.');
+  controller.selectSentence(2);
+  assert.equal(controller.state.selectedSentenceIndex, 2);
+  assert.equal(controller.state.playingSentenceIndex, null);
+  assert.deepEqual(progress.at(-1), 2);
+  assert.equal(tts.requests.length, 0);
+  assert.deepEqual(player.calls, [['stop']]);
+});
+
+test('a restricted Read loop cycles only Off and All', async () => {
+  const { controller } = setup({ nextLoopMode: (mode) => mode === LoopMode.Off ? LoopMode.All : LoopMode.Off });
+  controller.onLoopToggleClicked();
+  assert.equal(controller.state.loopMode, LoopMode.All);
+  controller.onLoopToggleClicked();
+  assert.equal(controller.state.loopMode, LoopMode.Off);
+  controller.onLoopToggleClicked();
+  assert.notEqual(controller.state.loopMode, LoopMode.One);
 });
 
 test('tapping a sentence card jumps the loop to it (loop continues)', async () => {

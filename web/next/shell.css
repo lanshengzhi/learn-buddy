@@ -271,18 +271,16 @@ body.nav-collapsed #nav-collapse {
    for app.js selectors, but never expose those controls in /next Read. */
 #library-overlay,
 #lookup-drawer,
-#tab-lookup,
 #hl-toggle,
 #library-btn,
 #reader-body,
-#bottom-bar,
 #editor-region,
 #cards-view {
   display: none !important;
 }
 
 #learn-face #cards-view,
-#learn-face #bottom-bar,
+#learn-face #learn-bottom-bar,
 #learn-face #editor-region {
   display: flex !important;
 }
@@ -305,7 +303,8 @@ body[data-face="learn"] #lookup-drawer[hidden] {
   display: none !important;
 }
 
-body[data-face="learn"] #lookup-drawer:not([hidden]) {
+body[data-face="learn"] #lookup-drawer:not([hidden]),
+body[data-face="read"] #lookup-drawer:not([hidden]) {
   display: block !important;
 }
 
@@ -313,7 +312,7 @@ body[data-face="learn"] #back-to-book {
   display: none !important;
 }
 
-#learn-face #bottom-bar[hidden],
+#learn-face #learn-bottom-bar[hidden],
 #learn-face #editor-region[hidden] {
   display: none !important;
 }
@@ -576,7 +575,7 @@ body[data-face="learn"] #back-to-book {
   }
 
   body.editor-takeover #learn-face #reader-body,
-  body.editor-takeover #learn-face #bottom-bar {
+  body.editor-takeover #learn-face #learn-bottom-bar {
     transform: translateY(-100%);
   }
 
