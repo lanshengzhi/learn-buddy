@@ -1,0 +1,40 @@
+# Unit-level gate (#53): runs on PRs and on push to master.
+# Deliberately excludes the smoke tests (scripts/*-smoke.mjs) — they need a
+# live backend and take 2-3 minutes; gating stays at the unit layer.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  node-unit:
+    name: Node unit tests (node --test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - name: npm test
+        run: npm test
+
+  python-unit:
+    name: Python unit tests (unittest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: pip install -r server/requirements.txt
+        run: pip install -r server/requirements.txt
+      - name: python -m unittest discover
+        working-directory: server
+        run: python -m unittest discover -s tests -p 'test_*.py'
