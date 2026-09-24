@@ -800,7 +800,7 @@ function handleKeydown(e) {
     if (!editorCollapsed) setEditorCollapsed(true);
     return;
   }
-  if (e.target === textInput) return;
+  if (e.target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
   if (e.key === ' ') {
     e.preventDefault();
     (document.body.dataset.face === 'read' ? bookControls.play : learnControls.play).click();
@@ -808,6 +808,10 @@ function handleKeydown(e) {
   }
   if (e.key === 'ArrowRight') (document.body.dataset.face === 'read' ? bookControls.next : learnControls.next).click();
   if (e.key === 'ArrowLeft') (document.body.dataset.face === 'read' ? bookControls.prev : learnControls.prev).click();
+  if (isNextShell) {
+    if (e.key === 'a' && document.body.dataset.face === 'read') bookView.openAiTab();
+    return;
+  }
   if (mode !== 'book') return;
   if (e.key === 'k') void bookView.markCurrentKnown();
   if (e.key === 'n') {

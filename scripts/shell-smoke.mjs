@@ -62,6 +62,11 @@ await wp.route('**/tts**', async (route) => {
   speechBodies.push(route.request().url());
   await route.fulfill({ status: 200, contentType: 'audio/mpeg', body: Buffer.from('') });
 });
+let nextWordsRequests = 0;
+await wp.route('**/words**', async (route) => {
+  nextWordsRequests += 1;
+  await route.continue();
+});
 check('wide: nav visible', await wp.locator('#shell-nav').isVisible());
 check('wide: topbar hidden', !(await wp.locator('#shell-topbar').isVisible()));
 await wp.waitForTimeout(300);
@@ -104,6 +109,10 @@ check('wide: shelf still lists the books after upload',
 await wp.locator('#shelf-list .shelf-item').first().click();
 await wp.waitForSelector('#shelf-list .shelf-item.active');
 check('wide: shelf marks the open book active', true);
+const wordsBeforeReadShortcut = nextWordsRequests;
+await wp.keyboard.press('k');
+await wp.waitForTimeout(150);
+check('/next Read: k does not request /words', nextWordsRequests === wordsBeforeReadShortcut);
 check('wide: shelf opens the book in the workspace',
   (await wp.locator('#chapter-body .sent').count()) > 0);
 const tapPosition = wp.waitForResponse((response) => response.url().includes('/position'));
@@ -129,6 +138,10 @@ check('wide: Learn shows paste editor and history; its own bar is mounted',
   await wp.locator('#editor-region').isVisible()
   && await wp.locator('#learn-bottom-bar').count() === 1
   && await wp.locator('#nav-history').isVisible());
+const wordsBeforeLearnShortcut = nextWordsRequests;
+await wp.keyboard.press('k');
+await wp.waitForTimeout(150);
+check('/next Learn: k does not request /words', nextWordsRequests === wordsBeforeLearnShortcut);
 const wideRoundTrip = await wp.locator('#book-scroll').evaluate((el) => el.scrollTop);
 const wideSentenceCount = await wp.locator('#chapter-body .sent').count();
 const wideSelectedAfter = await wp.locator('#chapter-body .sent.selected').getAttribute('data-sentence');
@@ -357,6 +370,33 @@ await op.waitForSelector('#sentence-list li');
 await op.locator('#sentence-list li').first().click();
 await op.waitForFunction(() => document.querySelector('#pause-icon') && !document.querySelector('#pause-icon').hasAttribute('hidden'));
 check('old: / tap-to-play remains enabled', oldTts > 0);
+oldTts = 0;
+await op.keyboard.press('Space');
+await op.waitForTimeout(300);
+check('old: space routes through the learnControls alias to /tts', oldTts > 0);
+let oldWords = 0;
+await op.route('**/words**', async (route) => {
+  oldWords += 1;
+  await route.continue();
+});
+await op.locator('#library-btn').evaluate((button) => button.click());
+await op.locator('#library-list .library-entry').first().click();
+await op.waitForSelector('#chapter-body .sent');
+await op.route('**/lookup?*', async (route) => {
+  const url = new URL(route.request().url());
+  const word = url.searchParams.get('word');
+  await route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ matched: word, key: `${url.searchParams.get('lang')}:${word}`, senses: [{ gloss: 'smoke' }] }),
+  });
+});
+await op.locator('#chapter-body .w').first().hover();
+await op.waitForSelector('#aside-body .mark-known');
+const oldWordsBeforeShortcut = oldWords;
+await op.keyboard.press('k');
+await op.waitForTimeout(300);
+check('old: k in book mode requests /words', oldWords > oldWordsBeforeShortcut);
 
 // ---------- ticket #47: Chat flow (self-contained: stub sidecar + throwaway
 // backend on a temp data dir; no model provider is ever touched) ----------
@@ -464,6 +504,12 @@ try {
   check('chat: shelf hidden on the Chat face', !(await cp.locator('#nav-shelf').isVisible()));
   check('chat: provider disclosure stated',
     (await cp.locator('.chat-footnote').textContent()).includes('模型服务商'));
+  const typingSpeechCount = pastedSpeech.length;
+  await cp.locator('#chat-input').focus();
+  await cp.keyboard.type('hi there');
+  check('chat: keyboard typing preserves spaces and does not trigger /tts',
+    (await cp.locator('#chat-input').inputValue()) === 'hi there' && pastedSpeech.length === typingSpeechCount);
+  await cp.locator('#chat-input').fill('');
 
   // first message on a fresh thread creates the Conversation and answers
   await cp.locator('#chat-input').fill('你好，Pi');
