@@ -48,6 +48,7 @@ from edge_tts import (
     validate_request,
 )
 from library import ApiError, Library
+from conversations import Conversations
 import reading
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -155,6 +156,9 @@ STATUS_BY_CODE = {
     "ai_not_configured": 503,
     "ai_upstream_error": 502,
     "ai_timeout": 504,
+    # Chat / Conversations (ticket #47; ai_usage_limit per ADR 0013).
+    "conversation_not_found": 404,
+    "ai_usage_limit": 503,
 }
 
 # Hand-written routes: path says what, `?profile=` says who is asking.
@@ -173,6 +177,10 @@ ROUTE_TABLE = (
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)$"), "api_get_book"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/chapters/(?P<chapter>[^/]+)$"), "api_get_chapter"),
     ("PUT", re.compile(r"^/books/(?P<book>[^/]+)/position$"), "api_put_position"),
+    ("GET", re.compile(r"^/conversations$"), "api_list_conversations"),
+    ("POST", re.compile(r"^/conversations$"), "api_create_conversation"),
+    ("GET", re.compile(r"^/conversations/(?P<conversation>[^/]+)$"), "api_get_conversation"),
+    ("POST", re.compile(r"^/conversations/(?P<conversation>[^/]+)/messages$"), "api_post_conversation_message"),
     ("GET", re.compile(r"^/lookup$"), "api_lookup"),
     ("POST", re.compile(r"^/lookup/check$"), "api_lookup_check"),
     ("POST", re.compile(r"^/ai$"), "api_ai"),
@@ -193,6 +201,7 @@ class TtsServer:
         self.pace_gate = PaceGate(interval=pace_interval, sleep=sleep)
         self.synthesis_lock = threading.Lock()
         self.library = library if library is not None else Library(data_dir or DEFAULT_DATA_DIR)
+        self.conversations = Conversations(data_dir or DEFAULT_DATA_DIR, self.library.require_profile)
         self.dicts = Dicts(os.path.join(data_dir or DEFAULT_DATA_DIR, "dicts"))
         self.ai = AiProxy(os.path.join(data_dir or DEFAULT_DATA_DIR, "ai-cache"))
 
@@ -359,6 +368,36 @@ class TtsHandler(BaseHTTPRequestHandler):
         self._library().put_position(
             groups["book"], params.get("profile", ""), body.get("chapter"), body.get("sentence"))
         self._no_content()
+
+    # -- Chat / Conversations (ticket #47, ADR 0015) --------------------------
+
+    def _conversations(self):
+        return self.server.app.conversations
+
+    def api_list_conversations(self, params, groups):
+        self._json_response(200, self._conversations().list(params.get("profile", "")))
+
+    def api_create_conversation(self, params, groups):
+        self._read_json()  # empty object; keeps the Content-Length contract
+        self._json_response(201, self._conversations().create(params.get("profile", "")))
+
+    def api_get_conversation(self, params, groups):
+        self._json_response(200, self._conversations().get(
+            params.get("profile", ""), groups["conversation"]))
+
+    def api_post_conversation_message(self, params, groups):
+        body = self._read_json()
+        try:
+            result = self._conversations().post_message(
+                params.get("profile", ""), groups["conversation"], body.get("text"),
+                self.server.app.ai.chat)
+        except LookupError as error:
+            # ai_not_configured / ai_upstream_error / ai_timeout /
+            # ai_usage_limit — the stored Conversation is untouched.
+            code = str(error)
+            self._json_error(STATUS_BY_CODE.get(code, 502), code)
+            return
+        self._json_response(200, result)
 
     # -- lookup / AI (ADR 0008) --------------------------------------------
 

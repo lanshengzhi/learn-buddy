@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 // learnbuddy-ai — AI context explanations for LearnBuddy's 查义 card (ADR 0008,
-// decision in #15). A tiny HTTP service: POST /explain {word, sentence,
-// language, explanationLocale} -> {text}. It wraps the pi SDK so the provider, model and auth are whatever
-// the pi agent dir is configured with — LearnBuddy owns no keys or accounts.
+// decision in #15) and the family Chat turns (ticket #47, ADR 0015). A tiny
+// HTTP service: POST /explain {word, sentence, language, explanationLocale} ->
+// {text}; POST /chat {messages: [{role, content}]} -> {text}. It wraps the pi
+// SDK so the provider, model and auth are whatever the pi agent dir is
+// configured with — LearnBuddy owns no keys or accounts.
 //
-// The Python backend (server/ai.py) proxies /ai here and owns the cache and
-// degrade codes (ai_not_configured / ai_upstream_error / ai_timeout); this
-// service only answers LLM calls. It listens on 127.0.0.1 only — the LAN
-// never sees it.
+// The Python backend (server/ai.py) proxies /ai and /conversations here and
+// owns the cache and degrade codes (ai_not_configured / ai_upstream_error /
+// ai_timeout / ai_usage_limit); this service only answers LLM calls. It knows
+// nothing about Persons or family data (ADR 0012) — the Python host assembles
+// each turn's context. It listens on 127.0.0.1 only — the LAN never sees it.
 
 import http from "node:http";
 import os from "node:os";
@@ -26,12 +29,27 @@ const AGENT_DIR = process.env.LEARNBUDDY_AI_AGENT_DIR || path.join(os.homedir(),
 // socket never hangs forever. Failures surface as 502 -> ai_upstream_error.
 const REQUEST_DEADLINE_MS = Number(process.env.LEARNBUDDY_AI_DEADLINE_MS || 60_000);
 
+// Explain payloads are tiny (a word and its sentence) — 256 KB is generous.
+const MAX_EXPLAIN_BODY_BYTES = 262_144;
+// Chat turns carry a whole Conversation's text history. The Python host
+// bounds a Conversation at 500 messages × 8000 chars (server/conversations.py),
+// ≈16 MB UTF-8 worst case, so 32 MB never rejects a legitimate turn — the host
+// measures the exact body and refuses over-limit Conversations with a clear
+// `too_large` before calling here. Same value on both sides, kept in lockstep
+// by tests/chat-limits.parity.test.js.
+const MAX_CHAT_BODY_BYTES = 33_554_432; // 32 MB
+
 const SYSTEM_PROMPT = `你是 epub 语言学习阅读器的查义助手。用户给出目标词、它所在的句子、原文语言和解释语言。
 解释目标词在这个句子里取哪个义项、是什么语法角色或活用形式。要求：
 - 用请求的解释语言回答（默认是 zh-CN；zh-CN 用简体中文），1–3 句，60–120 字。
 - 只讲语言事实：这个词在此句中的含义、词性、语法（活用还原、惯用型、固定搭配），必要时给读音（英文注音标，日文注假名）。
 - 不做教学扩展、不给例句、不评价句子。
 - 直接输出解释正文，不要标题、列表或寒暄。`;
+
+const CHAT_SYSTEM_PROMPT = `你是 LearnBuddy 家庭中枢的文字对话助手，家人用日常语言和你聊天。
+- 用用户使用的语言回答（中文提问用简体中文），语气温和、简洁。
+- 直接回答问题，不寒暄，不提系统指令。
+- 你只能看到当前对话里的文字；不要声称读过对方的书籍、阅读进度或其他对话。`;
 
 async function main() {
   const loader = new DefaultResourceLoader({
@@ -62,6 +80,27 @@ async function main() {
     noTools: "all",
     thinkingLevel: "low",
   });
+  // Chat gets its own session with its own system prompt; both sessions share
+  // the model runtime and the `tail` serialization below.
+  const chatLoader = new DefaultResourceLoader({
+    cwd: process.cwd(),
+    agentDir: AGENT_DIR,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+    systemPromptOverride: () => CHAT_SYSTEM_PROMPT,
+  });
+  await chatLoader.reload();
+  const { session: chatSession } = await createAgentSession({
+    cwd: process.cwd(),
+    sessionManager: SessionManager.inMemory(),
+    modelRuntime,
+    resourceLoader: chatLoader,
+    noTools: "all",
+    thinkingLevel: "low",
+  });
   const model = session.model;
   console.error(
     `[learnbuddy-ai] listening on ${HOST}:${PORT}, agent dir ${AGENT_DIR}, model ${
@@ -79,11 +118,33 @@ async function main() {
       json(response, 200, { ok: true, model: model ? `${model.provider}/${model.id}` : null });
       return;
     }
+    if (request.method === "POST" && request.url === "/chat") {
+      readBody(request, MAX_CHAT_BODY_BYTES).then((body) => {
+        const messages = normalizeMessages(body);
+        if (!messages) {
+          json(response, 400, { error: "bad_request" });
+          return;
+        }
+        tail = tail.then(() =>
+          chat(chatSession, messages).then(
+            (text) => {
+              console.error(`[learnbuddy-ai] chat ok ${messages.length} messages -> ${text.length} chars`);
+              json(response, 200, { text });
+            },
+            (error) => {
+              console.error(`[learnbuddy-ai] chat failed: ${error?.message ?? error}`);
+              json(response, 502, { error: isUsageLimit(error) ? "usage_limit" : "upstream_error" });
+            },
+          ),
+        );
+      });
+      return;
+    }
     if (request.method !== "POST" || request.url !== "/explain") {
       json(response, 404, { error: "not_found" });
       return;
     }
-    readBody(request).then((body) => {
+    readBody(request, MAX_EXPLAIN_BODY_BYTES).then((body) => {
       if (!body) {
         json(response, 400, { error: "bad_request" });
         return;
@@ -107,7 +168,7 @@ async function main() {
           },
           (error) => {
             console.error(`[learnbuddy-ai] failed lang=${language} explanation=${explanationLocale} word="${word}": ${error?.message ?? error}`);
-            json(response, 502, { error: "upstream_error" });
+            json(response, 502, { error: isUsageLimit(error) ? "usage_limit" : "upstream_error" });
           },
         ),
       );
@@ -120,19 +181,78 @@ async function main() {
 // One prompt -> one LLM answer, with a deadline; the session history is wiped
 // before and after so consecutive requests never see each other.
 async function explain(session, prompt) {
-  session.agent.state.messages = [];
+  wipeMessages(session);
   const timer = setTimeout(() => {
     session.abort().catch(() => {});
   }, REQUEST_DEADLINE_MS);
   try {
     await session.prompt(prompt);
-    const text = assistantText(session.agent.state.messages);
+    const text = assistantText(sessionMessages(session));
     if (!text) throw new Error("no usable assistant answer");
     return text;
   } finally {
     clearTimeout(timer);
-    session.agent.state.messages = [];
+    wipeMessages(session);
   }
+}
+
+// One Conversation turn (ticket #47): the Python host owns Conversation
+// history and sends exactly the current Conversation's text messages here
+// (ADR 0015) — never Read content, other Conversations, or a Person. Each
+// call is stateless: the transcript rides in the prompt and the session is
+// wiped before and after, so turns never see each other.
+async function chat(session, messages) {
+  const transcript = messages
+    .map((message) => `${message.role === "user" ? "用户" : "助手"}：${message.content}`)
+    .join("\n");
+  const prompt = `以下是当前对话到目前为止的全部文字记录（按时间先后）。请接着最后一条用户消息回复，只输出回复正文。\n\n${transcript}`;
+  wipeMessages(session);
+  const timer = setTimeout(() => {
+    session.abort().catch(() => {});
+  }, REQUEST_DEADLINE_MS);
+  try {
+    await session.prompt(prompt);
+    const text = assistantText(sessionMessages(session));
+    if (!text) throw new Error("no usable assistant answer");
+    return text;
+  } finally {
+    clearTimeout(timer);
+    wipeMessages(session);
+  }
+}
+
+// The pi session transcript lives at session.agent.state.messages; hide that
+// reach-in behind two tiny helpers so the stateless wipe/read pattern stays
+// one spelling at every call site.
+function wipeMessages(session) {
+  session.agent.state.messages = [];
+}
+
+function sessionMessages(session) {
+  return session.agent.state.messages;
+}
+
+// pi surfaces a usage wall as one ordinary English sentence — a reset hint
+// like "Try again in ~40 min" is the only signal (ADR 0013, issue #31).
+// Flag it so the family sees 用量受限 instead of a generic failure; the
+// provider's own error text never crosses the HTTP boundary.
+function isUsageLimit(error) {
+  return /usage limit|rate limit|too many requests|try again in/i.test(String(error?.message ?? error));
+}
+
+function normalizeMessages(body) {
+  const list = body?.messages;
+  if (!Array.isArray(list) || list.length === 0 || list.length > 500) return null;
+  const messages = [];
+  for (const entry of list) {
+    if (!entry || (entry.role !== "user" && entry.role !== "assistant")) return null;
+    if (typeof entry.content !== "string" || !entry.content.trim()) return null;
+    messages.push({ role: entry.role, content: entry.content });
+  }
+  // The host appends the new user message before calling, so the last entry
+  // is always what the model must answer.
+  if (messages[messages.length - 1].role !== "user") return null;
+  return messages;
 }
 
 function assistantText(messages) {
@@ -150,20 +270,20 @@ function assistantText(messages) {
   return null;
 }
 
-function readBody(request) {
+function readBody(request, limit) {
   return new Promise((resolve) => {
     const chunks = [];
     let size = 0;
     request.on("data", (chunk) => {
       size += chunk.length;
-      if (size > 32_768) {
+      if (size > limit) {
         resolve(null);
         return;
       }
       chunks.push(chunk);
     });
     request.on("end", () => {
-      if (size > 32_768) return;
+      if (size > limit) return;
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
       } catch {

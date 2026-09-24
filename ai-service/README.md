@@ -1,13 +1,18 @@
 # learnbuddy-ai
 
-AI context-explanation service behind LearnBuddy's `/ai` proxy (ADR 0008,
-decision in #15). A thin Node wrapper around the **pi SDK**: it answers
-`POST /explain {word, sentence, language, explanationLocale}` → `{text}` with whatever model the
+AI context-explanation and Chat service behind LearnBuddy's `/ai` and
+`/conversations` proxies (ADR 0008, decision in #15; Chat per ticket #47 /
+ADR 0015). A thin Node wrapper around the **pi SDK**: it answers
+`POST /explain {word, sentence, language, explanationLocale}` → `{text}` and
+`POST /chat {messages: [{role, content}]}` → `{text}` with whatever model the
 pi agent dir is configured with — no LearnBuddy-owned keys or accounts. The
 Python backend (`server/ai.py`) proxies to it, defaults `explanationLocale` to
-`zh-CN`, owns the cache and the degrade
-codes (`ai_not_configured` / `ai_upstream_error` / `ai_timeout`); the LAN
-never reaches this service directly (it listens on 127.0.0.1 only).
+`zh-CN`, owns the cache (explanations only — Chat turns are never cached),
+assembles each Chat turn's context from its own stored Conversation, and owns
+the degrade codes (`ai_not_configured` / `ai_upstream_error` / `ai_timeout` /
+`ai_usage_limit`); the LAN never reaches this service directly (it listens on
+127.0.0.1 only). This service knows nothing about Persons or family data
+(ADR 0012).
 
 ## On claw (ADR 0010)
 

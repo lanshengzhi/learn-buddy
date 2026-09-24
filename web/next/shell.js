@@ -13,7 +13,9 @@
  *  - #6: focusing the editor's textarea collapses the selection toolbar.
  */
 
-import { ShellController, Layer } from '/js/core/shell-controller.js';
+import { ShellController, Layer, Face } from '/js/core/shell-controller.js';
+import { initShelf } from './shelf.js';
+import { initChat } from './chat.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -27,11 +29,22 @@ const shellScrim = $('shell-scrim');
 const selToolbar = $('sel-toolbar');
 const selCopy = $('sel-copy');
 const lookupDrawer = $('lookup-drawer');
+const chatFace = $('chat-face');
+const readingArea = $('reading-area');
+const editorRegion = $('editor-region');
+const navChat = $('nav-chat');
+const navRead = $('nav-read');
+const navHistory = $('nav-history');
+const navShelf = $('nav-shelf');
+const navConversations = $('nav-conversations');
+const d3Trigger = $('d3-trigger');
+const d3TriggerNarrow = $('d3-trigger-narrow');
+const topbarTitle = $('shell-topbar-title');
 
 // --- render: state → DOM (idempotent; the shell DOM is tiny) ---------------
 
 function render() {
-  const { openLayers, navCollapsed, narrow } = shell.state;
+  const { openLayers, navCollapsed, narrow, activeFace } = shell.state;
   d3.hidden = !openLayers.includes(Layer.D3);
   const drawerOpen = narrow && openLayers.includes(Layer.Drawer);
   document.body.classList.toggle('drawer-open', drawerOpen);
@@ -40,6 +53,28 @@ function render() {
   const toolbarOpen = openLayers.includes(Layer.Toolbar);
   selToolbar.hidden = !toolbarOpen;
   if (toolbarOpen) positionToolbar();
+
+  // Face switch (ticket #47): both faces stay mounted; only `hidden`
+  // toggles — the reading pane is NEVER rebuilt (spec §4.2 #2), so Chat and
+  // Read keep their own state and never see each other's (user story 20).
+  const chatActive = activeFace === Face.Chat;
+  chatFace.hidden = !chatActive;
+  readingArea.hidden = chatActive;
+  editorRegion.hidden = chatActive;
+  navChat.classList.toggle('active', chatActive);
+  navRead.classList.toggle('active', !chatActive);
+  if (chatActive) navChat.setAttribute('aria-current', 'page');
+  else navChat.removeAttribute('aria-current');
+  if (chatActive) navRead.removeAttribute('aria-current');
+  else navRead.setAttribute('aria-current', 'page');
+  // The contextual panels and Read-only entries swap with the face.
+  navConversations.hidden = !chatActive;
+  navShelf.hidden = chatActive;
+  navHistory.hidden = chatActive;
+  d3Trigger.hidden = chatActive;
+  d3TriggerNarrow.hidden = chatActive;
+  topbarTitle.textContent = chatActive ? 'Chat' : 'Read';
+  if (chatActive) chatAdapter.activate();
 }
 
 function positionToolbar() {
@@ -57,10 +92,23 @@ $('nav-collapse').addEventListener('click', () => shell.toggleNav());
 shellScrim.addEventListener('click', () => shell.close(Layer.Drawer));
 
 // 阅读记录入口：现役 History 面板（编辑区「历史」按钮的既有行为）。
-$('nav-history').addEventListener('click', () => $('history-button').click());
+navHistory.addEventListener('click', () => $('history-button').click());
 
-// Chat：切片 1 惰性占位（按钮 disabled，这里仅防御）。
-$('nav-chat').addEventListener('click', () => {});
+// Face 切换（#47）：Chat / Read 都只切 hidden；窄屏下从抽屉点完即收。
+navChat.addEventListener('click', () => {
+  shell.setFace(Face.Chat);
+  shell.close(Layer.Drawer);
+});
+navRead.addEventListener('click', () => {
+  shell.setFace(Face.Read);
+  shell.close(Layer.Drawer);
+});
+
+// Read 面的上下文书架（#46）：列出当前 Person 的书、上传 EPUB、点开即读。
+initShelf({ shell });
+
+// Chat 面（#47）：当前 Person 的 Conversation 列表 + 文字对话工作区。
+const chatAdapter = initChat({ shell });
 
 // --- identity chip: proxies the existing profile gate ------------------------
 

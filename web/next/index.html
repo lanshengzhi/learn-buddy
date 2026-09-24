@@ -27,16 +27,39 @@
         <span class="nav-brand">LearnBuddy</span>
         <button id="nav-collapse" class="plain" type="button" aria-label="收起导航">«</button>
       </div>
-      <button class="nav-item" id="nav-chat" type="button" disabled title="切片 2 接入" data-icon="💬">
+      <button class="nav-item" id="nav-chat" type="button" data-icon="💬">
         <span class="nav-label">Chat</span>
-        <span class="nav-note">切片 2</span>
       </button>
+      <!-- Chat 面的上下文列表面板（#47）：当前 Person 的 Conversation 列表。
+           窄屏时随导航一起进抽屉，与书架同一机制，不另做布局。 -->
+      <section id="nav-conversations" class="nav-panel" aria-label="对话" hidden>
+        <div class="panel-head">
+          <span class="panel-title">对话</span>
+          <button id="conversation-new" class="plain panel-action" type="button">＋ 新对话</button>
+        </div>
+        <p id="conversation-notice" class="panel-note" hidden></p>
+        <p id="conversation-empty" class="muted panel-note" hidden>还没有对话——在右侧直接发一条消息开始。</p>
+        <ul id="conversation-list" class="panel-list"></ul>
+      </section>
       <button class="nav-item active" id="nav-read" type="button" aria-current="page" data-icon="📖">
         <span class="nav-label">Read</span>
       </button>
       <button class="nav-sub" id="nav-history" type="button" data-icon="🕘">
         <span class="nav-label">阅读记录</span>
       </button>
+      <!-- Read 面的上下文列表面板（#46）：当前 Person 的书架 + 上传。
+           窄屏时随导航一起进抽屉，不另做布局。 -->
+      <section id="nav-shelf" class="nav-panel" aria-label="书架">
+        <div class="panel-head">
+          <span class="panel-title">书架</span>
+          <button id="shelf-upload" class="plain panel-action" type="button">＋ 上传 EPUB</button>
+          <input id="shelf-upload-input" type="file" accept=".epub,application/epub+zip" hidden>
+        </div>
+        <div class="upload-progress" id="shelf-upload-progress" hidden><i></i></div>
+        <p id="shelf-notice" class="panel-note" hidden></p>
+        <p id="shelf-empty" class="muted panel-note" hidden>书架还是空的——上传一本 EPUB 开始阅读。</p>
+        <ul id="shelf-list" class="panel-list"></ul>
+      </section>
       <div class="nav-spacer"></div>
       <!-- slice-1 占位：切片 2 由词卡「追问 →」/ AI问书接管 D3 触发 -->
       <button id="d3-trigger" class="nav-sub" type="button" title="切片 1 占位：验证开关 D3 不动阅读位置" data-icon="✨">
@@ -169,6 +192,31 @@
           </span>
         </div>
       </section>
+
+      <!-- Chat 面（#47）：当前 Person 的 Conversation。与阅读面同时挂载，
+           只靠 hidden 切换 —— 永不重建阅读面板（§4.2 #2，user story 20）。 -->
+      <section id="chat-face" hidden aria-label="Chat">
+        <div class="chat-head">
+          <div class="chat-titles">
+            <h2 id="chat-title">新对话</h2>
+            <p class="chat-sub muted">独立的文字对话——不会读取 Read 里的书籍和阅读进度。</p>
+          </div>
+          <button id="chat-new" class="plain" type="button">＋ 新对话</button>
+        </div>
+        <p id="chat-notice" class="chat-notice" role="alert" hidden></p>
+        <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
+        <p id="chat-empty" class="muted">开始一段新对话——在下方直接输入第一条消息。</p>
+        <form id="chat-composer" class="chat-composer">
+          <!-- maxlength 与 server/conversations.py 的 MAX_MESSAGE_CHARS 同值；
+               tests/chat-limits.parity.test.js 保持两边一致。 -->
+          <textarea id="chat-input" rows="2" maxlength="8000"
+            placeholder="输入消息，Enter 发送，Shift+Enter 换行" aria-label="消息输入"></textarea>
+          <button id="chat-send" type="submit" aria-label="发送">↑</button>
+        </form>
+        <!-- ADR 0013/0015：明说会离开家的东西；Person 只是整理记录，
+             不暗示成员间隐私隔离。 -->
+        <p class="chat-footnote muted">你发送的文字和当前对话的历史可能发送给 Pi 配置的模型服务商。选择 Person 只是整理各自的记录——家人都能切换查看，互不隐藏。</p>
+      </section>
     </div>
 
     <!-- D3：右侧对话栏（宽屏）/ 全屏覆盖层（窄屏）。切片 1 为空占位，
@@ -217,8 +265,8 @@
   </div>
   <div id="profile-gate" class="overlay" hidden>
     <div class="gate-card">
-      <h2>谁在读？</h2>
-      <p class="muted">选择一个档案开始（换设备会再问一次）。</p>
+      <h2>现在是谁？</h2>
+      <p class="muted">档案只用来整理各自的对话、书和阅读进度——不设密码，家人都可以随时切换。</p>
       <div id="profile-choices" class="gate-list"></div>
     </div>
   </div>

@@ -135,6 +135,105 @@ body {
   color: var(--muted, #6b6b62);
 }
 
+/* ---- contextual panels (tickets #46/#47): the active face's list column ----
+   One shared class set for both the shelf and the conversation panel — the
+   two concepts differ only in their hooks (ids, .shelf-item/.shelf-track/
+   .shelf-reading, .conversation-item). */
+
+.nav-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+  padding-bottom: 4px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+}
+
+.panel-title {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.panel-action {
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.panel-note {
+  margin: 2px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.panel-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.panel-item:hover,
+.panel-item.active {
+  background: var(--border);
+}
+
+.panel-item b {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panel-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* the shared .upload-progress is a flex filler in the library overlay;
+   in the nav it is a plain full-width bar */
+#shelf-upload-progress {
+  flex: none;
+  min-width: 0;
+  margin: 4px 10px;
+}
+
+/* shelf-only: the per-Book reading progress track */
+.shelf-track {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  overflow: hidden;
+}
+
+.shelf-track i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--primary);
+}
+
 /* collapsed: 54px icon bar — labels and the chip's text fold away */
 body.nav-collapsed #shell-nav {
   width: 54px;
@@ -146,6 +245,10 @@ body.nav-collapsed .nav-label,
 body.nav-collapsed .nav-note,
 body.nav-collapsed #identity-chip .chip-title,
 body.nav-collapsed #identity-chip .chip-sub {
+  display: none;
+}
+
+body.nav-collapsed .nav-panel {
   display: none;
 }
 
@@ -307,5 +410,153 @@ body.nav-collapsed #nav-collapse {
      never from a cached offset (§4.2 #3) */
   #book-scroll {
     scroll-padding-top: 24px;
+  }
+}
+
+/* ---- Chat face (ticket #47): contextual Conversation list + workspace ----
+   The nav's conversation panel shares the .nav-panel/.panel-* class set with
+   the shelf above — one spelling per structure; Conversations are not Books.
+   The face itself: a column filling #shell-main, always mounted — the face
+   switch only toggles `hidden` (§4.2 #2). */
+
+#chat-face {
+  flex: 1 1 0%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.chat-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 4px;
+}
+
+.chat-titles h2 {
+  margin: 0;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.chat-sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+#chat-new {
+  flex: none;
+}
+
+.chat-notice {
+  margin: 6px 20px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 20px;
+  transition: transform 0.25s ease;
+}
+
+.chat-message {
+  display: flex;
+}
+
+.chat-message .bubble {
+  max-width: min(78%, 640px);
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 5px 16px 16px 16px;
+  background: var(--surface);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-message.user {
+  justify-content: flex-end;
+}
+
+.chat-message.user .bubble {
+  border-color: transparent;
+  border-radius: 16px 5px 16px 16px;
+  background: var(--primary-soft);
+}
+
+#chat-empty {
+  margin: 0 20px 8px;
+  font-size: 13px;
+}
+
+.chat-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 20px;
+}
+
+#chat-input {
+  flex: 1;
+  resize: none;
+  font: inherit;
+  color: var(--text);
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+#chat-send {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--bg);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#chat-send:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.chat-footnote {
+  margin: 0;
+  padding: 0 20px 12px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+@media (pointer: coarse) {
+  /* The composer reuses the editor-takeover mechanism (§4.2): focus adds
+     the same body class app.js uses, and the thread slides out of the way
+     above the virtual keyboard — one keyboard dance, not two. */
+  body.editor-takeover #chat-messages {
+    transform: translateY(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-messages {
+    transition: none;
   }
 }
