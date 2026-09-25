@@ -343,6 +343,14 @@ class TestBooks(LibraryTestCase):
                 self.library.get_book(book_id)
             self.assertEqual(caught.exception.code, "book_not_found")
 
+    def test_require_book_returns_only_the_local_content_hash_identity(self):
+        _, response = self._upload()
+        book_id = response["book"]["id"]
+        self.assertEqual(self.library.require_book(book_id), book_id)
+        with self.assertRaises(library.ApiError) as caught:
+            self.library.require_book("remote-notebook-id")
+        self.assertEqual(caught.exception.code, "book_not_found")
+
     def test_get_chapter_returns_reading_for_the_asking_profile(self):
         _, response = self._upload()
         book_id = response["book"]["id"]

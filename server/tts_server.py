@@ -49,6 +49,7 @@ from edge_tts import (
 )
 from library import ApiError, Library
 from conversations import Conversations
+from book_ai import BookConversations, NotebookRefs
 import reading
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -200,10 +201,17 @@ class TtsServer:
         self.normalizer = normalizer or reading.normalize_ja
         self.pace_gate = PaceGate(interval=pace_interval, sleep=sleep)
         self.synthesis_lock = threading.Lock()
-        self.library = library if library is not None else Library(data_dir or DEFAULT_DATA_DIR)
-        self.conversations = Conversations(data_dir or DEFAULT_DATA_DIR, self.library.require_profile)
-        self.dicts = Dicts(os.path.join(data_dir or DEFAULT_DATA_DIR, "dicts"))
-        self.ai = AiProxy(os.path.join(data_dir or DEFAULT_DATA_DIR, "ai-cache"))
+        data_dir = data_dir or DEFAULT_DATA_DIR
+        self.library = library if library is not None else Library(data_dir)
+        self.conversations = Conversations(data_dir, self.library.require_profile)
+        # Read-owned Book AI data is host-owned from #67 onward. Routes are
+        # added separately by #71; keeping the stores on the app here makes the
+        # persistence boundary explicit and ready for that API slice.
+        self.book_conversations = BookConversations(
+            data_dir, self.library.require_profile, self.library.require_book)
+        self.notebook_refs = NotebookRefs(data_dir, self.library.require_book)
+        self.dicts = Dicts(os.path.join(data_dir, "dicts"))
+        self.ai = AiProxy(os.path.join(data_dir, "ai-cache"))
 
     def _use_azure(self):
         """Azure is primary exactly when it holds a subscription key."""

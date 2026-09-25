@@ -415,6 +415,15 @@ class Library:
 
     # -- internals ---------------------------------------------------------
 
+    def require_book(self, book_id):
+        """Validate the local Book identity for feature-owned records.
+
+        Remote provider IDs are deliberately not accepted here: every Book AI
+        record is anchored to LearnBuddy's content-hash Book ID.
+        """
+        self._require_manifest(book_id)
+        return book_id
+
     def _require_manifest(self, book_id):
         if not isinstance(book_id, str) or not _SHA256_RE.fullmatch(book_id):
             raise ApiError("book_not_found", f"unknown book: {book_id}")
