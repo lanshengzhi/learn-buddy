@@ -162,6 +162,8 @@ STATUS_BY_CODE = {
     # Chat / Conversations (ticket #47; ai_usage_limit per ADR 0013).
     "conversation_not_found": 404,
     "ai_usage_limit": 503,
+    # Read-owned Book AI (#71).
+    "book_conversation_not_found": 404,
 }
 
 # Hand-written routes: path says what, `?profile=` says who is asking.
@@ -185,6 +187,12 @@ ROUTE_TABLE = (
     ("POST", re.compile(r"^/conversations$"), "api_create_conversation"),
     ("GET", re.compile(r"^/conversations/(?P<conversation>[^/]+)$"), "api_get_conversation"),
     ("POST", re.compile(r"^/conversations/(?P<conversation>[^/]+)/messages$"), "api_post_conversation_message"),
+    ("GET", re.compile(r"^/books/(?P<book>[^/]+)/book-conversations$"), "api_list_book_conversations"),
+    ("POST", re.compile(r"^/books/(?P<book>[^/]+)/book-conversations$"), "api_create_book_conversation"),
+    ("GET", re.compile(r"^/book-conversations/(?P<conversation>[^/]+)$"), "api_get_book_conversation"),
+    ("POST", re.compile(r"^/book-conversations/(?P<conversation>[^/]+)/resume$"), "api_resume_book_conversation"),
+    ("DELETE", re.compile(r"^/book-conversations/(?P<conversation>[^/]+)$"), "api_delete_book_conversation"),
+    ("POST", re.compile(r"^/book-conversations/(?P<conversation>[^/]+)/messages$"), "api_post_book_conversation_message"),
     ("GET", re.compile(r"^/lookup$"), "api_lookup"),
     ("POST", re.compile(r"^/lookup/check$"), "api_lookup_check"),
     ("POST", re.compile(r"^/ai$"), "api_ai"),
@@ -433,6 +441,135 @@ class TtsHandler(BaseHTTPRequestHandler):
             return
         self._json_response(200, result)
 
+    # -- Read-owned Book AI (#71) -------------------------------------------
+
+    def _book_conversations(self):
+        return self.server.app.book_conversations
+
+    def _book_conversation_response(self, result, status=200):
+        conversation = result["conversation"]
+        self._json_response(status, {
+            "conversation": conversation,
+            "book": conversation["bookId"],
+            "contextScope": None,
+        })
+
+    def api_list_book_conversations(self, params, groups):
+        result = self._book_conversations().list(params.get("profile", ""), groups["book"])
+        self._json_response(200, {**result, "book": groups["book"], "contextScope": None})
+
+    def api_create_book_conversation(self, params, groups):
+        body = self._read_json()
+        store = self._book_conversations()
+        result = store.create(
+            params.get("profile", ""), groups["book"], body.get("notebookRefId")
+        ) if body.get("new") is True else store.open(
+            params.get("profile", ""), groups["book"], body.get("notebookRefId")
+        )
+        self._book_conversation_response(result, 201 if result["created"] else 200)
+
+    def api_get_book_conversation(self, params, groups):
+        result = self._book_conversations().get(params.get("profile", ""), groups["conversation"])
+        self._book_conversation_response(result)
+
+    def api_resume_book_conversation(self, params, groups):
+        self._read_json()
+        result = self._book_conversations().activate(params.get("profile", ""), groups["conversation"])
+        self._book_conversation_response(result)
+
+    def api_delete_book_conversation(self, params, groups):
+        self._book_conversations().delete(params.get("profile", ""), groups["conversation"])
+        self._no_content()
+
+    def api_post_book_conversation_message(self, params, groups):
+        profile = params.get("profile", "")
+        body = self._read_json()
+        raw_context = body.get("context")
+        try:
+            conversation = self._book_conversations().get(profile, groups["conversation"])["conversation"]
+            context = self._validated_book_context(
+                conversation["bookId"], raw_context, body.get("bookId"))
+            turn = self._book_conversations().prepare_message(
+                profile, groups["conversation"], conversation["bookId"], body.get("text"), context)
+        except ApiError:
+            raise
+        try:
+            upstream = self.server.app.ai.book_chat_stream(turn["messages"], context)
+        except (LookupError, ValueError) as error:
+            code = str(error) if isinstance(error, LookupError) else "bad_request"
+            self._json_error(STATUS_BY_CODE.get(code, 502), code)
+            return
+
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self._ndjson({
+            "type": "meta",
+            "conversation": {"id": conversation["id"], "bookId": conversation["bookId"]},
+            "book": context["book"],
+            "contextScope": context["scope"],
+            "context": context,
+        })
+        answer = []
+        completed = False
+        try:
+            for raw_line in upstream:
+                try:
+                    event = json.loads(raw_line.decode("utf-8"))
+                    event_type = event.get("type") if isinstance(event, dict) else None
+                    if event_type == "delta" and isinstance(event.get("text"), str):
+                        answer.append(event["text"])
+                        self._ndjson({"type": "delta", "text": event["text"]})
+                    elif event_type == "done":
+                        completed = True
+                        break
+                    elif event_type == "error":
+                        code = event.get("code")
+                        if code not in ("ai_not_configured", "ai_upstream_error",
+                                        "ai_timeout", "ai_usage_limit"):
+                            code = "ai_upstream_error"
+                        self._ndjson({"type": "error", "code": code})
+                        return
+                except (UnicodeDecodeError, ValueError, AttributeError):
+                    self._ndjson({"type": "error", "code": "ai_upstream_error"})
+                    return
+            if not completed:
+                self._ndjson({"type": "error", "code": "ai_upstream_error"})
+                return
+            result = self._book_conversations().append_turn(
+                profile, groups["conversation"], turn["text"], "".join(answer), context)
+            self._ndjson({
+                "type": "done",
+                "conversation": result["conversation"],
+                "contextScope": context["scope"],
+            })
+        except TimeoutError:
+            self._ndjson({"type": "error", "code": "ai_timeout"})
+        except OSError:
+            self._ndjson({"type": "error", "code": "ai_upstream_error"})
+        finally:
+            upstream.close()
+        self.close_connection = True
+
+    def _validated_book_context(self, book_id, context, expected_book_id=None):
+        snapshot = self.server.app.book_context.snapshot(context)
+        compiled = self.server.app.book_context.compile(
+            book_id, snapshot["scope"],
+            chapter=(snapshot.get("anchor") or {}).get("chapter", 0),
+            sentence=(snapshot.get("anchor") or {}).get("sentence"),
+            start=(snapshot.get("anchor") or {}).get("start"),
+            end=(snapshot.get("anchor") or {}).get("end"),
+            expected_book_id=expected_book_id if expected_book_id is not None else snapshot["bookId"],
+            content_hash=snapshot["contentHash"],
+            max_chars=(snapshot.get("metadata") or {}).get("budgetChars"),
+        )
+        if snapshot != compiled:
+            raise ApiError("bad_request", "context snapshot does not match the bound Book content")
+        return snapshot
+
     # -- lookup / AI (ADR 0008) --------------------------------------------
 
     def api_lookup(self, params, groups):
@@ -532,6 +669,10 @@ class TtsHandler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
+
+    def _ndjson(self, payload):
+        self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+        self.wfile.flush()
 
     # -- /tts --------------------------------------------------------------
 

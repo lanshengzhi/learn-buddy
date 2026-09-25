@@ -15,6 +15,7 @@ SHA-256 identity, even when remote provider IDs are present. Both stores use
 atomically.
 """
 
+import json
 import os
 import re
 import time
@@ -22,6 +23,8 @@ import time
 from library import ApiError, _read_json, _write_json
 
 DEFAULT_TITLE = "新对话"
+MAX_MESSAGE_CHARS = 8000
+MAX_MESSAGES = 500
 _ID_RE = re.compile(r"[0-9]{6}")
 
 
@@ -73,6 +76,53 @@ class BookConversations:
         self.require_profile(profile_id)
         return {"conversation": self._require(profile_id, conversation_id)}
 
+    def prepare_message(self, profile_id, conversation_id, book_id, text, context_snapshot):
+        """Validate one turn without writing it and return its model boundary.
+
+        The snapshot is defensively copied here and sent to the model as data.
+        It is persisted only after a complete answer arrives, so a failed or
+        disconnected stream leaves the BookConversation unchanged.
+        """
+        self.require_profile(profile_id)
+        conversation = self._require(profile_id, conversation_id)
+        if conversation.get("bookId") != book_id:
+            raise ApiError("book_conversation_not_found", f"unknown book conversation: {conversation_id}")
+        if not isinstance(text, str) or not text.strip():
+            raise ApiError("bad_request", "text is required")
+        text = text.strip()
+        if len(text) > MAX_MESSAGE_CHARS:
+            raise ApiError("too_large", f"message exceeds {MAX_MESSAGE_CHARS} characters")
+        if len(conversation["messages"]) + 2 > MAX_MESSAGES:
+            raise ApiError("too_large", "book conversation is full")
+        if not isinstance(context_snapshot, dict):
+            raise ApiError("bad_request", "context snapshot is required")
+        snapshot = json.loads(json.dumps(context_snapshot, ensure_ascii=False))
+        if snapshot.get("bookId") != book_id:
+            raise ApiError("book_not_found", "context belongs to another book")
+        history = [
+            {"role": message["role"], "content": message["content"]}
+            for message in conversation["messages"]
+        ]
+        history.append({"role": "user", "content": text})
+        return {
+            "conversation": conversation,
+            "messages": history,
+            "text": text,
+            "contextSnapshot": snapshot,
+        }
+
+    def append_turn(self, profile_id, conversation_id, text, answer, context_snapshot):
+        """Atomically retain a completed turn with the context actually sent."""
+        if not isinstance(answer, str) or not answer.strip():
+            raise LookupError("ai_upstream_error")
+        stored = [
+            {"role": "user", "content": text.strip(), "at": self._timestamp(),
+             "contextSnapshot": context_snapshot},
+            {"role": "assistant", "content": answer.strip(), "at": self._timestamp(),
+             "contextSnapshot": context_snapshot},
+        ]
+        return self.append_messages(profile_id, conversation_id, stored)
+
     def activate(self, profile_id, conversation_id):
         self.require_profile(profile_id)
         conversation = self._require(profile_id, conversation_id)
@@ -111,6 +161,11 @@ class BookConversations:
                 "content": message["content"].strip(),
                 "at": message_at,
             }
+            if "contextSnapshot" in message:
+                if not isinstance(message["contextSnapshot"], dict):
+                    raise ApiError("bad_request", "contextSnapshot must be an object")
+                record["contextSnapshot"] = json.loads(json.dumps(
+                    message["contextSnapshot"], ensure_ascii=False))
             stored.append(record)
         conversation["messages"].extend(stored)
         if conversation.get("title") == DEFAULT_TITLE and stored[0]["role"] == "user":

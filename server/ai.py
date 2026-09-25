@@ -36,13 +36,15 @@ DEFAULT_EXPLANATION_LOCALE = "zh-CN"
 
 
 class AiProxy:
-    def __init__(self, cache_dir, url=None, timeout=AI_TIMEOUT_SECONDS, urlopen=None):
+    def __init__(self, cache_dir, url=None, timeout=AI_TIMEOUT_SECONDS, urlopen=None,
+                 stream_open=None):
         # url=None reads the environment; url="" forces the not-configured
         # degrade so tests never depend on the developer's environment.
         self.url = os.environ.get("LEARNBUDDY_AI_URL", "") if url is None else url
         self.cache_dir = cache_dir
         self.timeout = timeout
         self._urlopen = urlopen or _default_urlopen
+        self._stream_open = stream_open or _default_stream_open
 
     def explain(self, word, sentence, language, explanation_locale=DEFAULT_EXPLANATION_LOCALE):
         word = (word or "").strip()
@@ -67,16 +69,7 @@ class AiProxy:
         """One Chat turn: `messages` is exactly the current Conversation's
         text history plus the new user message (assembled by
         conversations.py, ADR 0015). Uncached by design."""
-        if not isinstance(messages, list) or not messages:
-            raise ValueError("messages must be a non-empty list")
-        cleaned = []
-        for message in messages:
-            if not isinstance(message, dict) or message.get("role") not in ("user", "assistant") \
-                    or not isinstance(message.get("content"), str) or not message["content"].strip():
-                raise ValueError("messages must be {role: user|assistant, content} entries")
-            cleaned.append({"role": message["role"], "content": message["content"]})
-        if cleaned[-1]["role"] != "user":
-            raise ValueError("the last message must be the new user message")
+        cleaned = self._clean_messages(messages)
         if not self.url:
             raise LookupError("ai_not_configured")
         body = json.dumps({"messages": cleaned}, ensure_ascii=False).encode("utf-8")
@@ -88,7 +81,45 @@ class AiProxy:
         )
         return self._urlopen(request, self.timeout)
 
+    def book_chat_stream(self, messages, context):
+        """Open the private sidecar's explicit NDJSON Book AI stream.
+
+        The caller owns parsing and persistence. This method only validates the
+        payload, opens the response, and maps transport/HTTP failures onto the
+        same fixed product codes as ordinary AI calls; it never exposes an
+        upstream response body.
+        """
+        cleaned = self._clean_messages(messages)
+        if not isinstance(context, dict) or not isinstance(context.get("text"), str) \
+                or context.get("dataOnly") is not True or not context.get("bookId") \
+                or not context.get("contentHash"):
+            raise ValueError("a valid BookContext snapshot is required")
+        if not self.url:
+            raise LookupError("ai_not_configured")
+        body = json.dumps({"messages": cleaned, "context": context}, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            self.url.rstrip("/") + "/book-chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        return self._stream_open(request, self.timeout)
+
     # -- internals ----------------------------------------------------------
+
+    @staticmethod
+    def _clean_messages(messages):
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("messages must be a non-empty list")
+        cleaned = []
+        for message in messages:
+            if not isinstance(message, dict) or message.get("role") not in ("user", "assistant") \
+                    or not isinstance(message.get("content"), str) or not message["content"].strip():
+                raise ValueError("messages must be {role: user|assistant, content} entries")
+            cleaned.append({"role": message["role"], "content": message["content"]})
+        if cleaned[-1]["role"] != "user":
+            raise ValueError("the last message must be the new user message")
+        return cleaned
 
     def _ask(self, word, sentence, language, explanation_locale):
         body = json.dumps(
@@ -128,6 +159,27 @@ class AiProxy:
                 os.unlink(tmp)
             except OSError:
                 pass
+
+
+def _default_stream_open(request, timeout, urlopen=None):
+    """Open a sidecar response without ever copying its error body outward."""
+    open_url = urlopen or urllib.request.urlopen
+    try:
+        return open_url(request, timeout=timeout)
+    except urllib.error.HTTPError as error:
+        code = "ai_upstream_error"
+        try:
+            payload = json.loads(error.read().decode("utf-8"))
+            if isinstance(payload, dict) and payload.get("error") == "usage_limit":
+                code = "ai_usage_limit"
+        except (ValueError, UnicodeDecodeError):
+            pass
+        raise LookupError(code) from error
+    except (TimeoutError, urllib.error.URLError) as error:
+        reason = getattr(error, "reason", None)
+        timed_out = isinstance(error, TimeoutError) or isinstance(reason, TimeoutError) \
+            or "timed out" in str(reason).lower()
+        raise LookupError("ai_timeout" if timed_out else "ai_upstream_error") from error
 
 
 def _default_urlopen(request, timeout, urlopen=None):
