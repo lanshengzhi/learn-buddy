@@ -3,3 +3,6 @@
 sudachipy==0.6.11
 sudachidict_core==20260723
 jieba==0.42.1
+# Optional, isolated NotebookLM worker runtime (issue #73). The worker
+# imports this lazily; LearnBuddy host code never depends on its API.
+notebooklm-py==0.8.2

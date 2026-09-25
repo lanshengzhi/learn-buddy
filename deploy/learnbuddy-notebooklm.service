@@ -1,0 +1,26 @@
+[Unit]
+Description=LearnBuddy private NotebookLM provider worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The worker is the only process that reads NotebookLM profile credentials.
+# It binds to loopback; the host calls it only through /notebooklm/status.
+WorkingDirectory=/opt/learnbuddy
+User=learnbuddy
+Group=learnbuddy
+Environment=NOTEBOOKLM_HOME=/var/lib/learnbuddy/notebooklm
+Environment=NOTEBOOKLM_PROFILE=learnbuddy
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/learnbuddy/.venv/bin/python3 /opt/learnbuddy/server/notebooklm_worker.py --host 127.0.0.1 --port 8124
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/learnbuddy/notebooklm
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

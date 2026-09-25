@@ -51,6 +51,7 @@ from library import ApiError, Library
 from book_context import BookContextCompiler
 from conversations import Conversations
 from book_ai import BookConversations, NotebookRefs
+from notebooklm_host import NotebookLMProxy
 import reading
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -187,13 +188,15 @@ ROUTE_TABLE = (
     ("GET", re.compile(r"^/lookup$"), "api_lookup"),
     ("POST", re.compile(r"^/lookup/check$"), "api_lookup_check"),
     ("POST", re.compile(r"^/ai$"), "api_ai"),
+    ("GET", re.compile(r"^/notebooklm/status$"), "api_notebooklm_status"),
 )
 
 
 class TtsServer:
     def __init__(self, static_dir=DEFAULT_STATIC_DIR, cache_dir=DEFAULT_CACHE_DIR,
                  synthesizer=None, azure=None, pace_interval=PACE_INTERVAL_SECONDS,
-                 sleep=time.sleep, normalizer=None, data_dir=None, library=None):
+                 sleep=time.sleep, normalizer=None, data_dir=None, library=None,
+                 notebooklm=None):
         self.static_dir = os.path.abspath(static_dir)
         self.cache = AudioCache(cache_dir)
         self.synthesizer = synthesizer or EdgeTtsSynthesizer()
@@ -215,6 +218,10 @@ class TtsServer:
         self.notebook_refs = NotebookRefs(data_dir, self.library.require_book)
         self.dicts = Dicts(os.path.join(data_dir, "dicts"))
         self.ai = AiProxy(os.path.join(data_dir, "ai-cache"))
+        # The optional NotebookLM process is deliberately a separate, private
+        # service. The host only proxies its safe status and never sees its
+        # credentials or profile files.
+        self.notebooklm = notebooklm or NotebookLMProxy()
 
     def _use_azure(self):
         """Azure is primary exactly when it holds a subscription key."""
@@ -467,6 +474,11 @@ class TtsHandler(BaseHTTPRequestHandler):
             self._json_error(STATUS_BY_CODE.get(code, 502), code)
             return
         self._json_response(200, answer)
+
+    def api_notebooklm_status(self, params, groups):
+        # This is a status-only seam for the optional provider. A missing or
+        # stopped worker is a normal safe result, not a host failure.
+        self._json_response(200, self.server.app.notebooklm.status())
 
     def _lookup(self, lang, word):
         dicts = self.server.app.dicts

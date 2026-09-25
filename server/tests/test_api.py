@@ -323,6 +323,30 @@ class TestBooksEndpoint(ApiTestCase):
         self.assertIn(b'"error": "too_large"', response)
 
 
+class TestNotebookLMStatusEndpoint(ApiTestCase):
+    def test_browser_sees_only_safe_status(self):
+        self.harness.httpd.app.notebooklm.url = ""
+        status, headers, body = self.get("/notebooklm/status")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertEqual(json.loads(body), {
+            "provider": "notebooklm",
+            "configured": False,
+            "available": False,
+            "status": "not_configured",
+            "error": "notebooklm_not_configured",
+        })
+        self.assertNotIn("token", body.decode("utf-8").lower())
+        self.assertNotIn("cookie", body.decode("utf-8").lower())
+
+    def test_local_reader_endpoints_survive_an_unconfigured_worker(self):
+        status, _, _ = self.get("/profiles")
+        self.assertEqual(status, 200)
+        status, _, body = self.get("/books?profile=dad")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["books"], [])
+
+
 class TestRouting(ApiTestCase):
     def test_unknown_path_is_not_found(self):
         status, _, body = self.get("/nope")
