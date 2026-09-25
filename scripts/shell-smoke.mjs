@@ -491,6 +491,15 @@ check('narrow: Learn cards and playback return after editor blur',
   && learnGeometryBlurred.playback.bottom > 0);
 
 // ---------- old shell untouched ----------
+// The legacy page plays sentences and opens a Book, and that writes a Reading
+// position for whichever Person the context holds. Return the wide context to
+// the first Person before booting `/` so this parity flow can never leave a
+// position for the second Person the #46 assertion above just checked —
+// otherwise every repeat run of this smoke fails that assertion against its
+// own persisted data directory.
+await wp.locator('#identity-chip').click();
+await wp.locator('#profile-choices button').first().click();
+await wp.waitForSelector('body[data-ready]');
 const op = await boot(wide, '/', 'old');
 check('old: no shell chrome at /', (await op.locator('#shell-nav').count()) === 0);
 check('old: reader intact at /', (await op.locator('#text-input').count()) === 1);
