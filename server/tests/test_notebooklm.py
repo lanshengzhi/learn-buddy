@@ -1,16 +1,21 @@
 import json
 import os
 import shutil
+import sys
 import tempfile
 import threading
+import types
 import unittest
+from unittest import mock
 from http.server import ThreadingHTTPServer
 
 import textseg
 from book_ai import NotebookRefs, NotebookSync, StudyJobs
 from library import ApiError, Library
 from notebooklm_host import NotebookLMProxy
-from notebooklm_worker import NotebookLMWorkerApp, NotebookLMWorkerHandler, WorkerServer
+from notebooklm_worker import (
+    NotebookLMJobProvider, NotebookLMWorkerApp, NotebookLMWorkerHandler, WorkerServer,
+)
 
 
 class FakeWorkerHandler(NotebookLMWorkerHandler):
@@ -26,17 +31,21 @@ def _fixture(name):
 
 
 class DeterministicJobProvider:
-    def __init__(self, result):
+    def __init__(self, result, sequence=None):
         self.result = dict(result)
+        self.sequence = list(sequence or [])
         self.calls = []
+
+    def _next(self):
+        return dict(self.sequence.pop(0) if self.sequence else self.result)
 
     def start_job(self, **request):
         self.calls.append(dict(request))
-        return dict(self.result)
+        return self._next()
 
     def reconcile_job(self, **request):
         self.calls.append({"reconcile": dict(request)})
-        return dict(self.result)
+        return self._next()
 
     def cancel_job(self, **request):
         self.calls.append({"cancel": dict(request)})
@@ -102,13 +111,17 @@ class TestNotebookLMProxy(unittest.TestCase):
             "bookId": "a" * 64, "bookContentHash": "a" * 64,
         }
 
+        remote = {"provider": "notebooklm", "notebookId": "notebook-1",
+                  "sourceId": "source-1", "artifactId": "artifact-1"}
+
         def urlopen(request, timeout):
             calls.append(request)
             return _Response({
                 "service": "notebooklm", **request_identity, "state": "ready",
+                "remote": remote,
                 "artifact": {
                     "remoteArtifactId": "artifact-1", "contentType": "text/plain",
-                    "byteSize": 12, "rawUpstreamBody": "must-not-leak",
+                    "byteSize": 12, "remote": remote, "rawUpstreamBody": "must-not-leak",
                 },
             })
 
@@ -117,7 +130,8 @@ class TestNotebookLMProxy(unittest.TestCase):
             job_id=request_identity["jobId"], request_id=request_identity["requestId"],
             book_id=request_identity["bookId"], content_hash=request_identity["bookContentHash"],
             person_id=request_identity["personId"], artifact_type="learning_report",
-            context_scope={"scope": "chapter"})
+            context_scope={"scope": "chapter"}, context_text="chapter text",
+            notebook_id="notebook-1", source_id="source-1")
         self.assertEqual(result["state"], "ready")
         self.assertNotIn("rawUpstreamBody", result["artifact"])
         self.assertEqual(calls[0].full_url, "http://127.0.0.1:8124/operations/study-jobs")
@@ -130,8 +144,8 @@ class TestNotebookLMProxy(unittest.TestCase):
         proxy = NotebookLMProxy(url="http://127.0.0.1:8124", urlopen=_connection_error)
         with self.assertRaises(LookupError) as caught:
             proxy.job_request(**identity, artifact_type="learning_report", context_scope={})
-        self.assertEqual(caught.exception.outcome, "failed")
-        self.assertEqual(caught.exception.code, "notebooklm_unavailable")
+        self.assertEqual(caught.exception.outcome, "unknown")
+        self.assertEqual(caught.exception.code, "notebooklm_job_unknown")
 
         proxy = NotebookLMProxy(url="http://127.0.0.1:8124", urlopen=lambda request, timeout: _Response({
             "service": "notebooklm", **{
@@ -230,6 +244,41 @@ class TestNotebookLMSyncBoundary(unittest.TestCase):
         self.assertEqual(self.refs.get(second_id)["bookId"], second_id)
 
 
+class TestStudyJobRunner(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.library = Library(self.root, ja_tokenizer=textseg.tokenize_rule, now=lambda: 1000.0)
+        self.book_id = self.library.add_book("dad", "nav.epub", _fixture("nav.epub"))[1]["book"]["id"]
+        self.jobs = StudyJobs(self.root, self.library.require_profile,
+                              self.library.require_book, now=lambda: 1000.0)
+        self.refs = NotebookRefs(self.root, self.library.require_book, now=lambda: 1000.0)
+        self.refs.ensure(self.book_id, "notebook-1", "source-1")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_illegal_scope_and_unconfirmed_whole_book_never_reach_provider(self):
+        from book_ai import StudyJobRunner
+        from book_context import BookContextCompiler
+
+        provider = DeterministicJobProvider({"state": "waiting_remote"})
+        runner = StudyJobRunner(
+            self.library, BookContextCompiler(self.library), self.jobs, self.refs, provider)
+        with self.assertRaises(ApiError) as caught:
+            runner.create("dad", self.book_id, {
+                "requestId": "bad-scope", "artifactType": "audio_explanation",
+                "contextScope": {"scope": "selection", "anchor": {"start": 0, "end": 1}},
+            })
+        self.assertEqual(caught.exception.code, "bad_request")
+        with self.assertRaises(ApiError) as caught:
+            runner.create("dad", self.book_id, {
+                "requestId": "book-no-confirm", "artifactType": "learning_report",
+                "contextScope": {"scope": "book", "anchor": {}},
+            })
+        self.assertEqual(caught.exception.code, "cloud_confirmation_required")
+        self.assertEqual(provider.calls, [])
+
+
 class TestStudyJobStateMachine(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
@@ -265,9 +314,12 @@ class TestStudyJobStateMachine(unittest.TestCase):
         self.assertEqual([item["to"] for item in job["history"]],
                          ["queued", "preparing", "uploading", "waiting_remote", "downloading"])
         self.assertFalse(job["terminal"])
+        remote = {"provider": "notebooklm", "notebookId": "notebook-1",
+                  "sourceId": "source-1", "artifactId": "artifact-1"}
         self.assertEqual(
             self.jobs.transition("dad", first["id"], "ready",
-                                 artifact_result={"remoteArtifactId": "artifact-1"})["successful"],
+                                 artifact_result={"remoteArtifactId": "artifact-1", "remote": remote},
+                                 remote_provenance=remote)["successful"],
             True)
 
     def test_all_terminal_states_and_fixed_errors_are_validated(self):
@@ -320,8 +372,12 @@ class TestStudyJobStateMachine(unittest.TestCase):
         self.jobs.transition("dad", job["id"], "uploading")
         self.jobs.transition("dad", job["id"], "waiting_remote")
         self.jobs.transition("dad", job["id"], "downloading")
+        remote = {"provider": "notebooklm", "notebookId": "notebook-1",
+                  "sourceId": "source-1", "artifactId": "remote-1"}
         ready = self.jobs.transition(
-            "dad", job["id"], "ready", artifact_result={"remoteArtifactId": "remote-1"})
+            "dad", job["id"], "ready",
+            artifact_result={"remoteArtifactId": "remote-1", "remote": remote},
+            remote_provenance=remote)
         self.assertTrue(ready["successful"])
         self.assertEqual(ready["artifactResult"]["remoteArtifactId"], "remote-1")
 
@@ -338,6 +394,136 @@ class TestStudyJobStateMachine(unittest.TestCase):
         repeated = self.jobs.create("dad", self.book_id, dict(self.request))
         self.assertEqual(repeated["job"]["state"], "unknown")
         self.assertEqual(repeated["job"]["requestId"], job["requestId"])
+
+
+class _FakeNotebookLMContext:
+    def __init__(self, client):
+        self.client = client
+
+    async def __aenter__(self):
+        return self.client
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class _FakeNotebookLMClient:
+    calls = []
+
+    @classmethod
+    def from_storage(cls, profile=None):
+        return _FakeNotebookLMContext(cls())
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    def _record(self, name, **kwargs):
+        self.calls.append({"name": name, **kwargs})
+
+    @property
+    def sources(self):
+        return self
+
+    @property
+    def artifacts(self):
+        return self
+
+    @property
+    def mind_maps(self):
+        return self
+
+    async def add_text(self, notebook_id, title, content, wait=True, idempotent=False):
+        self._record("add_text", notebook_id=notebook_id, title=title, content=content,
+                      wait=wait, idempotent=idempotent)
+        return types.SimpleNamespace(id="scope-source-1")
+
+    async def generate_study_guide(self, notebook_id, source_ids=None):
+        self._record("generate_study_guide", notebook_id=notebook_id, source_ids=source_ids)
+        return types.SimpleNamespace(task_id="report-1")
+
+    async def generate_flashcards(self, notebook_id, source_ids=None):
+        self._record("generate_flashcards", notebook_id=notebook_id, source_ids=source_ids)
+        return types.SimpleNamespace(task_id="flashcards-1")
+
+    async def generate_audio(self, notebook_id, source_ids=None):
+        self._record("generate_audio", notebook_id=notebook_id, source_ids=source_ids)
+        return types.SimpleNamespace(task_id="audio-1")
+
+    async def generate(self, notebook_id, source_ids=None, kind=None, wait=True):
+        self._record("generate_mind_map", notebook_id=notebook_id, source_ids=source_ids,
+                      kind=kind, wait=wait)
+        return types.SimpleNamespace(id="mind-map-1")
+
+    async def poll_status(self, notebook_id, artifact_id):
+        self._record("poll_status", notebook_id=notebook_id, artifact_id=artifact_id)
+        return types.SimpleNamespace(is_complete=True, is_failed=False)
+
+    async def _download(self, method, notebook_id, path, artifact_id):
+        self._record(method, notebook_id=notebook_id, path=path, artifact_id=artifact_id)
+        with open(path, "wb") as handle:
+            handle.write(b"artifact")
+
+    async def download_report(self, notebook_id, path, artifact_id):
+        await self._download("download_report", notebook_id, path, artifact_id)
+
+    async def download_mind_map(self, notebook_id, path, artifact_id):
+        await self._download("download_mind_map", notebook_id, path, artifact_id)
+
+    async def download_flashcards(self, notebook_id, path, artifact_id, output_format="json"):
+        self._record("download_flashcards", notebook_id=notebook_id, path=path,
+                      artifact_id=artifact_id, output_format=output_format)
+        with open(path, "wb") as handle:
+            handle.write(b"artifact")
+
+    async def download_audio(self, notebook_id, path, artifact_id):
+        await self._download("download_audio", notebook_id, path, artifact_id)
+
+
+class TestNotebookLMJobProvider(unittest.TestCase):
+    def test_all_four_types_use_the_documented_082_calls(self):
+        fake = types.SimpleNamespace(
+            NotebookLMClient=_FakeNotebookLMClient,
+            MindMapKind=types.SimpleNamespace(INTERACTIVE="interactive"),
+        )
+        provider = NotebookLMJobProvider()
+        generation_names = {
+            "learning_report": "generate_study_guide",
+            "mind_map": "generate_mind_map",
+            "flashcard_set": "generate_flashcards",
+            "audio_explanation": "generate_audio",
+        }
+        download_names = {
+            "learning_report": "download_report",
+            "mind_map": "download_mind_map",
+            "flashcard_set": "download_flashcards",
+            "audio_explanation": "download_audio",
+        }
+        for artifact_type in generation_names:
+            _FakeNotebookLMClient.calls = []
+            request = {
+                "personId": "dad", "requestId": f"request-{artifact_type}",
+                "bookId": "a" * 64, "bookContentHash": "a" * 64,
+                "artifactType": artifact_type, "notebookId": "notebook-1", "sourceId": "source-1",
+                "contextScope": {"scope": "chapter"}, "contextText": "bounded chapter text",
+            }
+            with mock.patch.dict(sys.modules, {"notebooklm": fake}):
+                started = provider.start_job(**request)
+                request["remoteProvenance"] = started["remote"]
+                ready = provider.reconcile_job(**request)
+            self.assertEqual(started["state"], "waiting_remote")
+            self.assertEqual(ready["state"], "ready")
+            self.assertEqual(ready["artifact"]["byteSize"], 8)
+            self.assertEqual(ready["remote"]["sourceId"], "source-1")
+            self.assertEqual(ready["remote"]["scopeSourceId"], "scope-source-1")
+            names = [call["name"] for call in _FakeNotebookLMClient.calls]
+            self.assertEqual(names[0:2], ["add_text", generation_names[artifact_type]])
+            self.assertEqual(names[-2:], ["poll_status", download_names[artifact_type]])
+            add_text = _FakeNotebookLMClient.calls[0]
+            self.assertTrue(add_text["wait"])
+            self.assertTrue(add_text["idempotent"])
 
 
 class TestNotebookLMWorker(unittest.TestCase):
@@ -382,9 +568,12 @@ class TestNotebookLMWorker(unittest.TestCase):
             storage = os.path.join(root, "storage_state.json")
             with open(storage, "w", encoding="utf-8") as handle:
                 handle.write("{}")
+            remote = {"provider": "notebooklm", "notebookId": "notebook-1",
+                      "sourceId": "source-1", "artifactId": "artifact-1"}
             provider = DeterministicJobProvider({
-                "state": "ready", "error": None,
-                "artifact": {"remoteArtifactId": "artifact-1", "contentType": "text/plain", "byteSize": 12},
+                "state": "ready", "error": None, "remote": remote,
+                "artifact": {"remoteArtifactId": "artifact-1", "contentType": "text/plain",
+                             "byteSize": 12, "remote": remote},
             })
             app = NotebookLMWorkerApp(storage_path=storage, provider=DeterministicProvider(),
                                       job_provider=provider)
@@ -392,6 +581,7 @@ class TestNotebookLMWorker(unittest.TestCase):
                 "jobId": "job-1", "requestId": "study-job:stable-1", "personId": "dad",
                 "bookId": "a" * 64, "bookContentHash": "a" * 64,
                 "artifactType": "learning_report", "contextScope": {"scope": "chapter"},
+                "notebookId": "notebook-1", "sourceId": "source-1", "contextText": "chapter text",
             }
             first = app.submit_job(request)
             repeated = app.submit_job(request)
@@ -401,7 +591,8 @@ class TestNotebookLMWorker(unittest.TestCase):
             self.assertEqual(repeated["artifact"]["remoteArtifactId"], "artifact-1")
             restarted_app = NotebookLMWorkerApp(storage_path=storage, provider=DeterministicProvider(),
                                                 job_provider=provider)
-            restarted = restarted_app.reconcile_job(request)
+            reconcile_request = dict(request, remoteProvenance=remote)
+            restarted = restarted_app.reconcile_job(reconcile_request)
             self.assertEqual(restarted, first)
             self.assertEqual(provider.calls[-1]["reconcile"]["requestId"], "study-job:stable-1")
         finally:

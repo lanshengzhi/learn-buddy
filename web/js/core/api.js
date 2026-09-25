@@ -298,6 +298,33 @@ export class ServerApi {
     }
   }
 
+  // -- NotebookLM StudyJobs (#76) -------------------------------------------
+
+  async createStudyJob(bookId, request, { confirmWholeBook = false } = {}) {
+    return this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/study-jobs`),
+      { method: 'POST', body: { request, confirmWholeBook } },
+    );
+  }
+
+  async getStudyJob(jobId) {
+    return this.#request(this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}`));
+  }
+
+  async reconcileStudyJob(jobId) {
+    return this.#request(
+      this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/reconcile`),
+      { method: 'POST', body: {} },
+    );
+  }
+
+  async cancelStudyJob(jobId) {
+    return this.#request(
+      this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/cancel`),
+      { method: 'POST', body: { confirm: true } },
+    );
+  }
+
   // -- Lookup / AI (ADR 0008) ------------------------------------------------
 
   async lookup(lang, word, signal) {

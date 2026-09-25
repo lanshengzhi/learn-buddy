@@ -127,7 +127,8 @@ class NotebookLMProxy:
         return result
 
     def job_request(self, *, job_id, request_id, book_id, content_hash, person_id,
-                    artifact_type, context_scope):
+                    artifact_type, context_scope, context_text="", notebook_id="notebook-1",
+                    source_id="source-1"):
         """Submit or reconcile one stable remote job request.
 
         The host persists ``request_id`` before this call.  Repeating the exact
@@ -137,15 +138,19 @@ class NotebookLMProxy:
         return self._job_operation(
             "submit", job_id=job_id, request_id=request_id, book_id=book_id,
             content_hash=content_hash, person_id=person_id, artifact_type=artifact_type,
-            context_scope=context_scope)
+            context_scope=context_scope, context_text=context_text,
+            notebook_id=notebook_id, source_id=source_id)
 
     def reconcile_job(self, *, job_id, request_id, book_id, content_hash, person_id,
-                      artifact_type, context_scope):
+                      artifact_type, context_scope, context_text="", notebook_id="notebook-1",
+                      source_id="source-1", remote_provenance=None):
         """Recheck stable identity after a worker restart without resubmitting."""
         return self._job_operation(
             "reconcile", job_id=job_id, request_id=request_id, book_id=book_id,
             content_hash=content_hash, person_id=person_id, artifact_type=artifact_type,
-            context_scope=context_scope)
+            context_scope=context_scope, context_text=context_text,
+            notebook_id=notebook_id, source_id=source_id,
+            remote_provenance=remote_provenance)
 
     def cancel_job(self, *, job_id, request_id, book_id, content_hash, person_id):
         return self._job_operation(
@@ -169,7 +174,12 @@ class NotebookLMProxy:
             payload.update({
                 "artifactType": identity["artifact_type"],
                 "contextScope": identity["context_scope"],
+                "contextText": identity["context_text"],
+                "notebookId": identity["notebook_id"],
+                "sourceId": identity["source_id"],
             })
+            if action == "reconcile":
+                payload["remoteProvenance"] = identity["remote_provenance"]
         path = {"submit": _JOB_PATH, "reconcile": f"{_JOB_PATH}/reconcile",
                 "cancel": f"{_JOB_PATH}/cancel"}[action]
         request = urllib.request.Request(
@@ -182,6 +192,10 @@ class NotebookLMProxy:
                 result = json.loads(response.read().decode("utf-8"))
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError,
                 ValueError, UnicodeDecodeError) as error:
+            if action in ("submit", "cancel"):
+                # The worker may have committed generation or accepted a cancel
+                # before the response was lost. Never authorize resubmission.
+                raise NotebookLMOperationError("notebooklm_job_unknown", "unknown") from error
             raise NotebookLMOperationError("notebooklm_unavailable", "failed") from error
         return self._validate_job_result(result, payload)
 
@@ -197,13 +211,27 @@ class NotebookLMProxy:
         error = result.get("error")
         if error is not None and error not in _JOB_ERRORS:
             raise NotebookLMOperationError("notebooklm_job_unknown", "unknown")
-        controlled = {"state": state, "error": error, "artifact": None}
+        remote = result.get("remote")
+        remote_fields = ("provider", "notebookId", "sourceId", "scopeSourceId", "artifactId")
+        if remote is not None:
+            if not isinstance(remote, dict) or remote.get("provider") != "notebooklm" \
+                    or remote.get("notebookId") != request.get("notebookId") \
+                    or remote.get("sourceId") != request.get("sourceId") \
+                    or not all(isinstance(remote.get(key), str) and remote[key].strip()
+                               for key in ("notebookId", "sourceId", "artifactId")) \
+                    or any(key not in remote_fields for key in remote) \
+                    or (remote.get("scopeSourceId") is not None
+                        and (not isinstance(remote.get("scopeSourceId"), str)
+                             or not remote["scopeSourceId"].strip())):
+                raise NotebookLMOperationError("notebooklm_job_unknown", "unknown")
+        controlled = {"state": state, "error": error, "artifact": None, "remote": remote}
         if state == "ready":
             artifact = result.get("artifact")
-            allowed = ("remoteArtifactId", "contentType", "byteSize")
-            if not isinstance(artifact, dict) \
+            allowed = ("remoteArtifactId", "contentType", "byteSize", "remote")
+            if not isinstance(remote, dict) or not isinstance(artifact, dict) \
                     or not isinstance(artifact.get("remoteArtifactId"), str) \
-                    or not artifact["remoteArtifactId"].strip() \
+                    or artifact["remoteArtifactId"] != remote["artifactId"] \
+                    or artifact.get("remote") != remote \
                     or ("contentType" in artifact and not isinstance(artifact["contentType"], str)) \
                     or ("byteSize" in artifact and (not isinstance(artifact["byteSize"], int)
                                                     or isinstance(artifact["byteSize"], bool)

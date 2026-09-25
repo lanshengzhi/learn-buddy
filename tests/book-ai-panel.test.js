@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BOOK_AI_QUICK_PROMPTS,
+  STUDY_ARTIFACT_TYPES,
   BookAiPanelController,
   BookAiPanelState,
 } from '../web/js/core/book-ai-panel.js';
@@ -82,6 +83,28 @@ test('only a ready local artifact can enter center preview', () => {
   assert.match(panel.state.error, /已完成/);
   assert.equal(panel.openArtifactPreview({ status: 'ready', type: 'report' }), true);
   assert.equal(panel.state.panelState, BookAiPanelState.ArtifactPreview);
+});
+
+test('the four artifact types expose only their legal scopes', () => {
+  assert.deepEqual(STUDY_ARTIFACT_TYPES.map((artifact) => [artifact.id, artifact.scopes]), [
+    ['learning_report', ['chapter', 'book']],
+    ['mind_map', ['chapter', 'book']],
+    ['flashcard_set', ['selection', 'chapter', 'book']],
+    ['audio_explanation', ['chapter', 'book']],
+  ]);
+});
+
+test('job status requires a real product job and retains visible type and scope', () => {
+  const panel = new BookAiPanelController();
+  panel.openAsk(identity);
+  assert.equal(panel.openJob(), false);
+  assert.equal(panel.state.panelState, BookAiPanelState.Ask);
+  assert.equal(panel.openJob({
+    status: 'waiting_remote', artifactType: 'flashcard_set',
+    contextScope: { scope: 'selection', anchor: { start: 2, end: 4 } },
+  }), true);
+  assert.equal(panel.state.job.artifactType, 'flashcard_set');
+  assert.equal(panel.state.job.contextScope.scope, 'selection');
 });
 
 test('the agreed quick prompts are fixed and integration-ready', () => {

@@ -530,6 +530,36 @@ body[data-face="learn"] #back-to-book {
   cursor: pointer;
 }
 
+.book-ai-artifact-types {
+  flex: none;
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.book-ai-artifact-types legend { padding: 0 4px; }
+#book-ai-artifact-buttons { display: flex; flex-wrap: wrap; gap: 5px; }
+#book-ai-artifact-buttons button {
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+#book-ai-artifact-buttons button.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+#book-ai-artifact-scope-label { display: grid; gap: 4px; }
+#book-ai-artifact-scope { max-width: 100%; }
+#book-ai-whole-book-confirm { display: flex; gap: 6px; align-items: flex-start; }
+#book-ai-whole-book-confirm[hidden] { display: none; }
+
 .book-ai-conversations {
   flex: none;
   font-size: 12px;

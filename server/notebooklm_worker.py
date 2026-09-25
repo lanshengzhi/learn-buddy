@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Private NotebookLM worker process (issue #73).
+"""Private NotebookLM worker process (issue #73, artifact jobs #76).
 
-This process is intentionally tiny: it owns no LearnBuddy Book, Person,
-Conversation, or reading-position state. It exposes only a loopback health
-endpoint for the Python host. Future provider operations will be added behind
-this same process boundary; they must never import credentials into the host.
+This process owns no LearnBuddy Book, Person, Conversation, or reading-position
+state. It receives an explicit, content-hash-bound generation request, performs
+the real ``notebooklm-py`` calls, and returns only controlled statuses and
+remote identifiers to the host.
 """
 
 import argparse
@@ -27,7 +27,7 @@ class NotebookLMWorkerApp:
         self.storage_path = storage_path
         self.token_path = token_path
         self.provider = provider or NotebookLMSyncProvider()
-        self.job_provider = job_provider or DeterministicJobProvider()
+        self.job_provider = job_provider or NotebookLMJobProvider()
         self.max_source_bytes = max_source_bytes
         self._jobs = {}
         self._jobs_lock = threading.Lock()
@@ -71,10 +71,20 @@ class NotebookLMWorkerApp:
     def submit_job(self, request):
         """Reconcile stable job identity in worker memory and return a safe DTO."""
         string_fields = ("jobId", "requestId", "personId", "bookId", "bookContentHash",
-                          "artifactType")
+                          "artifactType", "notebookId", "sourceId", "contextText")
+        scope = request.get("contextScope") if isinstance(request, dict) else None
+        legal_scopes = {
+            "learning_report": ("chapter", "book"),
+            "mind_map": ("chapter", "book"),
+            "flashcard_set": ("selection", "chapter", "book"),
+            "audio_explanation": ("chapter", "book"),
+        }
         if not isinstance(request, dict) or any(not isinstance(request.get(key), str)
                                                  or not request[key].strip() for key in string_fields) \
-                or not isinstance(request.get("contextScope"), dict):
+                or not isinstance(scope, dict) or scope.get("scope") not in legal_scopes.get(
+                    request.get("artifactType"), ()) \
+                or re.fullmatch(r"[0-9a-f]{64}", request.get("bookId", "")) is None \
+                or request.get("bookId") != request.get("bookContentHash"):
             return self._job_result(request, "failed", "notebooklm_source_rejected")
         if not self.status().get("configured"):
             return self._job_result(request, "not_configured", "notebooklm_not_configured")
@@ -83,7 +93,7 @@ class NotebookLMWorkerApp:
             existing = self._jobs.get(key)
             if existing is not None:
                 return self._job_result(request, existing["state"], existing.get("error"),
-                                        existing.get("artifact"))
+                                        existing.get("artifact"), existing.get("remote"))
         try:
             result = self.job_provider.start_job(**request)
         except Exception as error:
@@ -93,32 +103,46 @@ class NotebookLMWorkerApp:
             existing = self._jobs.get(key)
             if existing is not None:
                 return self._job_result(request, existing["state"], existing.get("error"),
-                                        existing.get("artifact"))
+                                        existing.get("artifact"), existing.get("remote"))
             self._jobs[key] = dict(result)
-        return self._job_result(request, result["state"], result.get("error"), result.get("artifact"))
+        return self._job_result(request, result["state"], result.get("error"),
+                                result.get("artifact"), result.get("remote"))
 
     def reconcile_job(self, request):
-        required = ("jobId", "requestId", "personId", "bookId", "bookContentHash")
+        required = ("jobId", "requestId", "personId", "bookId", "bookContentHash",
+                    "artifactType", "notebookId", "sourceId", "contextText")
+        remote = request.get("remoteProvenance") if isinstance(request, dict) else None
         if not isinstance(request, dict) or any(not isinstance(request.get(key), str)
-                                                 or not request[key].strip() for key in required):
+                                                 or not request[key].strip() for key in required) \
+                or not isinstance(request.get("contextScope"), dict) \
+                or not isinstance(remote, dict) \
+                or remote.get("provider") != "notebooklm" \
+                or remote.get("notebookId") != request.get("notebookId") \
+                or remote.get("sourceId") != request.get("sourceId") \
+                or not isinstance(remote.get("artifactId"), str):
             return self._job_result(request, "failed", "notebooklm_source_rejected")
         key = (request["personId"], request["requestId"])
         with self._jobs_lock:
             existing = self._jobs.get(key)
-        if existing is not None:
+        if existing is not None and existing["state"] not in ("waiting_remote", "queued", "preparing"):
             return self._job_result(request, existing["state"], existing.get("error"),
-                                    existing.get("artifact"))
-        # A restarted worker has no local receipt.  The stable request identity
+                                    existing.get("artifact"), existing.get("remote"))
+        # A restarted worker has no local receipt. The stable request identity
         # must be checked remotely; an adapter that cannot do so reports unknown.
         try:
-            result = self.job_provider.reconcile_job(**request)
+            # Make the durable host receipt authoritative across a worker
+            # restart; the in-memory key is only a duplicate-call fast path.
+            receipt = dict(request)
+            receipt["remoteProvenance"] = remote
+            result = self.job_provider.reconcile_job(**receipt)
         except AttributeError:
             return self._job_result(request, "unknown", "notebooklm_job_unknown")
         except Exception as error:
             result = _job_error_outcome(error)
         with self._jobs_lock:
             self._jobs[key] = dict(result)
-        return self._job_result(request, result["state"], result.get("error"), result.get("artifact"))
+        return self._job_result(request, result["state"], result.get("error"),
+                                result.get("artifact"), result.get("remote"))
 
     def cancel_job(self, request):
         required = ("jobId", "requestId", "personId", "bookId", "bookContentHash")
@@ -132,10 +156,11 @@ class NotebookLMWorkerApp:
             return self._job_result(request, "unknown", "notebooklm_job_unknown")
         if existing["state"] in ("ready", "failed", "cancelled"):
             return self._job_result(request, existing["state"], existing.get("error"),
-                                    existing.get("artifact"))
+                                    existing.get("artifact"), existing.get("remote"))
         if existing["state"] == "unknown":
             return self._job_result(request, "unknown", "notebooklm_job_unknown")
-        cancelled = {"state": "cancelled", "error": None, "artifact": None}
+        cancelled = {"state": "cancelled", "error": None, "artifact": None,
+                     "remote": existing.get("remote")}
         try:
             self.job_provider.cancel_job(**request)
         except Exception:
@@ -147,7 +172,7 @@ class NotebookLMWorkerApp:
         return self._job_result(request, **cancelled)
 
     @staticmethod
-    def _job_result(request, state, error=None, artifact=None):
+    def _job_result(request, state, error=None, artifact=None, remote=None):
         result = {
             "service": "notebooklm",
             "jobId": request.get("jobId"),
@@ -157,12 +182,26 @@ class NotebookLMWorkerApp:
             "bookContentHash": request.get("bookContentHash"),
             "state": state,
         }
+        if remote is None and isinstance(request.get("remoteProvenance"), dict):
+            remote = request["remoteProvenance"]
+        if isinstance(remote, dict):
+            allowed = ("provider", "notebookId", "sourceId", "scopeSourceId", "artifactId")
+            if all(isinstance(remote.get(key), str) and remote[key].strip()
+                   for key in ("provider", "notebookId", "sourceId", "artifactId")) \
+                    and not any(key not in allowed for key in remote) \
+                    and (remote.get("scopeSourceId") is None
+                         or (isinstance(remote.get("scopeSourceId"), str)
+                             and remote["scopeSourceId"].strip())):
+                result["remote"] = {key: remote[key] for key in allowed if key in remote}
         if error:
             result["error"] = error
         if state == "ready" and isinstance(artifact, dict):
-            allowed = ("remoteArtifactId", "contentType", "byteSize")
+            allowed = ("remoteArtifactId", "contentType", "byteSize", "remote")
             if isinstance(artifact.get("remoteArtifactId"), str) \
-                    and artifact["remoteArtifactId"].strip():
+                    and artifact["remoteArtifactId"].strip() \
+                    and isinstance(result.get("remote"), dict) \
+                    and artifact.get("remote") == result["remote"] \
+                    and artifact["remoteArtifactId"] == result["remote"].get("artifactId"):
                 result["artifact"] = {key: artifact[key] for key in allowed if key in artifact}
         return result
 
@@ -214,8 +253,144 @@ class NotebookLMSyncProvider:
         }
 
 
+class NotebookLMJobProvider:
+    """Execute the four v1 artifact families through notebooklm-py 0.8.2.
+
+    Generation is kicked off once and reconciled by the returned remote artifact
+    id. Chapter/selection jobs add their bounded local context as an explicit
+    text source; whole-Book jobs use the already-confirmed EPUB source. A
+    process restart without that remote receipt is deliberately unknown.
+    """
+
+    _FILES = {
+        "learning_report": ("report.md", "text/markdown"),
+        "mind_map": ("mind-map.json", "application/json"),
+        "flashcard_set": ("flashcards.json", "application/json"),
+        "audio_explanation": ("audio.m4a", "audio/mp4"),
+    }
+
+    def __init__(self):
+        self._requests = {}
+        self._lock = threading.Lock()
+
+    def start_job(self, **request):
+        async def run():
+            from notebooklm import NotebookLMClient, MindMapKind
+
+            profile = os.environ.get("NOTEBOOKLM_PROFILE") or None
+            source_ids = [request["sourceId"]]
+            scope_source_id = None
+            async with NotebookLMClient.from_storage(profile=profile) as client:
+                if request["contextScope"]["scope"] != "book":
+                    scope_source = await client.sources.add_text(
+                        request["notebookId"],
+                        f"LearnBuddy {request['requestId']}",
+                        request["contextText"],
+                        wait=True,
+                        idempotent=True,
+                    )
+                    scope_source_id = scope_source.id
+                    source_ids = [scope_source_id]
+                artifact_type = request["artifactType"]
+                if artifact_type == "learning_report":
+                    status = await client.artifacts.generate_study_guide(
+                        request["notebookId"], source_ids=source_ids)
+                elif artifact_type == "flashcard_set":
+                    status = await client.artifacts.generate_flashcards(
+                        request["notebookId"], source_ids=source_ids)
+                elif artifact_type == "audio_explanation":
+                    status = await client.artifacts.generate_audio(
+                        request["notebookId"], source_ids=source_ids)
+                else:
+                    mind_map = await client.mind_maps.generate(
+                        request["notebookId"], source_ids=source_ids,
+                        kind=MindMapKind.INTERACTIVE, wait=False)
+                    status = mind_map
+                artifact_id = getattr(status, "task_id", None) or getattr(status, "id", None)
+                if not isinstance(artifact_id, str) or not artifact_id.strip():
+                    raise _ProviderError("notebooklm_job_unknown", "unknown")
+                return artifact_id, scope_source_id
+
+        try:
+            artifact_id, scope_source_id = asyncio.run(run())
+        except Exception as error:
+            return _job_error_outcome(error)
+        remote = {
+            "provider": "notebooklm",
+            "notebookId": request["notebookId"],
+            "sourceId": request["sourceId"],
+            "scopeSourceId": scope_source_id,
+            "artifactId": artifact_id,
+        }
+        with self._lock:
+            self._requests[(request["personId"], request["requestId"])] = {
+                "remote": dict(remote)
+            }
+        return {"state": "waiting_remote", "error": None, "artifact": None,
+                "remote": remote}
+
+    def reconcile_job(self, **request):
+        key = (request["personId"], request["requestId"])
+        with self._lock:
+            stored = self._requests.get(key)
+        remote = dict(request["remoteProvenance"])
+        if stored is not None and remote.get("artifactId") != stored["remote"].get("artifactId"):
+            return {"state": "unknown", "error": "notebooklm_job_unknown", "artifact": None}
+        artifact_id = remote.get("artifactId")
+        if not isinstance(artifact_id, str) or not artifact_id.strip():
+            return {"state": "unknown", "error": "notebooklm_job_unknown", "artifact": None}
+
+        async def run():
+            from notebooklm import NotebookLMClient
+
+            profile = os.environ.get("NOTEBOOKLM_PROFILE") or None
+            async with NotebookLMClient.from_storage(profile=profile) as client:
+                status = await client.artifacts.poll_status(request["notebookId"], artifact_id)
+                if not status.is_complete:
+                    if status.is_failed:
+                        raise _ProviderError("notebooklm_source_rejected", "failed")
+                    return {"state": "waiting_remote", "error": None,
+                            "artifact": None, "remote": remote}
+                suffix, content_type = self._FILES[request["artifactType"]]
+                with tempfile.TemporaryDirectory(prefix="learnbuddy-artifact-") as directory:
+                    path = os.path.join(directory, suffix)
+                    if request["artifactType"] == "learning_report":
+                        await client.artifacts.download_report(
+                            request["notebookId"], path, artifact_id)
+                    elif request["artifactType"] == "mind_map":
+                        await client.artifacts.download_mind_map(
+                            request["notebookId"], path, artifact_id)
+                    elif request["artifactType"] == "flashcard_set":
+                        await client.artifacts.download_flashcards(
+                            request["notebookId"], path, artifact_id, output_format="json")
+                    else:
+                        await client.artifacts.download_audio(
+                            request["notebookId"], path, artifact_id)
+                    byte_size = os.path.getsize(path)
+                return {
+                    "state": "ready", "error": None, "remote": remote,
+                    "artifact": {
+                        "remoteArtifactId": artifact_id,
+                        "contentType": content_type,
+                        "byteSize": byte_size,
+                        "remote": remote,
+                    },
+                }
+
+        try:
+            return asyncio.run(run())
+        except Exception as error:
+            result = _job_error_outcome(error)
+            result["remote"] = remote
+            return result
+
+    def cancel_job(self, **request):
+        # notebooklm-py 0.8.2 has no public generation-cancel method.
+        raise _ProviderError("notebooklm_mutation_unknown", "unknown")
+
+
 class DeterministicJobProvider:
-    """Worker-contract fake used until a provider-specific job adapter exists."""
+    """Deterministic worker-contract fake; ordinary tests never use an account."""
 
     def start_job(self, **request):
         return {"state": "unknown", "error": "notebooklm_job_unknown", "artifact": None}
@@ -228,7 +403,8 @@ class DeterministicJobProvider:
 
 
 def _job_error_outcome(error):
-    code = getattr(error, "code", None)
+    classified = _classify_provider_error(error)
+    code = classified.code
     aliases = {
         "notebooklm_authentication_required": "notebooklm_auth_required",
         "notebooklm_quota_limited": "notebooklm_quota",
@@ -244,10 +420,15 @@ def _job_error_outcome(error):
 
 
 def _classify_provider_error(error):
+    if isinstance(error, _ProviderError):
+        return error
     if getattr(error, "unconfirmed", False):
         return _ProviderError("notebooklm_mutation_unknown", "unknown")
     try:
-        from notebooklm import AuthError, NotebookLimitError, RateLimitError, SourceProcessingError
+        from notebooklm import (
+            ArtifactDownloadError, ArtifactFeatureUnavailableError, AuthError,
+            NotebookLimitError, RateLimitError, ServerError, SourceProcessingError,
+        )
     except ImportError:
         return _ProviderError("notebooklm_unavailable", "unknown")
     if isinstance(error, AuthError):
@@ -256,6 +437,12 @@ def _classify_provider_error(error):
         return _ProviderError("notebooklm_quota_limited", "rejected")
     if isinstance(error, SourceProcessingError):
         return _ProviderError("notebooklm_source_rejected", "rejected")
+    if isinstance(error, ArtifactDownloadError):
+        return _ProviderError("artifact_download_failed", "failed")
+    if isinstance(error, (ServerError, OSError, TimeoutError)):
+        return _ProviderError("notebooklm_unavailable", "failed")
+    if isinstance(error, ArtifactFeatureUnavailableError):
+        return _ProviderError("notebooklm_source_rejected", "failed")
     return _ProviderError("notebooklm_mutation_unknown", "unknown")
 
 

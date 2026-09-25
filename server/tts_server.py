@@ -50,7 +50,9 @@ from edge_tts import (
 from library import ApiError, Library
 from book_context import BookContextCompiler
 from conversations import Conversations
-from book_ai import BookConversations, NotebookRefs, NotebookSync, StudyJobs
+from book_ai import (
+    BookConversations, NotebookRefs, NotebookSync, StudyJobRunner, StudyJobs,
+)
 from notebooklm_host import NotebookLMProxy
 import reading
 
@@ -172,6 +174,7 @@ STATUS_BY_CODE = {
     "study_job_conflict": 409,
     "study_job_not_cancellable": 409,
     "invalid_study_job_transition": 409,
+    "notebook_ref_not_found": 409,
 }
 
 # Hand-written routes: path says what, `?profile=` says who is asking.
@@ -194,6 +197,7 @@ ROUTE_TABLE = (
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/study-jobs$"), "api_list_study_jobs"),
     ("POST", re.compile(r"^/books/(?P<book>[^/]+)/study-jobs$"), "api_create_study_job"),
     ("GET", re.compile(r"^/study-jobs/(?P<job>[^/]+)$"), "api_get_study_job"),
+    ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/reconcile$"), "api_reconcile_study_job"),
     ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/cancel$"), "api_cancel_study_job"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/chapters/(?P<chapter>[^/]+)$"), "api_get_chapter"),
     ("PUT", re.compile(r"^/books/(?P<book>[^/]+)/position$"), "api_put_position"),
@@ -247,6 +251,9 @@ class TtsServer:
         # credentials or profile files.
         self.notebooklm = notebooklm or NotebookLMProxy()
         self.notebook_sync = NotebookSync(self.library, self.notebook_refs, self.notebooklm)
+        self.study_job_runner = StudyJobRunner(
+            self.library, self.book_context, self.study_jobs,
+            self.notebook_refs, self.notebooklm)
 
     def _use_azure(self):
         """Azure is primary exactly when it holds a subscription key."""
@@ -443,7 +450,8 @@ class TtsHandler(BaseHTTPRequestHandler):
         request.setdefault("bookId", groups["book"])
         request.setdefault("bookContentHash", groups["book"])
         request.setdefault("personId", profile)
-        created = self.server.app.study_jobs.create(profile, groups["book"], request)
+        created = self.server.app.study_job_runner.create(
+            profile, groups["book"], request, confirm_whole_book=body.get("confirmWholeBook") is True)
         self._json_response(201 if created["created"] else 200, {
             "job": created["job"], "book": groups["book"],
         })
@@ -452,11 +460,18 @@ class TtsHandler(BaseHTTPRequestHandler):
         job = self.server.app.study_jobs.get(params.get("profile", ""), groups["job"])
         self._json_response(200, {"job": job, "book": job["bookId"]})
 
+    def api_reconcile_study_job(self, params, groups):
+        self._read_json()
+        job = self.server.app.study_job_runner.reconcile(
+            params.get("profile", ""), groups["job"])
+        self._json_response(200, {"job": job, "book": job["bookId"]})
+
     def api_cancel_study_job(self, params, groups):
         body = self._read_json()
         if body.get("confirm") is not True:
             raise ApiError("bad_request", "explicit cancellation confirmation is required")
-        job = self.server.app.study_jobs.cancel(params.get("profile", ""), groups["job"])
+        job = self.server.app.study_jobs.cancel(
+            params.get("profile", ""), groups["job"], provider=self.server.app.notebooklm)
         self._json_response(200, {"job": job, "book": job["bookId"]})
 
     def api_get_chapter(self, params, groups):

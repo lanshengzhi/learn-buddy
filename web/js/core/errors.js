@@ -61,6 +61,15 @@ export const API_ERROR_CODES = Object.freeze({
   AI_TIMEOUT: 'ai_timeout',
   CONVERSATION_NOT_FOUND: 'conversation_not_found',
   AI_USAGE_LIMIT: 'ai_usage_limit',
+  CLOUD_CONFIRMATION_REQUIRED: 'cloud_confirmation_required',
+  NOTEBOOKLM_NOT_CONFIGURED: 'notebooklm_not_configured',
+  NOTEBOOKLM_AUTH_REQUIRED: 'notebooklm_auth_required',
+  NOTEBOOKLM_UNAVAILABLE: 'notebooklm_unavailable',
+  NOTEBOOKLM_QUOTA: 'notebooklm_quota',
+  NOTEBOOKLM_SOURCE_REJECTED: 'notebooklm_source_rejected',
+  NOTEBOOKLM_JOB_UNKNOWN: 'notebooklm_job_unknown',
+  ARTIFACT_DOWNLOAD_FAILED: 'artifact_download_failed',
+  NOTEBOOK_REF_NOT_FOUND: 'notebook_ref_not_found',
 });
 
 /** Learner-facing wording per API error code. */
@@ -82,6 +91,15 @@ const API_ERROR_MESSAGES = {
   // ADR 0013: 用量受限, never "quota exhausted" — the wall and a transient
   // throttle are indistinguishable, so the copy stays calm.
   [API_ERROR_CODES.AI_USAGE_LIMIT]: 'AI 用量受限，请稍后再试。',
+  [API_ERROR_CODES.CLOUD_CONFIRMATION_REQUIRED]: '整本书需要明确确认后才会发送到云端处理。',
+  [API_ERROR_CODES.NOTEBOOKLM_NOT_CONFIGURED]: 'NotebookLM 尚未配置；本地阅读不受影响。',
+  [API_ERROR_CODES.NOTEBOOKLM_AUTH_REQUIRED]: 'NotebookLM 需要重新登录；本地阅读不受影响。',
+  [API_ERROR_CODES.NOTEBOOKLM_UNAVAILABLE]: 'NotebookLM 暂时不可用；本地阅读不受影响。',
+  [API_ERROR_CODES.NOTEBOOKLM_QUOTA]: 'NotebookLM 当前用量受限，请稍后再试。',
+  [API_ERROR_CODES.NOTEBOOKLM_SOURCE_REJECTED]: 'NotebookLM 未能处理这本书或所选范围。',
+  [API_ERROR_CODES.NOTEBOOKLM_JOB_UNKNOWN]: '远端结果未知；不会自动重复生成。',
+  [API_ERROR_CODES.ARTIFACT_DOWNLOAD_FAILED]: '产物下载失败；本地阅读不受影响。',
+  [API_ERROR_CODES.NOTEBOOK_REF_NOT_FOUND]: '请先明确确认并同步这本书到 NotebookLM。',
 };
 
 /**

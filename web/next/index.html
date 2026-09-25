@@ -140,6 +140,18 @@
                 placeholder="输入问题，Enter 发送，Shift+Enter 换行" aria-label="Book AI 问题"></textarea>
               <button id="book-ai-send" type="submit" aria-label="发送给 Book AI">↑</button>
             </form>
+            <fieldset id="book-ai-artifact-types" class="book-ai-artifact-types">
+              <legend>生成学习产物（NotebookLM）</legend>
+              <div id="book-ai-artifact-buttons"></div>
+              <label id="book-ai-artifact-scope-label">范围
+                <select id="book-ai-artifact-scope"></select>
+              </label>
+              <label id="book-ai-whole-book-confirm" hidden>
+                <input id="book-ai-whole-book-input" type="checkbox">
+                确认将整本书发送给 NotebookLM 云端处理
+              </label>
+              <button id="book-ai-generate" class="btn secondary" type="button" disabled>生成</button>
+            </fieldset>
             <details class="book-ai-conversations">
               <summary>这本书的对话</summary>
               <div class="book-ai-conversation-actions">
@@ -152,7 +164,10 @@
 
           <section id="book-ai-job" class="book-ai-view" hidden aria-label="学习任务">
             <h3>学习任务</h3>
+            <p id="book-ai-job-scope"></p>
             <p id="book-ai-job-status" role="status"></p>
+            <button id="book-ai-job-recheck" class="plain" type="button" hidden>重新检查状态</button>
+            <button id="book-ai-job-cancel" class="plain" type="button" hidden>取消任务</button>
             <button id="book-ai-job-back" class="plain" type="button">← 返回提问</button>
           </section>
 

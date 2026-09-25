@@ -584,10 +584,18 @@ STUDY_JOB_ERRORS = (
     "notebooklm_quota", "notebooklm_source_rejected", "notebooklm_job_unknown",
     "artifact_download_failed",
 )
+STUDY_ARTIFACT_TYPES = ("learning_report", "mind_map", "flashcard_set", "audio_explanation")
+STUDY_ARTIFACT_SCOPES = {
+    "learning_report": ("chapter", "book"),
+    "mind_map": ("chapter", "book"),
+    "flashcard_set": ("selection", "chapter", "book"),
+    "audio_explanation": ("chapter", "book"),
+}
+_REMOTE_PROVENANCE_FIELDS = ("provider", "notebookId", "sourceId", "scopeSourceId", "artifactId")
 _STUDY_JOB_TRANSITIONS = {
     "queued": {"preparing", "not_configured", "failed", "unknown", "cancelled"},
     "preparing": {"uploading", "waiting_remote", "not_configured", "failed", "unknown", "cancelled"},
-    "uploading": {"waiting_remote", "failed", "unknown", "cancelled"},
+    "uploading": {"waiting_remote", "not_configured", "failed", "unknown", "cancelled"},
     "waiting_remote": {"downloading", "failed", "unknown", "cancelled"},
     "downloading": {"ready", "failed", "unknown", "cancelled"},
 }
@@ -641,9 +649,12 @@ class StudyJobs:
             raise ApiError("profile_not_found", "request context belongs to another Person")
         if request.get("bookId") != book_id or request.get("bookContentHash") != book_id:
             raise ApiError("book_not_found", "request context belongs to another book")
-        if not isinstance(request.get("artifactType"), str) or not request["artifactType"].strip() \
-                or not isinstance(request.get("contextScope"), dict):
-            raise ApiError("bad_request", "artifactType and contextScope are required")
+        artifact_type = request.get("artifactType")
+        context_scope = request.get("contextScope")
+        scope = context_scope.get("scope") if isinstance(context_scope, dict) else None
+        if artifact_type not in STUDY_ARTIFACT_TYPES \
+                or scope not in STUDY_ARTIFACT_SCOPES[artifact_type]:
+            raise ApiError("bad_request", "invalid artifactType or contextScope")
         with self._lock:
             existing = next((job for job in self._read_all(profile_id)
                              if job.get("requestId") == request_id), None)
@@ -663,6 +674,7 @@ class StudyJobs:
                 "state": "queued",
                 "error": None,
                 "artifactResult": None,
+                "remoteProvenance": None,
                 "cancelRequestedAt": None,
                 "createdAt": at,
                 "updatedAt": at,
@@ -671,23 +683,28 @@ class StudyJobs:
             self._write(profile_id, document)
             return {"job": self._view(document), "created": True}
 
-    def transition(self, profile_id, job_id, state, *, error=None, artifact_result=None, reason=None):
+    def transition(self, profile_id, job_id, state, *, error=None, artifact_result=None,
+                    remote_provenance=None, reason=None):
         """Apply one validated durable transition and retain its history."""
         if state not in STUDY_JOB_STATES:
             raise ApiError("bad_request", "invalid StudyJob state")
         with self._lock:
             document = self._require(profile_id, job_id)
             current = document["state"]
-            if state == current and not artifact_result and error is None:
+            if state == current and not artifact_result and error is None and remote_provenance is None:
                 return self._view(document)
-            if state not in _STUDY_JOB_TRANSITIONS.get(current, set()):
+            if state != current and state not in _STUDY_JOB_TRANSITIONS.get(current, set()):
                 raise ApiError("invalid_study_job_transition",
                                f"StudyJob cannot transition from {current} to {state}")
             if state == "ready":
                 if not isinstance(artifact_result, dict) or not artifact_result:
                     raise ApiError("bad_request", "ready requires a controlled artifact result")
+                if not _valid_remote_provenance(artifact_result.get("remote"), require_artifact=True):
+                    raise ApiError("bad_request", "ready requires controlled remote provenance")
             elif artifact_result is not None:
                 raise ApiError("bad_request", "only ready may publish an artifact result")
+            if remote_provenance is not None and not _valid_remote_provenance(remote_provenance):
+                raise ApiError("bad_request", "invalid remote provenance")
             if state == "not_configured":
                 error = "notebooklm_not_configured"
             if error is not None and error not in STUDY_JOB_ERRORS:
@@ -704,13 +721,17 @@ class StudyJobs:
             document["updatedAt"] = at
             if artifact_result is not None:
                 document["artifactResult"] = json.loads(json.dumps(artifact_result, ensure_ascii=False))
-            document["history"].append({
-                "from": current, "to": state, "at": at, "reason": reason or state,
-            })
+            if remote_provenance is not None:
+                document["remoteProvenance"] = json.loads(
+                    json.dumps(remote_provenance, ensure_ascii=False))
+            if state != current:
+                document["history"].append({
+                    "from": current, "to": state, "at": at, "reason": reason or state,
+                })
             self._write(profile_id, document)
             return self._view(document)
 
-    def cancel(self, profile_id, job_id):
+    def cancel(self, profile_id, job_id, provider=None):
         """Record explicit cancellation without rewriting an unknown result."""
         with self._lock:
             document = self._require(profile_id, job_id)
@@ -725,6 +746,25 @@ class StudyJobs:
                 return self._view(document)
             if document["state"] in ("ready", "failed"):
                 raise ApiError("study_job_not_cancellable", f"StudyJob is already {document['state']}")
+            if provider is not None and document["state"] != "queued":
+                try:
+                    result = provider.cancel_job(
+                        job_id=document["id"], request_id=document["requestId"],
+                        book_id=document["bookId"],
+                        content_hash=document["request"]["bookContentHash"],
+                        person_id=document["personId"],
+                    )
+                except LookupError as error:
+                    code = getattr(error, "code", str(error))
+                    if code == "notebooklm_not_configured":
+                        # The local intent is safe, but the remote outcome is not
+                        # known; do not claim a provider-side cancellation.
+                        return self.transition(profile_id, job_id, "unknown", error="notebooklm_job_unknown")
+                    return self.transition(profile_id, job_id, "unknown", error="notebooklm_job_unknown")
+                if result.get("state") == "unknown":
+                    return self.transition(profile_id, job_id, "unknown", error="notebooklm_job_unknown")
+                if result.get("state") != "cancelled":
+                    raise ApiError("study_job_not_cancellable", "provider did not confirm cancellation")
             return self.transition(profile_id, job_id, "cancelled", reason="user_cancelled")
 
     def _dir(self, profile_id):
@@ -774,7 +814,180 @@ class StudyJobs:
     @staticmethod
     def _view(document):
         result = dict(document)
+        request = document.get("request") or {}
+        result["artifactType"] = request.get("artifactType")
+        result["contextScope"] = request.get("contextScope")
         result["terminal"] = document["state"] in ("not_configured", "ready", "failed", "unknown", "cancelled")
         result["successful"] = document["state"] == "ready"
         result["cancelled"] = document["state"] == "cancelled"
         return result
+
+
+def _valid_remote_provenance(value, require_artifact=True):
+    artifact_id = value.get("artifactId") if isinstance(value, dict) else None
+    artifact_valid = (isinstance(artifact_id, str) and artifact_id.strip()) if require_artifact \
+        else (artifact_id is None or (isinstance(artifact_id, str) and artifact_id.strip()))
+    return (
+        isinstance(value, dict)
+        and value.get("provider") == "notebooklm"
+        and artifact_valid
+        and all(isinstance(value.get(field), str) and value[field].strip()
+                for field in ("notebookId", "sourceId"))
+        and (value.get("scopeSourceId") is None
+             or (isinstance(value.get("scopeSourceId"), str) and value["scopeSourceId"].strip()))
+        and not any(key not in _REMOTE_PROVENANCE_FIELDS for key in value)
+    )
+
+
+class StudyJobRunner:
+    """Validate scoped generation and drive the isolated worker safely.
+
+    The runner creates a local request receipt before any worker call. Repeating
+    the same request returns that receipt without resubmitting; reconciliation
+    is an explicit operation that never creates a second remote artifact.
+    """
+
+    def __init__(self, library, context_compiler, jobs, refs, provider):
+        self.library = library
+        self.context_compiler = context_compiler
+        self.jobs = jobs
+        self.refs = refs
+        self.provider = provider
+
+    def create(self, profile_id, book_id, request, confirm_whole_book=False):
+        self.library.require_profile(profile_id)
+        self.library.require_book(book_id)
+        if not isinstance(request, dict):
+            raise ApiError("bad_request", "request must be an object")
+        artifact_type = request.get("artifactType")
+        if artifact_type not in STUDY_ARTIFACT_TYPES:
+            raise ApiError("bad_request", "invalid StudyArtifact type")
+        scope_record = request.get("contextScope")
+        if not isinstance(scope_record, dict):
+            raise ApiError("bad_request", "contextScope is required")
+        scope = scope_record.get("scope")
+        if scope not in STUDY_ARTIFACT_SCOPES[artifact_type]:
+            raise ApiError("bad_request", f"{artifact_type} does not support {scope} scope")
+        if scope == "book" and confirm_whole_book is not True:
+            raise ApiError("cloud_confirmation_required",
+                           "explicit whole-Book cloud processing confirmation is required")
+        anchor = scope_record.get("anchor")
+        if not isinstance(anchor, dict):
+            raise ApiError("bad_request", "contextScope.anchor is required")
+        compiled = self.context_compiler.compile(
+            book_id, scope,
+            chapter=anchor.get("chapter", 0),
+            start=anchor.get("start"),
+            end=anchor.get("end"),
+            expected_book_id=request.get("bookId", book_id),
+            content_hash=request.get("bookContentHash", book_id),
+        )
+        ref = self.refs.get(book_id)
+        if ref is None or ref.get("mutationStatus") != "confirmed" \
+                or ref.get("uploadStatus") != "uploaded" or ref.get("syncStatus") != "synced" \
+                or not ref.get("notebookId") or not ref.get("sourceId"):
+            raise ApiError("notebook_ref_not_found", "an explicitly synced NotebookRef is required")
+        book = self.library.get_book(book_id)["book"]
+        canonical = {
+            "personId": profile_id,
+            "bookId": book_id,
+            "bookContentHash": book_id,
+            "artifactType": artifact_type,
+            "contextScope": {
+                "scope": scope, "anchor": dict(compiled["anchor"])
+            },
+            "context": self.context_compiler.snapshot(compiled),
+            "notebookId": ref["notebookId"],
+            "sourceId": ref["sourceId"],
+            "bookTitle": book.get("title", ""),
+        }
+        if scope == "book":
+            canonical["cloudProcessingConfirmed"] = True
+        if "requestId" in request:
+            canonical["requestId"] = request["requestId"]
+        created = self.jobs.create(profile_id, book_id, canonical)
+        if not created["created"]:
+            return created
+        return {"job": self._start(profile_id, created["job"]), "created": True}
+
+    def reconcile(self, profile_id, job_id):
+        job = self.jobs.get(profile_id, job_id)
+        if job["state"] in ("not_configured", "ready", "failed", "unknown", "cancelled"):
+            return job
+        if job["state"] == "queued":
+            return self._start(profile_id, job)
+        if job["state"] in ("preparing", "uploading"):
+            # The request may have reached the worker before the host stopped.
+            # Never turn that ambiguous boundary into an automatic resubmission.
+            return self.jobs.transition(
+                profile_id, job["id"], "unknown", error="notebooklm_job_unknown")
+        request = job["request"]
+        try:
+            result = self.provider.reconcile_job(
+                job_id=job["id"], request_id=job["requestId"],
+                book_id=job["bookId"], content_hash=request["bookContentHash"],
+                person_id=job["personId"], artifact_type=request["artifactType"],
+                context_scope=request["contextScope"], context_text=request["context"]["text"],
+                notebook_id=request["notebookId"], source_id=request["sourceId"],
+                remote_provenance=job.get("remoteProvenance"),
+            )
+        except LookupError as error:
+            return self._apply_error(profile_id, job, getattr(error, "code", str(error)))
+        return self._apply_result(profile_id, job, result)
+
+    def _start(self, profile_id, job):
+        self.jobs.transition(profile_id, job["id"], "preparing", reason="worker_context_prepared")
+        request = job["request"]
+        if request["contextScope"]["scope"] != "book":
+            job = self.jobs.transition(
+                profile_id, job["id"], "uploading", reason="scoped_context_upload_started")
+        try:
+            result = self.provider.job_request(
+                job_id=job["id"], request_id=job["requestId"],
+                book_id=job["bookId"], content_hash=request["bookContentHash"],
+                person_id=job["personId"], artifact_type=request["artifactType"],
+                context_scope=request["contextScope"], context_text=request["context"]["text"],
+                notebook_id=request["notebookId"], source_id=request["sourceId"],
+            )
+        except LookupError as error:
+            return self._apply_error(profile_id, self.jobs.get(profile_id, job["id"]),
+                                    getattr(error, "code", str(error)))
+        return self._apply_result(profile_id, self.jobs.get(profile_id, job["id"]), result)
+
+    def _apply_result(self, profile_id, job, result):
+        state = result["state"]
+        remote = result.get("remote")
+        artifact = result.get("artifact")
+        if remote is not None:
+            self.jobs.transition(profile_id, job["id"], job["state"],
+                                 remote_provenance=remote, reason="remote_provenance_recorded")
+            job = self.jobs.get(profile_id, job["id"])
+        if state == "waiting_remote" and job["state"] not in ("waiting_remote", "downloading"):
+            job = self.jobs.transition(profile_id, job["id"], "waiting_remote", reason="remote_generation_started")
+        elif state == "ready":
+            if job["state"] in ("preparing", "uploading"):
+                job = self.jobs.transition(profile_id, job["id"], "waiting_remote",
+                                           reason="remote_generation_started")
+            if job["state"] != "downloading":
+                job = self.jobs.transition(profile_id, job["id"], "downloading", reason="artifact_download_started")
+            job = self.jobs.transition(profile_id, job["id"], "ready",
+                                       artifact_result=artifact, remote_provenance=remote)
+        elif state == "failed":
+            job = self._apply_error(profile_id, job, result.get("error"))
+        elif state == "unknown":
+            job = self.jobs.transition(profile_id, job["id"], "unknown",
+                                       error="notebooklm_job_unknown")
+        elif state == "cancelled":
+            job = self.jobs.cancel(profile_id, job["id"])
+        elif state == "not_configured":
+            job = self.jobs.transition(profile_id, job["id"], "not_configured")
+        return job
+
+    def _apply_error(self, profile_id, job, code):
+        if code == "notebooklm_not_configured":
+            return self.jobs.transition(profile_id, job["id"], "not_configured")
+        if code == "notebooklm_job_unknown":
+            return self.jobs.transition(profile_id, job["id"], "unknown", error=code)
+        if code not in STUDY_JOB_ERRORS:
+            code = "notebooklm_job_unknown"
+        return self.jobs.transition(profile_id, job["id"], "failed", error=code)

@@ -13,6 +13,13 @@ export const BookAiPanelState = Object.freeze({
   ArtifactPreview: 'artifact-preview',
 });
 
+export const STUDY_ARTIFACT_TYPES = Object.freeze([
+  { id: 'learning_report', label: '学习报告', scopes: ['chapter', 'book'] },
+  { id: 'mind_map', label: '思维导图', scopes: ['chapter', 'book'] },
+  { id: 'flashcard_set', label: '闪卡', scopes: ['selection', 'chapter', 'book'] },
+  { id: 'audio_explanation', label: '音频讲解', scopes: ['chapter', 'book'] },
+]);
+
 export const BOOK_AI_QUICK_PROMPTS = Object.freeze([
   { id: 'sentence-structure', label: '句子结构', text: '请分析当前内容的句子结构。' },
   { id: 'word-by-word', label: '逐词解释', text: '请逐词解释当前内容。' },
@@ -63,10 +70,10 @@ export class BookAiPanelController {
     }, 'ask-opened');
   }
 
-  openJob(job = this.state.job) {
-    // No generation API exists yet. A caller may still inject a real product
-    // job later; this panel never fabricates a successful job or artifact.
+  openJob(job) {
+    if (!job || typeof job.status !== 'string') return false;
     this.#set({ panelState: BookAiPanelState.Job, job, error: null }, 'job-opened');
+    return true;
   }
 
   openArtifactPreview(artifact) {

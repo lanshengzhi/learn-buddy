@@ -19,7 +19,9 @@ import { initChat } from './chat.js';
 import { onReadReady } from './read-ready.js';
 import { ServerApi } from '/js/core/api.js';
 import { storedProfile } from '/js/browser/profile.js';
-import { BOOK_AI_QUICK_PROMPTS, BookAiPanelController, BookAiPanelState } from '/js/core/book-ai-panel.js';
+import {
+  BOOK_AI_QUICK_PROMPTS, BookAiPanelController, BookAiPanelState, STUDY_ARTIFACT_TYPES,
+} from '/js/core/book-ai-panel.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -114,7 +116,14 @@ function renderBookAi() {
   $('book-ai-job').hidden = s.panelState !== BookAiPanelState.Job;
   $('book-ai-artifact-status').hidden = s.panelState !== BookAiPanelState.ArtifactPreview;
   $('book-artifact-preview').hidden = s.panelState !== BookAiPanelState.ArtifactPreview;
+  $('book-ai-job-scope').textContent = s.job
+    ? `${artifactLabel(s.job.artifactType)} · ${scopeLabel(s.job.contextScope)}`
+    : '';
   $('book-ai-job-status').textContent = s.job?.message ?? jobLabel(s.job?.status);
+  $('book-ai-job-recheck').hidden = !s.job
+    || !['queued', 'preparing', 'uploading', 'waiting_remote', 'downloading'].includes(s.job.status);
+  $('book-ai-job-cancel').hidden = !s.job
+    || ['not_configured', 'ready', 'failed', 'unknown', 'cancelled'].includes(s.job.status);
   $('book-ai-artifact-summary').textContent = s.artifact
     ? `${s.artifact.title || '学习产物'} · ${s.artifact.type || '未知类型'}`
     : '尚无可预览的学习产物。';
@@ -162,23 +171,49 @@ function contextLabel(context) {
   return context.scope ?? '—';
 }
 
+function artifactLabel(type) {
+  return STUDY_ARTIFACT_TYPES.find((artifact) => artifact.id === type)?.label ?? '学习产物';
+}
+
+function scopeLabel(scope) {
+  if (scope?.scope === 'selection') {
+    const anchor = scope.anchor ?? {};
+    return `选区 · 第 ${Number(anchor.start ?? 0) + 1}–${Number(anchor.end ?? 0) + 1} 句`;
+  }
+  if (scope?.scope === 'chapter') return `当前章节 · 第 ${Number(scope.anchor?.chapter ?? 0) + 1} 章`;
+  if (scope?.scope === 'book') return '整本书（已明确确认云端处理）';
+  return scope?.scope ?? '范围未知';
+}
+
 function jobLabel(status) {
   return ({
-    not_configured: 'NotebookLM 尚未配置。',
+    not_configured: 'NotebookLM 尚未配置；本地阅读不受影响。',
     queued: '任务已排队。',
     preparing: '正在准备上下文。',
     uploading: '正在上传到 NotebookLM。',
     waiting_remote: 'NotebookLM 正在生成。',
     downloading: '正在下载产物。',
     ready: '学习产物已完成。',
-    failed: '任务失败，可以安全重试。',
+    failed: 'NotebookLM 暂时无法完成这次生成；本地阅读不受影响。',
     unknown: '远端结果未知；不会自动重试。',
     cancelled: '任务已取消。',
   })[status] ?? '学习产物生成尚未启用。';
 }
 
 function showBookAiError(error) {
-  bookAi.failTurn(error.message ?? error.code ?? 'AI 暂时不可用，请稍后再试。');
+  bookAi.failTurn(providerMessage(error) ?? error.message ?? error.code ?? 'AI 暂时不可用，请稍后再试。');
+}
+
+function providerMessage(error) {
+  return ({
+    notebooklm_not_configured: 'NotebookLM 尚未配置；可继续本地阅读。',
+    notebooklm_auth_required: 'NotebookLM 需要重新登录；可继续本地阅读。',
+    notebooklm_unavailable: 'NotebookLM 暂时不可用；可继续本地阅读。',
+    notebooklm_quota: 'NotebookLM 当前用量受限，请稍后再试。',
+    notebooklm_source_rejected: 'NotebookLM 未能处理这本书或所选范围。',
+    notebooklm_job_unknown: '远端结果未知；不会自动重复生成。',
+    artifact_download_failed: '产物下载失败；本地阅读不受影响。',
+  })[error?.code];
 }
 
 function positionToolbar() {
@@ -450,6 +485,8 @@ function restoreReaderAnchor() {
 }
 
 function closeBookAi({ restore = true } = {}) {
+  if (studyJobTimer) window.clearTimeout(studyJobTimer);
+  studyJobTimer = null;
   bookAi.close();
   if (restore) restoreReaderAnchor();
   else preservedReaderAnchor = null;
@@ -509,6 +546,7 @@ async function openBookAi(selection = null) {
     context,
     selectedText: selection?.text ?? '',
   });
+  renderArtifactTypeControls();
   await refreshBookAiConversations();
   const active = bookAi.state.conversations.find((conversation) => conversation.active)
     ?? bookAi.state.conversations[0];
@@ -575,15 +613,132 @@ $('book-ai-artifact-back').addEventListener('click', () => {
   restoreReaderAnchor();
   $('book-ai-open').focus({ preventScroll: true });
 });
-$('book-ai-job-back').addEventListener('click', () => bookAi.openAsk({
-  personId: bookAi.state.personId,
-  bookId: bookAi.state.bookId,
-  bookTitle: bookAi.state.bookTitle,
-  chapterIndex: bookAi.state.chapterIndex,
-  chapterTitle: bookAi.state.chapterTitle,
-  context: bookAi.state.context,
-  selectedText: bookAi.state.selectedText,
-}));
+let selectedArtifactType = STUDY_ARTIFACT_TYPES[0].id;
+let studyJobTimer = null;
+
+function renderArtifactTypeControls() {
+  const artifact = STUDY_ARTIFACT_TYPES.find((item) => item.id === selectedArtifactType);
+  $('book-ai-artifact-buttons').replaceChildren(...STUDY_ARTIFACT_TYPES.map((item) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = item.label;
+    button.classList.toggle('active', item.id === selectedArtifactType);
+    button.addEventListener('click', () => {
+      selectedArtifactType = item.id;
+      renderArtifactTypeControls();
+    });
+    return button;
+  }));
+  const availableScopes = artifact.scopes.filter(
+    (scope) => scope !== 'selection' || Boolean(bookAi.state.selectedText));
+  $('book-ai-artifact-scope').replaceChildren(...availableScopes.map((scope) => {
+    const option = document.createElement('option');
+    option.value = scope;
+    option.textContent = { selection: '当前选区', chapter: '当前章节', book: '整本书' }[scope];
+    return option;
+  }));
+  const scope = $('book-ai-artifact-scope').value;
+  $('book-ai-whole-book-confirm').hidden = scope !== 'book';
+  $('book-ai-generate').disabled = !bookAiApi || !bookAi.state.bookId;
+}
+
+function generationScope() {
+  const scope = $('book-ai-artifact-scope').value;
+  const chapter = bookAi.state.chapterIndex ?? 0;
+  if (scope === 'book') return { scope, anchor: { wholeBook: true } };
+  if (scope === 'chapter') return { scope, anchor: { chapter } };
+  const anchor = bookAi.state.context?.anchor ?? {};
+  return {
+    scope,
+    anchor: {
+      chapter,
+      start: anchor.start ?? 0,
+      end: anchor.end ?? anchor.sentence ?? anchor.start ?? 0,
+    },
+  };
+}
+
+function jobView(job) {
+  return {
+    ...job,
+    status: job.state,
+    message: providerMessage({ code: job.error }) ?? jobLabel(job.state),
+  };
+}
+
+function scheduleJobRecheck(jobId) {
+  if (studyJobTimer) window.clearTimeout(studyJobTimer);
+  if (!['queued', 'preparing', 'uploading', 'waiting_remote', 'downloading'].includes(bookAi.state.job?.status)) return;
+  studyJobTimer = window.setTimeout(async () => {
+    try {
+      const result = await bookAiApi.reconcileStudyJob(jobId);
+      bookAi.openJob(jobView(result.job));
+      scheduleJobRecheck(jobId);
+    } catch (error) {
+      showBookAiError(error);
+    }
+  }, 2500);
+}
+
+$('book-ai-artifact-scope').addEventListener('change', renderArtifactTypeControls);
+$('book-ai-generate').addEventListener('click', async () => {
+  const s = bookAi.state;
+  const scope = generationScope();
+  const confirmWholeBook = scope.scope === 'book' && $('book-ai-whole-book-input').checked;
+  if (scope.scope === 'book' && !confirmWholeBook) {
+    showBookAiError({ code: 'cloud_confirmation_required' });
+    return;
+  }
+  $('book-ai-generate').disabled = true;
+  try {
+    const result = await bookAiApi.createStudyJob(s.bookId, {
+      artifactType: selectedArtifactType,
+      contextScope: scope,
+    }, { confirmWholeBook });
+    bookAi.openJob(jobView(result.job));
+    scheduleJobRecheck(result.job.id);
+  } catch (error) {
+    showBookAiError(error);
+  } finally {
+    renderArtifactTypeControls();
+  }
+});
+$('book-ai-job-recheck').addEventListener('click', async () => {
+  const job = bookAi.state.job;
+  if (!job?.id) return;
+  try {
+    const result = await bookAiApi.reconcileStudyJob(job.id);
+    bookAi.openJob(jobView(result.job));
+    scheduleJobRecheck(job.id);
+  } catch (error) {
+    showBookAiError(error);
+  }
+});
+$('book-ai-job-cancel').addEventListener('click', async () => {
+  const job = bookAi.state.job;
+  if (!job?.id) return;
+  try {
+    const result = await bookAiApi.cancelStudyJob(job.id);
+    bookAi.openJob(jobView(result.job));
+  } catch (error) {
+    showBookAiError(error);
+  }
+});
+renderArtifactTypeControls();
+
+$('book-ai-job-back').addEventListener('click', () => {
+  if (studyJobTimer) window.clearTimeout(studyJobTimer);
+  studyJobTimer = null;
+  bookAi.openAsk({
+    personId: bookAi.state.personId,
+    bookId: bookAi.state.bookId,
+    bookTitle: bookAi.state.bookTitle,
+    chapterIndex: bookAi.state.chapterIndex,
+    chapterTitle: bookAi.state.chapterTitle,
+    context: bookAi.state.context,
+    selectedText: bookAi.state.selectedText,
+  });
+});
 
 $('book-ai-form').addEventListener('submit', (event) => {
   event.preventDefault();

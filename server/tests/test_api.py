@@ -326,10 +326,32 @@ class TestBooksEndpoint(ApiTestCase):
 class _DeterministicNotebookLM:
     def __init__(self):
         self.calls = []
+        self.job_calls = []
 
     def sync_source(self, **kwargs):
         self.calls.append(kwargs)
         return {"outcome": "confirmed", "notebookId": "notebook-1", "sourceId": "source-1"}
+
+    def job_request(self, **kwargs):
+        self.job_calls.append(dict(kwargs))
+        remote = {
+            "provider": "notebooklm", "notebookId": kwargs["notebook_id"],
+            "sourceId": kwargs["source_id"], "artifactId": f"artifact-{len(self.job_calls) - 1}",
+        }
+        return {"state": "waiting_remote", "error": None, "artifact": None, "remote": remote}
+
+    def reconcile_job(self, **kwargs):
+        remote = kwargs["remote_provenance"]
+        return {
+            "state": "ready", "error": None, "remote": remote,
+            "artifact": {
+                "remoteArtifactId": remote["artifactId"], "contentType": "application/json",
+                "byteSize": 10, "remote": remote,
+            },
+        }
+
+    def cancel_job(self, **kwargs):
+        return {"state": "cancelled", "error": None, "artifact": None}
 
 
 class TestNotebookLMSyncEndpoint(ApiTestCase):
@@ -366,43 +388,84 @@ class TestNotebookLMSyncEndpoint(ApiTestCase):
 
 
 class TestStudyJobEndpoint(ApiTestCase):
-    def test_job_is_person_scoped_durable_and_explicitly_cancellable(self):
+    def _sync(self, book_id):
+        self.harness.httpd.app.notebook_refs.ensure(book_id, "notebook-1", "source-1")
+
+    def test_four_types_use_legal_scopes_confirmation_and_controlled_provenance(self):
+        provider = _DeterministicNotebookLM()
+        self.harness.httpd.app.study_job_runner.provider = provider
         book_id = json.loads(self.upload()[2])["book"]["id"]
+        self._sync(book_id)
+        cases = (
+            ("learning_report", "chapter", {"chapter": 0}, False),
+            ("mind_map", "book", {}, True),
+            ("flashcard_set", "selection", {"start": 0, "end": 1, "chapter": 0}, False),
+            ("audio_explanation", "chapter", {"chapter": 0}, False),
+        )
+        for index, (artifact_type, scope, anchor, confirm) in enumerate(cases):
+            request = {
+                "requestId": f"study-job:api-{artifact_type}",
+                "artifactType": artifact_type,
+                "contextScope": {"scope": scope, "anchor": anchor},
+            }
+            path = f"/books/{book_id}/study-jobs?profile=dad"
+            status, _, body = self.json_request(
+                "POST", path, {"request": request, "confirmWholeBook": confirm})
+            if confirm:
+                unconfirmed_status, _, unconfirmed_body = self.json_request(
+                    "POST", path, {"request": dict(request, requestId=request["requestId"] + "-unconfirmed")})
+                self.assertEqual(unconfirmed_status, 400)
+                self.assertEqual(json.loads(unconfirmed_body)["error"], "cloud_confirmation_required")
+            self.assertEqual(status, 201, body)
+            job = json.loads(body)["job"]
+            self.assertEqual(job["artifactType"], artifact_type)
+            self.assertEqual(job["contextScope"]["scope"], scope)
+            self.assertEqual(job["state"], "waiting_remote")
+            self.assertEqual(job["remoteProvenance"], {
+                "provider": "notebooklm", "notebookId": "notebook-1",
+                "sourceId": "source-1", "artifactId": f"artifact-{index}",
+            })
+            self.assertTrue(job["request"]["context"]["text"])
+            self.assertEqual(provider.job_calls[index]["context_scope"]["scope"], scope)
+
+        invalid = self.json_request("POST", f"/books/{book_id}/study-jobs?profile=dad", {
+            "request": {"artifactType": "learning_report", "requestId": "study-job:invalid",
+                        "contextScope": {"scope": "selection", "anchor": {}}},
+        })
+        self.assertEqual(invalid[0], 400)
+        self.assertEqual(json.loads(invalid[2])["error"], "bad_request")
+
+    def test_job_identity_position_and_person_data_are_unchanged(self):
+        provider = _DeterministicNotebookLM()
+        self.harness.httpd.app.study_job_runner.provider = provider
+        book_id = json.loads(self.upload()[2])["book"]["id"]
+        self._sync(book_id)
+        status, _, _ = self.json_request(
+            "PUT", f"/books/{book_id}/position?profile=dad", {"chapter": 0, "sentence": 0})
+        self.assertEqual(status, 204)
+        before_book = self.get(f"/books/{book_id}?profile=dad")[2]
+        before_profiles = self.get("/profiles")[2]
         request = {
-            "requestId": "study-job:api-stable-1",
-            "artifactType": "learning_report",
-            "contextScope": {"scope": "chapter", "anchor": {"chapter": 0}},
+            "requestId": "study-job:stable-76", "artifactType": "flashcard_set",
+            "contextScope": {"scope": "selection", "anchor": {"chapter": 0, "start": 0, "end": 1}},
         }
-        status, _, body = self.json_request(
-            "POST", f"/books/{book_id}/study-jobs?profile=dad", {"request": request})
+        path = f"/books/{book_id}/study-jobs?profile=dad"
+        status, _, body = self.json_request("POST", path, {"request": request})
         self.assertEqual(status, 201)
         job = json.loads(body)["job"]
-        self.assertEqual(job["state"], "queued")
-        self.assertEqual(job["request"]["bookContentHash"], book_id)
+        repeated = self.json_request("POST", path, {"request": request})
+        self.assertEqual(repeated[0], 200)
+        self.assertEqual(json.loads(repeated[2])["job"]["id"], job["id"])
+        self.assertEqual(len(provider.job_calls), 1)
+        self.assertEqual(self.get(f"/books/{book_id}?profile=dad")[2], before_book)
+        self.assertEqual(self.get("/profiles")[2], before_profiles)
 
-        status, _, body = self.json_request(
-            "POST", f"/books/{book_id}/study-jobs?profile=dad", {"request": request})
+        status, _, body = self.json_request("POST", f"/study-jobs/{job['id']}/reconcile?profile=dad", {})
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)["job"]["id"], job["id"])
-
-        status, _, body = self.get(f"/study-jobs/{job['id']}?profile=dad")
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)["job"]["requestId"], request["requestId"])
-        status, _, _ = self.get(f"/study-jobs/{job['id']}?profile=mom")
-        self.assertEqual(status, 404)
-
-        status, _, body = self.json_request(
-            "POST", f"/study-jobs/{job['id']}/cancel?profile=dad", {})
-        self.assertEqual(status, 400)
-        status, _, body = self.json_request(
-            "POST", f"/study-jobs/{job['id']}/cancel?profile=dad", {"confirm": True})
-        self.assertEqual(status, 200)
-        cancelled = json.loads(body)["job"]
-        self.assertEqual(cancelled["state"], "cancelled")
-        self.assertTrue(cancelled["cancelled"])
-
-        status, _, body = self.get(f"/books/{book_id}/chapters/0?profile=dad")
-        self.assertEqual(status, 200)
+        ready = json.loads(body)["job"]
+        self.assertEqual(ready["state"], "ready")
+        self.assertEqual(ready["artifactResult"]["remote"]["artifactId"], "artifact-0")
+        self.assertEqual(self.get(f"/books/{book_id}?profile=dad")[2], before_book)
 
 
 class TestNotebookLMStatusEndpoint(ApiTestCase):
