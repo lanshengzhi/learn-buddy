@@ -21,16 +21,33 @@ export const STUDY_ARTIFACT_TYPES = Object.freeze([
 ]);
 
 export const BOOK_AI_QUICK_PROMPTS = Object.freeze([
-  { id: 'sentence-structure', label: '句子结构', text: '请分析当前内容的句子结构。' },
-  { id: 'word-by-word', label: '逐词解释', text: '请逐词解释当前内容。' },
-  { id: 'grammar', label: '语法点', text: '请说明当前内容中的语法点。' },
-  { id: 'chinese', label: '中文翻译', text: '请把当前内容翻译成中文。' },
+  {
+    id: 'sentence-structure',
+    label: '句子结构',
+    text: '请分析当前句子或选区的句子结构，不要重新分段。',
+  },
+  {
+    id: 'word-by-word',
+    label: '逐词解释',
+    text: '请逐词解释当前句子或选区。',
+  },
+  {
+    id: 'grammar',
+    label: '语法点',
+    text: '请说明当前句子或选区中的语法点。',
+  },
+  {
+    id: 'chinese',
+    label: '中文翻译',
+    text: '请把当前句子或选区翻译成中文。',
+  },
 ]);
 
 export class BookAiPanelController {
   constructor({ onEvent = () => {} } = {}) {
     this.onEvent = onEvent;
     this.messagesBeforeTurn = [];
+    this.activeTurn = null;
     this.state = {
       panelState: BookAiPanelState.Closed,
       personId: null,
@@ -56,6 +73,10 @@ export class BookAiPanelController {
   }
 
   openAsk({ personId, bookId, bookTitle, chapterIndex, chapterTitle, context, selectedText = '' }) {
+    const newBookContext = !context
+      || personId !== this.state.personId
+      || bookId !== this.state.bookId
+      || chapterIndex !== this.state.chapterIndex;
     this.#set({
       panelState: BookAiPanelState.Ask,
       personId,
@@ -65,9 +86,19 @@ export class BookAiPanelController {
       chapterTitle,
       context,
       selectedText,
+      // A new Person/Book context must never flash the previous thread while
+      // its BookConversation is being loaded. Returning from a StudyJob in
+      // the same Book keeps the active thread and its immutable context.
+      ...(newBookContext ? {
+        conversation: null,
+        conversations: [],
+        messages: [],
+        streaming: false,
+      } : {}),
       error: null,
       artifact: null,
     }, 'ask-opened');
+    if (newBookContext) this.activeTurn = null;
   }
 
   openJob(job) {
@@ -98,53 +129,98 @@ export class BookAiPanelController {
   }
 
   setConversations(conversations) {
-    this.#set({ conversations: [...conversations], error: null }, 'conversations-loaded');
+    this.#set({
+      conversations: conversations.filter((conversation) => conversation.bookId === this.state.bookId),
+      error: null,
+    }, 'conversations-loaded');
   }
 
   setConversation(conversation) {
+    if (conversation?.bookId !== this.state.bookId) {
+      this.#set({ error: 'book_conversation_not_found' }, 'conversation-rejected');
+      return false;
+    }
+    if (this.activeTurn && conversation?.id !== this.activeTurn.conversationId) {
+      this.activeTurn = null;
+    }
     this.#set({
       conversation,
       messages: [...(conversation?.messages ?? [])],
       streaming: false,
       error: null,
     }, 'conversation-opened');
+    return true;
+  }
+
+  canSend(context = this.state.context) {
+    return !this.state.streaming
+      && Boolean(this.state.conversation)
+      && this.state.conversation?.bookId === this.state.bookId
+      && context?.bookId === this.state.bookId;
   }
 
   beginTurn(text) {
     this.messagesBeforeTurn = [...this.state.messages];
+    const contextSnapshot = structuredClone(this.state.context);
+    this.activeTurn = {
+      conversationId: this.state.conversation?.id,
+      bookId: this.state.bookId,
+      contextSnapshot,
+    };
     this.#set({
-      messages: [...this.state.messages, { role: 'user', content: text }],
+      messages: [
+        ...this.state.messages,
+        { role: 'user', content: text, contextSnapshot },
+      ],
       streaming: true,
       error: null,
     }, 'turn-started');
   }
 
   appendDelta(text) {
+    if (!this.activeTurn || !this.state.streaming
+        || this.state.conversation?.id !== this.activeTurn.conversationId) return false;
     const messages = [...this.state.messages];
     const last = messages.at(-1);
     if (last?.role === 'assistant' && last.streaming) {
       messages[messages.length - 1] = { ...last, content: last.content + text };
     } else {
-      messages.push({ role: 'assistant', content: text, streaming: true });
+      messages.push({
+        role: 'assistant',
+        content: text,
+        streaming: true,
+        contextSnapshot: structuredClone(this.activeTurn.contextSnapshot),
+      });
     }
     this.#set({ messages }, 'answer-delta');
+    return true;
   }
 
   completeTurn(conversation) {
+    if (!this.activeTurn || conversation?.bookId !== this.state.bookId
+        || conversation?.id !== this.activeTurn.conversationId) return false;
     this.#set({
       conversation,
       messages: [...(conversation?.messages ?? this.state.messages)],
       streaming: false,
       error: null,
     }, 'turn-completed');
+    this.activeTurn = null;
+    this.messagesBeforeTurn = [];
+    return true;
   }
 
   failTurn(code) {
+    if (!this.activeTurn) {
+      this.#set({ error: code }, 'turn-failed');
+      return;
+    }
     this.#set({
       messages: this.messagesBeforeTurn,
       streaming: false,
       error: code,
     }, 'turn-failed');
+    this.activeTurn = null;
     this.messagesBeforeTurn = [];
   }
 }

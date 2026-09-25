@@ -69,6 +69,31 @@ test('Book AI shows Person/Book/chapter/context, streams answers, and offers fix
   assert.match(api, /deleteBookConversation/);
 });
 
+test('Book AI quick prompts send the active sentence/selection snapshot immediately', () => {
+  assert.match(shell, /function sendQuickBookAiPrompt\(prompt\)/);
+  assert.match(shell, /\['sentence', 'selection'\]\.includes\(bookAi\.state\.context\?\.scope\)/);
+  assert.match(shell, /return sendBookAi\(prompt\.text\)/);
+  assert.match(shell, /void sendQuickBookAiPrompt\(prompt\)/);
+  assert.doesNotMatch(shell, /book-ai-input'\)\.value = prompt\.text/);
+  assert.match(panel, /contextSnapshot = structuredClone\(this\.state\.context\)/);
+  assert.match(panel, /contextSnapshot: structuredClone\(this\.activeTurn\.contextSnapshot\)/);
+  assert.match(shell, /contextMetadataLabel\(message\.contextSnapshot\)/);
+  assert.match(shell, /contextLabel\(context\)/);
+  assert.match(panel, /conversation: null,[\s\S]*?messages: \[\]/);
+  assert.match(panel, /conversation\?\.bookId !== this\.state\.bookId/);
+});
+
+test('Book AI rejects stale async Person/Book/chapter context and keeps the mobile composer visible', () => {
+  assert.match(shell, /openRequest !== bookAiOpenRequest/);
+  assert.match(shell, /read\.profileId\(\) !== personId/);
+  assert.match(shell, /activeView\?\.book\?\.id !== book\.id/);
+  assert.match(shell, /activeView\?\.chapterIndex !== chapterIndex/);
+  assert.match(shell, /bookAiApi\.profile !== personId/);
+  assert.match(shell, /window\.visualViewport\?\.addEventListener\('resize'/);
+  assert.match(shell, /window\.innerHeight - viewport\.height - viewport\.offsetTop/);
+  assert.match(css, /bottom: var\(--book-ai-keyboard-inset, 0px\)/);
+});
+
 test('Book AI open/close and preview return are non-reconstructing scroll-safe paths', () => {
   assert.match(shell, /preservedReaderAnchor = \{\s*scrollTop: scroll\.scrollTop/);
   assert.ok(shell.includes("$('book-scroll').scrollTop = preservedReaderAnchor.scrollTop"));

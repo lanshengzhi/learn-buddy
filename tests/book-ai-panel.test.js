@@ -13,7 +13,14 @@ const identity = {
   bookTitle: 'Nav Book',
   chapterIndex: 2,
   chapterTitle: 'Arrival',
-  context: { scope: 'sentence', anchor: { sentence: 4, chapter: 2 } },
+  context: {
+    bookId: 'book-hash',
+    book: { id: 'book-hash', title: 'Nav Book', contentHash: 'book-hash' },
+    contentHash: 'book-hash',
+    scope: 'sentence',
+    anchor: { sentence: 4, chapter: 2 },
+    text: 'The exact sentence.',
+  },
   selectedText: 'the exact passage',
 };
 
@@ -36,7 +43,11 @@ test('Book AI exposes only the four explicit panel states', () => {
 test('ask state retains active identity/context and conversation messages', () => {
   const panel = new BookAiPanelController();
   panel.openAsk(identity);
-  panel.setConversation({ id: '000001', messages: [{ role: 'assistant', content: 'old answer' }] });
+  panel.setConversation({
+    id: '000001',
+    bookId: identity.bookId,
+    messages: [{ role: 'assistant', content: 'old answer' }],
+  });
   assert.equal(panel.state.personId, 'dad');
   assert.equal(panel.state.bookId, 'book-hash');
   assert.equal(panel.state.chapterIndex, 2);
@@ -45,17 +56,54 @@ test('ask state retains active identity/context and conversation messages', () =
   assert.deepEqual(panel.state.messages, [{ role: 'assistant', content: 'old answer' }]);
 });
 
-test('streamed deltas update one assistant bubble and completed history wins', () => {
+test('opening another Book clears the previous Book thread and rejects a stale conversation', () => {
   const panel = new BookAiPanelController();
   panel.openAsk(identity);
+  panel.setConversation({
+    id: '000001',
+    bookId: identity.bookId,
+    messages: [{ role: 'user', content: 'private old question' }],
+  });
+  panel.openAsk({ ...identity, bookId: 'other-book', bookTitle: 'Other Book' });
+  assert.equal(panel.state.conversation, null);
+  assert.deepEqual(panel.state.messages, []);
+  assert.equal(panel.setConversation({ id: '000002', bookId: identity.bookId }), false);
+  assert.deepEqual(panel.state.messages, []);
+  assert.equal(panel.state.error, 'book_conversation_not_found');
+});
+
+test('returning from a StudyJob keeps the same BookConversation and active context', () => {
+  const panel = new BookAiPanelController();
+  const conversation = {
+    id: '000001', bookId: identity.bookId, messages: [{ role: 'user', content: 'saved question' }],
+  };
+  panel.openAsk(identity);
+  panel.setConversation(conversation);
+  panel.openJob({ status: 'waiting_remote', artifactType: 'mind_map', contextScope: { scope: 'book' } });
+  panel.openAsk(identity);
+  assert.equal(panel.state.conversation, conversation);
+  assert.deepEqual(panel.state.messages, conversation.messages);
+  assert.equal(panel.state.context, identity.context);
+  assert.equal(panel.state.panelState, BookAiPanelState.Ask);
+});
+
+test('streamed deltas retain the sent snapshot and completed history wins', () => {
+  const panel = new BookAiPanelController();
+  panel.openAsk(identity);
+  panel.setConversation({ id: '1', bookId: identity.bookId, messages: [] });
   panel.beginTurn('逐词解释');
   panel.appendDelta('逐 ');
   panel.appendDelta('词解释');
   assert.deepEqual(panel.state.messages, [
-    { role: 'user', content: '逐词解释' },
-    { role: 'assistant', content: '逐 词解释', streaming: true },
+    { role: 'user', content: '逐词解释', contextSnapshot: identity.context },
+    {
+      role: 'assistant',
+      content: '逐 词解释',
+      streaming: true,
+      contextSnapshot: identity.context,
+    },
   ]);
-  panel.completeTurn({ id: '1', messages: [
+  panel.completeTurn({ id: '1', bookId: identity.bookId, messages: [
     { role: 'user', content: '逐词解释' },
     { role: 'assistant', content: '逐 词解释' },
   ] });
@@ -63,10 +111,26 @@ test('streamed deltas update one assistant bubble and completed history wins', (
   assert.equal(panel.state.messages.at(-1).streaming, undefined);
 });
 
+test('a stale stream cannot write into a newly opened Person/Book context', () => {
+  const panel = new BookAiPanelController();
+  panel.openAsk(identity);
+  panel.setConversation({ id: '1', bookId: identity.bookId, messages: [] });
+  panel.beginTurn('旧书问题');
+  panel.openAsk({ ...identity, personId: 'mom', bookId: 'other-book' });
+  assert.equal(panel.appendDelta('旧书回答'), false);
+  assert.equal(panel.completeTurn({
+    id: '1', bookId: identity.bookId, messages: [{ role: 'assistant', content: '旧书回答' }],
+  }), false);
+  assert.deepEqual(panel.state.messages, []);
+  assert.equal(panel.state.streaming, false);
+});
+
 test('an incomplete answer is not shown as a persisted conversation turn', () => {
   const panel = new BookAiPanelController();
   panel.openAsk(identity);
-  panel.setConversation({ id: '1', messages: [{ role: 'assistant', content: 'saved' }] });
+  panel.setConversation({
+    id: '1', bookId: identity.bookId, messages: [{ role: 'assistant', content: 'saved' }],
+  });
   panel.beginTurn('问题');
   panel.appendDelta('未完成的半截回答');
   panel.failTurn('ai_upstream_error');
@@ -107,9 +171,28 @@ test('job status requires a real product job and retains visible type and scope'
   assert.equal(panel.state.job.contextScope.scope, 'selection');
 });
 
-test('the agreed quick prompts are fixed and integration-ready', () => {
-  assert.deepEqual(BOOK_AI_QUICK_PROMPTS.map((prompt) => prompt.label), [
-    '句子结构', '逐词解释', '语法点', '中文翻译',
+test('the agreed quick prompts are fixed, executable, and never imply whole-Book scope', () => {
+  assert.deepEqual(BOOK_AI_QUICK_PROMPTS, [
+    {
+      id: 'sentence-structure',
+      label: '句子结构',
+      text: '请分析当前句子或选区的句子结构，不要重新分段。',
+    },
+    {
+      id: 'word-by-word',
+      label: '逐词解释',
+      text: '请逐词解释当前句子或选区。',
+    },
+    {
+      id: 'grammar',
+      label: '语法点',
+      text: '请说明当前句子或选区中的语法点。',
+    },
+    {
+      id: 'chinese',
+      label: '中文翻译',
+      text: '请把当前句子或选区翻译成中文。',
+    },
   ]);
-  assert.ok(BOOK_AI_QUICK_PROMPTS.every((prompt) => prompt.id && prompt.text));
+  assert.ok(BOOK_AI_QUICK_PROMPTS.every((prompt) => !prompt.text.includes('整本书')));
 });

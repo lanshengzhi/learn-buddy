@@ -57,6 +57,7 @@ const topbarTitle = $('shell-topbar-title');
 const bookAi = new BookAiPanelController({ onEvent: renderBookAi });
 let bookAiApi = null;
 let preservedReaderAnchor = null;
+let bookAiOpenRequest = 0;
 
 // --- render: state → DOM (idempotent; the shell DOM is tiny) ---------------
 
@@ -138,12 +139,23 @@ function renderBookAi() {
   $('book-ai-messages').replaceChildren(...s.messages.map((message) => {
     const p = document.createElement('p');
     p.className = `book-ai-message ${message.role}`;
-    p.textContent = message.content;
+    p.append(document.createTextNode(message.content));
+    if (message.contextSnapshot) {
+      const metadata = document.createElement('small');
+      metadata.className = 'book-ai-message-context';
+      metadata.textContent = contextMetadataLabel(message.contextSnapshot);
+      p.append(metadata);
+    }
     return p;
   }));
   $('book-ai-messages').scrollTop = $('book-ai-messages').scrollHeight;
-  $('book-ai-send').disabled = s.streaming || !s.conversation || !s.context;
+  const canSend = bookAi.canSend();
+  const quickScope = ['sentence', 'selection'].includes(s.context?.scope);
+  $('book-ai-send').disabled = !canSend;
   $('book-ai-input').disabled = s.streaming;
+  for (const button of $('book-ai-quick-prompts').querySelectorAll('button')) {
+    button.disabled = !canSend || !quickScope;
+  }
   $('book-ai-delete-conversation').disabled = s.streaming || !s.conversation;
   $('book-ai-conversation-list').replaceChildren(...s.conversations.map((conversation) => {
     const li = document.createElement('li');
@@ -164,11 +176,23 @@ function renderBookAi() {
 
 function contextLabel(context) {
   const anchor = context.anchor ?? {};
-  if (context.scope === 'selection') return `选区 · 第 ${Number(anchor.start ?? 0) + 1}–${Number(anchor.end ?? 0) + 1} 句`;
-  if (context.scope === 'sentence') return `当前句 · 第 ${Number(anchor.sentence ?? 0) + 1} 句`;
-  if (context.scope === 'chapter') return '当前章节';
+  const chapter = Number.isInteger(anchor.chapter)
+    ? `第 ${anchor.chapter + 1} 章 · ` : '';
+  if (context.scope === 'selection') {
+    return `${chapter}选区 · 第 ${Number(anchor.start ?? 0) + 1}–${Number(anchor.end ?? 0) + 1} 句`;
+  }
+  if (context.scope === 'sentence') {
+    return `${chapter}当前句 · 第 ${Number(anchor.sentence ?? 0) + 1} 句`;
+  }
+  if (context.scope === 'chapter') return `第 ${Number(anchor.chapter ?? 0) + 1} 章`;
   if (context.scope === 'book') return '整本书';
   return context.scope ?? '—';
+}
+
+function contextMetadataLabel(context) {
+  const book = context.book?.title || context.bookId || '这本书';
+  const contentHash = context.contentHash || context.book?.contentHash || '';
+  return `上下文快照 · ${book} · ${contextLabel(context)} · 内容 ${contentHash}`;
 }
 
 function artifactLabel(type) {
@@ -184,7 +208,6 @@ function scopeLabel(scope) {
   if (scope?.scope === 'book') return '整本书（已明确确认云端处理）';
   return scope?.scope ?? '范围未知';
 }
-
 function jobLabel(status) {
   return ({
     not_configured: 'NotebookLM 尚未配置；本地阅读不受影响。',
@@ -485,6 +508,7 @@ function restoreReaderAnchor() {
 }
 
 function closeBookAi({ restore = true } = {}) {
+  bookAiOpenRequest += 1;
   if (studyJobTimer) window.clearTimeout(studyJobTimer);
   studyJobTimer = null;
   bookAi.close();
@@ -503,9 +527,16 @@ function currentSentenceAnchor(view) {
 }
 
 async function openBookAi(selection = null) {
-  const view = window.learnbuddyRead?.bookView?.();
+  const read = window.learnbuddyRead;
+  const view = read?.bookView?.();
   const book = view?.book;
-  if (!book || view.chapterIndex == null || !bookAiApi || typeof window.learnbuddyRead?.compileContext !== 'function') return;
+  const chapterIndex = view?.chapterIndex;
+  const personId = read?.profileId?.();
+  if (!book || chapterIndex == null || !personId || !bookAiApi
+      || bookAiApi.profile !== personId
+      || typeof read?.compileContext !== 'function') return;
+  const openRequest = ++bookAiOpenRequest;
+  const chapterTitle = view.chapter?.title ?? $('chapter-title').textContent;
   rememberReaderAnchor();
   const sentenceIndex = selection?.sentenceIndex ?? currentSentenceAnchor(view);
   const request = selection ? {
@@ -516,20 +547,21 @@ async function openBookAi(selection = null) {
     selectedText: selection.text,
   } : {
     scope: 'sentence',
-    chapter: view.chapterIndex,
+    chapter: chapterIndex,
     sentence: sentenceIndex,
   };
   let context;
   try {
-    context = await window.learnbuddyRead.compileContext({ bookId: book.id, ...request });
+    context = await read.compileContext({ bookId: book.id, ...request });
   } catch (error) {
+    if (openRequest !== bookAiOpenRequest) return;
     preservedReaderAnchor = null;
     bookAi.openAsk({
-      personId: window.learnbuddyRead.profileId(),
+      personId,
       bookId: book.id,
       bookTitle: book.title,
-      chapterIndex: view.chapterIndex,
-      chapterTitle: view.chapter?.title ?? $('chapter-title').textContent,
+      chapterIndex,
+      chapterTitle,
       context: null,
       selectedText: selection?.text ?? '',
     });
@@ -537,36 +569,61 @@ async function openBookAi(selection = null) {
     return;
   }
 
+  const activeView = read.bookView?.();
+  if (openRequest !== bookAiOpenRequest
+      || read.profileId() !== personId
+      || bookAiApi.profile !== personId
+      || activeView?.book?.id !== book.id
+      || activeView?.chapterIndex !== chapterIndex) return;
+
   bookAi.openAsk({
-    personId: window.learnbuddyRead.profileId(),
+    personId,
     bookId: book.id,
     bookTitle: book.title,
-    chapterIndex: view.chapterIndex,
-    chapterTitle: view.chapter?.title ?? $('chapter-title').textContent,
+    chapterIndex,
+    chapterTitle,
     context,
     selectedText: selection?.text ?? '',
   });
   renderArtifactTypeControls();
-  await refreshBookAiConversations();
+  await refreshBookAiConversations({ bookId: book.id, personId });
+  if (openRequest !== bookAiOpenRequest
+      || bookAi.state.bookId !== book.id
+      || bookAi.state.personId !== personId
+      || bookAiApi.profile !== personId) return;
   const active = bookAi.state.conversations.find((conversation) => conversation.active)
     ?? bookAi.state.conversations[0];
   if (active) {
     try {
-      bookAi.setConversation(await bookAiApi.resumeBookConversation(active.id));
+      const conversation = await bookAiApi.resumeBookConversation(active.id);
+      if (openRequest === bookAiOpenRequest
+          && bookAi.state.bookId === book.id
+          && bookAi.state.personId === personId
+          && conversation?.bookId === book.id) bookAi.setConversation(conversation);
     } catch (error) {
-      showBookAiError(error);
+      if (openRequest === bookAiOpenRequest
+          && bookAi.state.bookId === book.id
+          && bookAi.state.personId === personId) showBookAiError(error);
     }
   }
 }
 
-async function refreshBookAiConversations() {
-  if (!bookAiApi || !bookAi.state.bookId) return;
+async function refreshBookAiConversations({
+  bookId = bookAi.state.bookId,
+  personId = bookAi.state.personId,
+} = {}) {
+  if (!bookAiApi || !bookId || bookAiApi.profile !== personId
+      || bookAi.state.bookId !== bookId || bookAi.state.personId !== personId) return;
   try {
-    let conversations = await bookAiApi.listBookConversations(bookAi.state.bookId);
+    let conversations = await bookAiApi.listBookConversations(bookId);
+    if (bookAi.state.bookId !== bookId || bookAi.state.personId !== personId
+        || bookAiApi.profile !== personId) return;
     if (conversations.length === 0) {
-      await bookAiApi.openBookConversation(bookAi.state.bookId);
-      conversations = await bookAiApi.listBookConversations(bookAi.state.bookId);
+      await bookAiApi.openBookConversation(bookId);
+      conversations = await bookAiApi.listBookConversations(bookId);
     }
+    if (bookAi.state.bookId !== bookId || bookAi.state.personId !== personId
+        || bookAiApi.profile !== personId) return;
     bookAi.setConversations(conversations);
   } catch (error) {
     showBookAiError(error);
@@ -576,13 +633,14 @@ async function refreshBookAiConversations() {
 async function sendBookAi(text) {
   const s = bookAi.state;
   const draft = text.trim();
-  if (!draft || !s.conversation || !s.context || s.streaming) return false;
+  if (!draft || !bookAi.canSend() || s.conversation.bookId !== s.bookId) return false;
+  const context = s.context;
   bookAi.beginTurn(draft);
   try {
     await bookAiApi.streamBookConversationMessage(s.conversation.id, {
       bookId: s.bookId,
       text: draft,
-      context: s.context,
+      context,
       onEvent(event) {
         if (event.type === 'delta' && typeof event.text === 'string') bookAi.appendDelta(event.text);
         if (event.type === 'done') bookAi.completeTurn(event.conversation);
@@ -593,6 +651,12 @@ async function sendBookAi(text) {
     showBookAiError(error);
     return false;
   }
+}
+
+function sendQuickBookAiPrompt(prompt) {
+  if (!BOOK_AI_QUICK_PROMPTS.some((item) => item.id === prompt.id)) return false;
+  if (!['sentence', 'selection'].includes(bookAi.state.context?.scope)) return false;
+  return sendBookAi(prompt.text);
 }
 
 selAskBook.addEventListener('click', () => {
@@ -756,13 +820,26 @@ $('book-ai-input').addEventListener('keydown', (event) => {
   $('book-ai-form').requestSubmit();
 });
 const BOOK_AI_COARSE = window.matchMedia('(pointer: coarse)');
+function syncBookAiKeyboardInset() {
+  const viewport = window.visualViewport;
+  const focused = document.body.classList.contains('editor-takeover');
+  const inset = focused && viewport
+    ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)
+    : 0;
+  bookAiPanel.style.setProperty('--book-ai-keyboard-inset', `${inset}px`);
+}
+window.visualViewport?.addEventListener('resize', syncBookAiKeyboardInset);
+window.visualViewport?.addEventListener('scroll', syncBookAiKeyboardInset);
 $('book-ai-input').addEventListener('focus', () => {
-  if (BOOK_AI_COARSE.matches) document.body.classList.add('editor-takeover');
+  if (!BOOK_AI_COARSE.matches) return;
+  document.body.classList.add('editor-takeover');
+  syncBookAiKeyboardInset();
 });
 $('book-ai-input').addEventListener('blur', (event) => {
   if (!BOOK_AI_COARSE.matches || !document.body.classList.contains('editor-takeover')) return;
   if (event.relatedTarget && $('book-ai-form').contains(event.relatedTarget)) return;
   document.body.classList.remove('editor-takeover');
+  syncBookAiKeyboardInset();
 });
 $('book-ai-quick-prompts').replaceChildren(...BOOK_AI_QUICK_PROMPTS.map((prompt) => {
   const button = document.createElement('button');
@@ -770,8 +847,7 @@ $('book-ai-quick-prompts').replaceChildren(...BOOK_AI_QUICK_PROMPTS.map((prompt)
   button.dataset.prompt = prompt.id;
   button.textContent = prompt.label;
   button.addEventListener('click', () => {
-    $('book-ai-input').value = prompt.text;
-    $('book-ai-input').focus({ preventScroll: true });
+    void sendQuickBookAiPrompt(prompt);
   });
   return button;
 }));

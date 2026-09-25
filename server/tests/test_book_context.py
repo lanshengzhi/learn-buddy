@@ -33,6 +33,7 @@ class TestBookContextCompiler(unittest.TestCase):
         self.assertEqual(context["bookId"], self.book_id)
         self.assertEqual(context["contentHash"], self.book_id)
         self.assertEqual(context["scope"], "sentence")
+        self.assertEqual(context["anchor"], {"chapter": 0, "sentence": 0})
         self.assertTrue(context["dataOnly"])
         self.assertNotEqual(context["metadata"]["truncated"], True)
         with self.assertRaises(ApiError) as caught:
@@ -42,7 +43,7 @@ class TestBookContextCompiler(unittest.TestCase):
     def test_selection_has_bounded_neighbor_context_and_truncation_metadata(self):
         context = self.compiler.compile(
             self.book_id, "selection", chapter=0, start=1, end=1, max_chars=10)
-        self.assertEqual(context["anchor"], {"start": 1, "end": 1})
+        self.assertEqual(context["anchor"], {"chapter": 0, "start": 1, "end": 1})
         self.assertLessEqual(context["metadata"]["includedChars"], 10)
         self.assertTrue(context["metadata"]["truncated"])
         self.assertEqual(context["metadata"]["originalChars"], sum(len(item["t"]) for item in self._sentences(0, 0, 2)) + 2)
@@ -100,6 +101,7 @@ class TestBookContextEndpoint(ApiTestCase):
         self.assertEqual(context["bookId"], book_id)
         self.assertEqual(context["scope"], "sentence")
         self.assertEqual(context["contentHash"], book_id)
+        self.assertEqual(context["anchor"], {"chapter": 0, "sentence": 0})
         self.assertNotIn("selectedText", context)
 
         status, _, body = self.json_request("POST", f"/books/{book_id}/context", {
@@ -107,7 +109,9 @@ class TestBookContextEndpoint(ApiTestCase):
             "start": 0, "end": 0, "selectedText": "  Chapter  ",
         })
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)["context"]["selectedText"], "  Chapter  ")
+        selection_context = json.loads(body)["context"]
+        self.assertEqual(selection_context["selectedText"], "  Chapter  ")
+        self.assertEqual(selection_context["anchor"], {"chapter": 0, "start": 0, "end": 0})
 
         status, _, body = self.json_request("POST", f"/books/{book_id}/context", {
             "bookId": "b" * 64, "scope": "sentence",

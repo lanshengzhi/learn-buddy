@@ -121,14 +121,14 @@ class BookContextCompiler:
                 if target >= len(sentences):
                     raise ApiError("chapter_not_found", "sentence is outside chapter")
                 selected = (max(0, target - NEIGHBOR_SENTENCES), min(len(sentences) - 1, target + NEIGHBOR_SENTENCES))
-                anchor = {"sentence": target}
+                anchor = {"chapter": chapter, "sentence": target}
             else:
                 first = _require_int(start if start is not None else 0, "start")
                 last = _require_int(end if end is not None else first, "end")
                 if last < first or last >= len(sentences):
                     raise ApiError("bad_request", "selection is outside chapter")
                 selected = (max(0, first - NEIGHBOR_SENTENCES), min(len(sentences) - 1, last + NEIGHBOR_SENTENCES))
-                anchor = {"start": first, "end": last}
+                anchor = {"chapter": chapter, "start": first, "end": last}
             if scope == "sentence":
                 parts = [_text(sentences[offset]) for offset in range(selected[0], selected[1] + 1)]
             else:

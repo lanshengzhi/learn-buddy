@@ -482,6 +482,16 @@ body[data-face="learn"] #back-to-book {
   background: var(--primary-soft);
 }
 
+.book-ai-message-context {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .book-ai-quick-prompts {
   flex: none;
   display: flex;
@@ -498,6 +508,12 @@ body[data-face="learn"] #back-to-book {
   font: inherit;
   font-size: 12px;
   cursor: pointer;
+}
+
+.book-ai-quick-prompts button:disabled,
+.book-ai-composer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .book-ai-composer {
@@ -631,7 +647,7 @@ body[data-face="learn"] #back-to-book {
     position: fixed;
     top: calc(53px + env(safe-area-inset-top));
     right: 0;
-    bottom: 0;
+    bottom: var(--book-ai-keyboard-inset, 0px);
     left: 0;
     z-index: 45;
     border-left: 0;
