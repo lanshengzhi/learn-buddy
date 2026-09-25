@@ -323,6 +323,48 @@ class TestBooksEndpoint(ApiTestCase):
         self.assertIn(b'"error": "too_large"', response)
 
 
+class _DeterministicNotebookLM:
+    def __init__(self):
+        self.calls = []
+
+    def sync_source(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"outcome": "confirmed", "notebookId": "notebook-1", "sourceId": "source-1"}
+
+
+class TestNotebookLMSyncEndpoint(ApiTestCase):
+    def test_sync_is_explicit_and_reuses_the_content_hash_mapping(self):
+        provider = _DeterministicNotebookLM()
+        self.harness.httpd.app.notebook_sync.provider = provider
+        book_id = json.loads(self.upload()[2])["book"]["id"]
+
+        status, _, body = self.json_request(
+            "POST", f"/books/{book_id}/notebook-sync", {})
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "cloud_confirmation_required")
+        self.assertEqual(provider.calls, [])
+
+        status, _, body = self.json_request(
+            "POST", f"/books/{book_id}/notebook-sync", {"confirmUpload": True})
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result["notebookRef"]["bookContentHash"], book_id)
+        self.assertEqual(result["notebookRef"]["sourceId"], "source-1")
+        self.assertEqual(len(provider.calls), 1)
+
+        status, _, body = self.json_request(
+            "POST", f"/books/{book_id}/notebook-sync", {"confirmUpload": True})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["reused"])
+        self.assertEqual(len(provider.calls), 1)
+
+        status, _, body = self.get(f"/books/{book_id}/notebook-sync")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["notebookRef"]["deletionStatus"], {
+            "local": "active", "remote": "active",
+        })
+
+
 class TestNotebookLMStatusEndpoint(ApiTestCase):
     def test_browser_sees_only_safe_status(self):
         self.harness.httpd.app.notebooklm.url = ""

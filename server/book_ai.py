@@ -18,6 +18,7 @@ atomically.
 import json
 import os
 import re
+import threading
 import time
 
 from library import ApiError, _read_json, _write_json
@@ -284,18 +285,34 @@ class NotebookRefs:
 
     def get(self, book_id):
         self.require_book(book_id)
-        return self._read(book_id)
+        document = self._read(book_id)
+        return self._view(document) if document is not None else None
+
+    def status(self, book_id):
+        """Return independent upload, sync, and deletion states."""
+        return self.get(book_id) or self._empty(book_id, self._timestamp())
 
     def ensure(self, book_id, notebook_id, source_id):
-        """Create a mapping once, or return the existing identical mapping."""
+        """Create a confirmed mapping once, or return the identical mapping."""
         self.require_book(book_id)
         notebook_id = self._require_id(notebook_id, "notebookId")
         source_id = self._require_id(source_id, "sourceId")
         document = self._read(book_id)
         if document is not None:
-            if document.get("notebookId") != notebook_id or document.get("sourceId") != source_id:
+            if document.get("notebookId") not in (None, notebook_id) \
+                    or document.get("sourceId") not in (None, source_id):
                 raise ApiError("bad_request", "book already has a different NotebookRef")
-            return document
+            if document.get("notebookId") is None or document.get("sourceId") is None:
+                self.finish(book_id, document.get("syncRequestId"), {
+                    "outcome": "confirmed",
+                    "notebookId": notebook_id,
+                    "sourceId": source_id,
+                })
+            document = self._read(book_id)
+            if document.get("uploadStatus") != "uploaded" or document.get("syncStatus") != "synced":
+                self.set_upload_status(book_id, "uploaded")
+                self.set_sync_status(book_id, "synced")
+            return self.get(book_id)
         at = self._timestamp()
         document = {
             "bookId": book_id,
@@ -303,17 +320,89 @@ class NotebookRefs:
             "provider": "notebooklm",
             "notebookId": notebook_id,
             "sourceId": source_id,
-            "uploadStatus": "not_uploaded",
-            "syncStatus": "not_synced",
-            "uploadedAt": None,
-            "syncedAt": None,
+            "uploadStatus": "uploaded",
+            "syncStatus": "synced",
+            "mutationStatus": "confirmed",
+            "syncRequestId": None,
+            "lastError": None,
+            "uploadedAt": at,
+            "syncedAt": at,
             "localDeletedAt": None,
             "remoteDeletedAt": None,
             "createdAt": at,
             "updatedAt": at,
         }
         self._write(book_id, document)
-        return document
+        return self._view(document)
+
+    def begin(self, book_id, request_id):
+        """Durably record one provider mutation before bytes leave the host."""
+        self.require_book(book_id)
+        request_id = self._require_id(request_id, "requestId")
+        document = self._read(book_id) or self._empty(book_id, self._timestamp())
+        if document.get("syncRequestId") == request_id:
+            return self._view(document)
+        at = self._timestamp()
+        document.update({
+            "syncRequestId": request_id,
+            "attempt": int(document.get("attempt", 0)) + 1,
+            "uploadStatus": "uploading",
+            "syncStatus": "syncing",
+            "mutationStatus": "in_progress",
+            "lastError": None,
+            "updatedAt": at,
+        })
+        self._write(book_id, document)
+        return self._view(document)
+
+    def finish(self, book_id, request_id, result):
+        """Commit exactly the confirmed/not-sent/rejected/unknown outcome."""
+        self.require_book(book_id)
+        document = self._read(book_id)
+        if document is None or document.get("syncRequestId") != request_id:
+            raise ApiError("notebook_ref_conflict", "a newer Notebook sync owns this mapping")
+        if not isinstance(result, dict):
+            raise ApiError("notebook_ref_conflict", "invalid Notebook sync outcome")
+        outcome = result.get("outcome")
+        if outcome not in ("confirmed", "not_sent", "rejected", "unknown"):
+            raise ApiError("notebook_ref_conflict", "invalid Notebook sync outcome")
+        at = self._timestamp()
+        document["mutationStatus"] = outcome
+        document["updatedAt"] = at
+        if outcome == "confirmed":
+            notebook_id = self._require_id(result.get("notebookId"), "notebookId")
+            source_id = self._require_id(result.get("sourceId"), "sourceId")
+            for field, value in (("notebookId", notebook_id), ("sourceId", source_id)):
+                if document.get(field) not in (None, value):
+                    raise ApiError("bad_request", f"{field} conflicts with the existing NotebookRef")
+                document[field] = value
+            document.update({
+                "uploadStatus": "uploaded",
+                "syncStatus": "synced",
+                "lastError": None,
+                "uploadedAt": at,
+                "syncedAt": at,
+            })
+        elif outcome == "not_sent":
+            document.update({
+                "uploadStatus": "not_sent",
+                "syncStatus": "not_synced",
+                "lastError": result.get("error"),
+            })
+        elif outcome == "rejected":
+            document.update({
+                "uploadStatus": "rejected",
+                "syncStatus": "failed",
+                "lastError": result.get("error"),
+            })
+        else:
+            document.update({
+                "uploadStatus": "unknown",
+                "syncStatus": "unknown",
+                "lastError": result.get("error", "notebooklm_mutation_unknown"),
+            })
+        self._write(book_id, document)
+        return self._view(document)
 
     def set_upload_status(self, book_id, status):
         return self._set_status(book_id, "upload", status)
@@ -322,11 +411,11 @@ class NotebookRefs:
         return self._set_status(book_id, "sync", status)
 
     def delete_local(self, book_id):
-        """Mark local metadata deleted without changing remote resource state."""
+        """Mark local mapping metadata deleted without changing remote state."""
         return self._delete_side(book_id, "localDeletedAt")
 
     def delete_remote(self, book_id):
-        """Mark remote cleanup complete without changing local Book state."""
+        """Mark remote cleanup complete without changing the local Book."""
         return self._delete_side(book_id, "remoteDeletedAt")
 
     def _set_status(self, book_id, side, status):
@@ -341,8 +430,7 @@ class NotebookRefs:
             document["uploadedAt"] = at
         if side == "sync" and status == "synced":
             document["syncedAt"] = at
-        self._write(book_id, document)
-        return document
+        return self._write_and_view(book_id, document)
 
     def _delete_side(self, book_id, field):
         document = self.get(book_id)
@@ -352,8 +440,7 @@ class NotebookRefs:
         if document.get(field) is None:
             document[field] = at
         document["updatedAt"] = at
-        self._write(book_id, document)
-        return document
+        return self._write_and_view(book_id, document)
 
     def _path(self, book_id):
         return os.path.join(self.root, "books", book_id, "notebook-ref.json")
@@ -369,11 +456,119 @@ class NotebookRefs:
     def _write(self, book_id, document):
         _write_json(self._path(book_id), document)
 
+    def _write_and_view(self, book_id, document):
+        self._write(book_id, document)
+        return self._view(document)
+
     def _timestamp(self):
         return int(self.now() * 1000)
+
+    @staticmethod
+    def _empty(book_id, at):
+        return {
+            "bookId": book_id,
+            "bookContentHash": book_id,
+            "provider": "notebooklm",
+            "notebookId": None,
+            "sourceId": None,
+            "uploadStatus": "not_uploaded",
+            "syncStatus": "not_synced",
+            "mutationStatus": "not_sent",
+            "syncRequestId": None,
+            "lastError": None,
+            "uploadedAt": None,
+            "syncedAt": None,
+            "localDeletedAt": None,
+            "remoteDeletedAt": None,
+            "createdAt": at,
+            "updatedAt": at,
+        }
+
+    @staticmethod
+    def _view(document):
+        result = dict(document)
+        result["deletionStatus"] = {
+            "local": "deleted" if document.get("localDeletedAt") is not None else "active",
+            "remote": "deleted" if document.get("remoteDeletedAt") is not None else "active",
+        }
+        return result
 
     @staticmethod
     def _require_id(value, field):
         if not isinstance(value, str) or not value.strip():
             raise ApiError("bad_request", f"{field} must be a non-empty string")
         return value.strip()
+
+
+class NotebookSync:
+    """Explicit, serialized lazy synchronization for one local Book.
+
+    The lock makes concurrent HTTP requests reuse the same durable attempt.
+    An ``unknown`` provider mutation is never submitted again, even when the
+    same user repeats the request; only a known rejection can be retried with
+    a fresh explicit ``retry=True`` decision.
+    """
+
+    def __init__(self, library, refs, provider):
+        self.library = library
+        self.refs = refs
+        self.provider = provider
+        self._lock = threading.Lock()
+
+    def status(self, book_id):
+        return {"notebookRef": self.refs.status(book_id)}
+
+    def sync(self, book_id, confirm_upload=False, retry=False):
+        if confirm_upload is not True:
+            raise ApiError("cloud_confirmation_required", "explicit upload confirmation is required")
+        if not isinstance(retry, bool):
+            raise ApiError("bad_request", "retry must be a boolean")
+        with self._lock:
+            current = self.refs.get(book_id)
+            # Refs written by the pre-#74 persistence layer have remote IDs
+            # but no durable mutation receipt. Treat them as unknown rather
+            # than creating a second Notebook/Source pair.
+            if current is not None and (current.get("notebookId") or current.get("sourceId")) \
+                    and current.get("mutationStatus") is None:
+                return self._result(current, reused=True, retry_required=False,
+                                    blocked_reason="notebooklm_mutation_unknown")
+            if current is not None and current.get("mutationStatus") == "confirmed":
+                return self._result(current, reused=True, retry_required=False)
+            if current is not None and current.get("mutationStatus") in ("unknown", "in_progress"):
+                return self._result(current, reused=True, retry_required=False,
+                                    blocked_reason="notebooklm_mutation_unknown")
+            if current is not None and current.get("mutationStatus") not in (None, "not_sent", "rejected") \
+                    and retry is not True:
+                return self._result(current, reused=True, retry_required=True)
+            attempt = int(current.get("attempt", 0)) + 1 if current is not None else 1
+            request_id = f"{book_id}:{attempt}"
+            book = self.library.get_book(book_id)["book"]
+            data = self.library.epub_data(book_id)
+            self.refs.begin(book_id, request_id)
+            try:
+                outcome = self.provider.sync_source(
+                    book_id=book_id,
+                    content_hash=book_id,
+                    title=book["title"],
+                    file_name=book.get("fileName", "book.epub"),
+                    request_id=request_id,
+                    data=data,
+                )
+            except LookupError as error:
+                outcome = {
+                    "outcome": getattr(error, "outcome", "unknown"),
+                    "error": str(error) or "notebooklm_mutation_unknown",
+                }
+            except Exception:
+                outcome = {"outcome": "unknown", "error": "notebooklm_mutation_unknown"}
+            current = self.refs.finish(book_id, request_id, outcome)
+            return self._result(current, reused=False, retry_required=False)
+
+    @staticmethod
+    def _result(document, reused, retry_required, blocked_reason=None):
+        return {
+            "notebookRef": document,
+            "reused": reused,
+            "requiresExplicitRetry": retry_required,
+            **({"blockedReason": blocked_reason} if blocked_reason else {}),
+        }

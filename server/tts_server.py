@@ -50,7 +50,7 @@ from edge_tts import (
 from library import ApiError, Library
 from book_context import BookContextCompiler
 from conversations import Conversations
-from book_ai import BookConversations, NotebookRefs
+from book_ai import BookConversations, NotebookRefs, NotebookSync
 from notebooklm_host import NotebookLMProxy
 import reading
 
@@ -164,6 +164,9 @@ STATUS_BY_CODE = {
     "ai_usage_limit": 503,
     # Read-owned Book AI (#71).
     "book_conversation_not_found": 404,
+    # Lazy NotebookLM sync (#74).
+    "cloud_confirmation_required": 400,
+    "notebook_ref_conflict": 409,
 }
 
 # Hand-written routes: path says what, `?profile=` says who is asking.
@@ -181,6 +184,8 @@ ROUTE_TABLE = (
     ("POST", re.compile(r"^/books$"), "api_add_book"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)$"), "api_get_book"),
     ("POST", re.compile(r"^/books/(?P<book>[^/]+)/context$"), "api_compile_context"),
+    ("GET", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync$"), "api_notebook_sync_status"),
+    ("POST", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync$"), "api_notebook_sync"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/chapters/(?P<chapter>[^/]+)$"), "api_get_chapter"),
     ("PUT", re.compile(r"^/books/(?P<book>[^/]+)/position$"), "api_put_position"),
     ("GET", re.compile(r"^/conversations$"), "api_list_conversations"),
@@ -230,6 +235,7 @@ class TtsServer:
         # service. The host only proxies its safe status and never sees its
         # credentials or profile files.
         self.notebooklm = notebooklm or NotebookLMProxy()
+        self.notebook_sync = NotebookSync(self.library, self.notebook_refs, self.notebooklm)
 
     def _use_azure(self):
         """Azure is primary exactly when it holds a subscription key."""
@@ -400,6 +406,17 @@ class TtsHandler(BaseHTTPRequestHandler):
             max_chars=body.get("maxChars"),
         )
         self._json_response(200, {"context": context})
+
+    def api_notebook_sync_status(self, params, groups):
+        self._json_response(200, self.server.app.notebook_sync.status(groups["book"]))
+
+    def api_notebook_sync(self, params, groups):
+        body = self._read_json()
+        result = self.server.app.notebook_sync.sync(
+            groups["book"], confirm_upload=body.get("confirmUpload"),
+            retry=body.get("retry", False),
+        )
+        self._json_response(200, result)
 
     def api_get_chapter(self, params, groups):
         self._json_response(200, self._library().get_chapter(

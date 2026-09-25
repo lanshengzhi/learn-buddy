@@ -51,7 +51,8 @@ class FakeAzureSynthesizer:
 
 class ServerHarness:
     def __init__(self, static_dir, fake_synth, pace_interval=0.01, sleep=time.sleep,
-                 normalizer=None, azure=None, data_dir=None, library_obj=None):
+                 normalizer=None, azure=None, data_dir=None, library_obj=None,
+                 notebooklm=None):
         self.tmp = tempfile.mkdtemp()
         self.cache_dir = os.path.join(self.tmp, "cache")
         # Explicit fake providers so tests never depend on the developer's
@@ -68,6 +69,7 @@ class ServerHarness:
             normalizer=normalizer,
             data_dir=self.data_dir,
             library=library_obj,
+            notebooklm=notebooklm,
         )
 
         self.httpd = AppServer(("127.0.0.1", 0), TtsHandler, server_obj)
