@@ -48,6 +48,7 @@ from edge_tts import (
     validate_request,
 )
 from library import ApiError, Library
+from book_context import BookContextCompiler
 from conversations import Conversations
 from book_ai import BookConversations, NotebookRefs
 import reading
@@ -176,6 +177,7 @@ ROUTE_TABLE = (
     ("GET", re.compile(r"^/books$"), "api_list_books"),
     ("POST", re.compile(r"^/books$"), "api_add_book"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)$"), "api_get_book"),
+    ("POST", re.compile(r"^/books/(?P<book>[^/]+)/context$"), "api_compile_context"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/chapters/(?P<chapter>[^/]+)$"), "api_get_chapter"),
     ("PUT", re.compile(r"^/books/(?P<book>[^/]+)/position$"), "api_put_position"),
     ("GET", re.compile(r"^/conversations$"), "api_list_conversations"),
@@ -204,6 +206,7 @@ class TtsServer:
         data_dir = data_dir or DEFAULT_DATA_DIR
         self.library = library if library is not None else Library(data_dir)
         self.conversations = Conversations(data_dir, self.library.require_profile)
+        self.book_context = BookContextCompiler(self.library)
         # Read-owned Book AI data is host-owned from #67 onward. Routes are
         # added separately by #71; keeping the stores on the app here makes the
         # persistence boundary explicit and ready for that API slice.
@@ -366,6 +369,21 @@ class TtsHandler(BaseHTTPRequestHandler):
 
     def api_get_book(self, params, groups):
         self._json_response(200, self._library().get_book(groups["book"], params.get("profile", "") or None))
+
+    def api_compile_context(self, params, groups):
+        body = self._read_json()
+        scope = body.get("scope")
+        context = self.server.app.book_context.compile(
+            groups["book"], scope,
+            chapter=body.get("chapter", 0),
+            sentence=body.get("sentence"),
+            start=body.get("start"),
+            end=body.get("end"),
+            expected_book_id=body.get("bookId"),
+            content_hash=body.get("contentHash"),
+            max_chars=body.get("maxChars"),
+        )
+        self._json_response(200, {"context": context})
 
     def api_get_chapter(self, params, groups):
         self._json_response(200, self._library().get_chapter(
