@@ -140,6 +140,16 @@
                 placeholder="输入问题，Enter 发送，Shift+Enter 换行" aria-label="Book AI 问题"></textarea>
               <button id="book-ai-send" type="submit" aria-label="发送给 Book AI">↑</button>
             </form>
+            <fieldset id="book-ai-notebook-sync" class="book-ai-artifact-types">
+              <legend>NotebookLM 云端同步</legend>
+              <p id="book-ai-notebook-status" class="muted">尚未同步；生成前需要上传整本书并确认。</p>
+              <label id="book-ai-notebook-confirm-label">
+                <input id="book-ai-notebook-confirm-input" type="checkbox">
+                我确认将这本 EPUB 上传到 Google NotebookLM
+              </label>
+              <button id="book-ai-notebook-sync-button" class="btn secondary" type="button">确认上传并同步</button>
+              <button id="book-ai-notebook-cleanup-button" class="plain" type="button" hidden>确认清理远端 Notebook/Source</button>
+            </fieldset>
             <fieldset id="book-ai-artifact-types" class="book-ai-artifact-types">
               <legend>生成学习产物（NotebookLM）</legend>
               <div id="book-ai-artifact-buttons"></div>

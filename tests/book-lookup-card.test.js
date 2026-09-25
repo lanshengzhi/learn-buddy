@@ -49,6 +49,9 @@ test('baked Japanese ruby resolves the exact selected range', () => {
   assert.equal(contextualReadingForRange(sentence, 0, 3, 'ja'), 'ぎんこうに');
   assert.equal(contextualReadingForRange(sentence, 0, 4, 'ja'), 'ぎんこうにい');
   assert.equal(contextualReadingForRange(sentence, 0, 4, 'zh'), '');
+  assert.equal(contextualReadingForRange(sentence, 0, 1, 'ja'), '');
+  assert.equal(contextualReadingForRange(sentence, 1, 4, 'ja'), '');
+  assert.equal(contextualReadingForRange(sentence, 0, 3, 'ja'), 'ぎんこうに');
 });
 
 test('a selected phrase keeps its exact surface and current sentence', () => {

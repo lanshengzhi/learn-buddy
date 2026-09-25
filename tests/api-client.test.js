@@ -130,6 +130,61 @@ test('a rejected upload/books request surfaces the server’s error code', async
   });
 });
 
+test('StudyJob cancel, retry, and recheck all unwrap the canonical job response', async () => {
+  const calls = [];
+  const jobs = {
+    cancelled: { id: 'job-cancelled', state: 'cancelled' },
+    retried: { id: 'job-retried', state: 'queued' },
+    rechecked: { id: 'job-rechecked', state: 'unknown' },
+  };
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      if (path.includes('/cancel')) return response({ job: jobs.cancelled });
+      if (path.includes('/retry')) return response({ job: jobs.retried });
+      return response({ job: jobs.rechecked });
+    },
+  });
+
+  assert.deepEqual(await api.cancelStudyJob('job-1'), jobs.cancelled);
+  assert.deepEqual(await api.retryStudyJob('job-1'), jobs.retried);
+  assert.deepEqual(await api.recheckStudyJob('job-1'), jobs.rechecked);
+  assert.deepEqual(calls.map(({ path, options }) => `${options.method} ${path}`), [
+    'POST /study-jobs/job-1/cancel?profile=dad',
+    'POST /study-jobs/job-1/retry?profile=dad',
+    'POST /study-jobs/job-1/recheck?profile=dad',
+  ]);
+  assert.deepEqual(JSON.parse(calls[0].options.body), { confirm: true });
+});
+
+test('Notebook sync and remote cleanup expose explicit confirmation contracts', async () => {
+  const calls = [];
+  const ref = { mutationStatus: 'confirmed', notebookId: 'nb-1', sourceId: 'src-1' };
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      if (options?.method === 'POST' && path.includes('remote-cleanup')) {
+        return response({ notebookRef: ref, cleanup: { status: 'unsupported' } });
+      }
+      if (options?.method === 'POST') return response({ notebookRef: ref, reused: false });
+      return response({ notebookRef: ref });
+    },
+  });
+
+  assert.deepEqual((await api.getNotebookSync('book-hash')).notebookRef, ref);
+  assert.equal((await api.syncNotebook('book-hash', { confirmUpload: true })).notebookRef.mutationStatus, 'confirmed');
+  assert.equal((await api.cleanupNotebookRemote('book-hash')).cleanup.status, 'unsupported');
+  assert.deepEqual(calls.map(({ path, options }) => `${options?.method ?? 'GET'} ${path}`), [
+    'GET /books/book-hash/notebook-sync?profile=dad',
+    'POST /books/book-hash/notebook-sync?profile=dad',
+    'POST /books/book-hash/notebook-sync/remote-cleanup?profile=dad',
+  ]);
+  assert.deepEqual(JSON.parse(calls[1].options.body), { confirmUpload: true, retry: false });
+  assert.deepEqual(JSON.parse(calls[2].options.body), { confirm: true });
+});
+
 test('StudyArtifact list, preview, download, delete, regenerate, and cleanup stay Person-scoped', async () => {
   const calls = [];
   const api = new ServerApi({

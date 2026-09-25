@@ -157,6 +157,27 @@ class NotebookLMProxy:
             "cancel", job_id=job_id, request_id=request_id, book_id=book_id,
             content_hash=content_hash, person_id=person_id)
 
+    def delete_notebook(self, *, notebook_id, source_id):
+        """Explicit Notebook/Source cleanup; the local Book stays untouched."""
+        if not all(isinstance(value, str) and value.strip() for value in (notebook_id, source_id)):
+            return {"outcome": "failed", "error": "notebook_cleanup_failed"}
+        if not self.url:
+            return {"outcome": "failed", "error": "notebooklm_not_configured"}
+        payload = {"service": "notebooklm", "notebookId": notebook_id, "sourceId": source_id}
+        request = urllib.request.Request(
+            self.url.rstrip("/") + "/operations/notebook/delete",
+            data=json.dumps(payload).encode("utf-8"), method="POST",
+            headers={"Content-Type": "application/json; charset=utf-8"})
+        try:
+            with self._urlopen(request, timeout=self.operation_timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return {"outcome": "failed", "error": "notebook_cleanup_failed"}
+        allowed = ("deleted", "not_found", "unsupported", "partial", "failed")
+        if not isinstance(result, dict) or result.get("outcome") not in allowed:
+            return {"outcome": "failed", "error": "notebook_cleanup_failed"}
+        return result
+
     def delete_artifact(self, *, artifact_id, remote):
         """Explicit remote cleanup; never removes local data."""
         if not isinstance(remote, dict) or remote.get("provider") != "notebooklm" \
@@ -173,7 +194,8 @@ class NotebookLMProxy:
                 result = json.loads(response.read().decode("utf-8"))
         except Exception:
             return {"outcome": "failed", "error": "artifact_cleanup_failed"}
-        if not isinstance(result, dict) or result.get("outcome") not in ("deleted", "not_found", "partial", "failed"):
+        if not isinstance(result, dict) or result.get("outcome") not in (
+                "deleted", "not_found", "unsupported", "partial", "failed"):
             return {"outcome": "failed", "error": "artifact_cleanup_failed"}
         return {"outcome": result["outcome"], **({"error": "artifact_cleanup_failed"} if result.get("error") else {})}
 

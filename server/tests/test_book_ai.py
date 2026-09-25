@@ -72,6 +72,27 @@ class TestBookConversations(BookAiStorageTestCase):
         self.assertTrue(self.conversations.activate("dad", first["id"])["conversation"]["active"])
         self.assertFalse(self.conversations.get("dad", second["id"])["conversation"]["active"])
 
+    def test_historical_snapshots_survive_restart_and_context_change(self):
+        conversation = self.conversations.create("dad", self.book_id)["conversation"]
+        first = {
+            "bookId": self.book_id, "contentHash": self.book_id, "scope": "sentence",
+            "anchor": {"sentence": 0}, "text": "first sentence", "dataOnly": True,
+        }
+        second = {
+            "bookId": self.book_id, "contentHash": self.book_id, "scope": "selection",
+            "anchor": {"start": 0, "end": 1}, "text": "selected", "dataOnly": True,
+        }
+        self.conversations.append_turn("dad", conversation["id"], "first", "answer one", first)
+        restarted = BookConversations(
+            self.root, self.library.require_profile, self.library.require_book,
+            now=lambda: 2000.0)
+        turn = restarted.prepare_message(
+            "dad", conversation["id"], self.book_id, "second", second)
+        self.assertEqual(turn["messages"][0]["contextSnapshot"], first)
+        self.assertEqual(turn["messages"][1]["contextSnapshot"], first)
+        self.assertEqual(turn["contextSnapshot"], second)
+        self.assertEqual(turn["messages"][-1], {"role": "user", "content": "second"})
+
     def test_delete_is_local_soft_delete_and_remote_mapping_is_independent(self):
         conversation = self.conversations.create("dad", self.book_id)["conversation"]
         ref = self.refs.ensure(self.book_id, "remote-notebook-1", "remote-source-1")
@@ -133,7 +154,7 @@ class TestNotebookRefs(BookAiStorageTestCase):
         self.assertNotEqual(first["bookId"], first["sourceId"])
         self.assertEqual(len(os.listdir(os.path.join(self.root, "books", self.book_id))), 4)
 
-    def test_status_timestamps_and_local_remote_deletion_are_separate(self):
+    def test_status_timestamps_and_local_remote_cleanup_are_separate(self):
         self.refs.ensure(self.book_id, "notebook-remote", "source-remote")
         uploaded = self.refs.set_upload_status(self.book_id, "uploaded")
         self.assertEqual(uploaded["uploadedAt"], 1_000_000)
@@ -141,11 +162,23 @@ class TestNotebookRefs(BookAiStorageTestCase):
         synced = self.refs.set_sync_status(self.book_id, "synced")
         self.assertEqual(synced["syncedAt"], 1_000_000)
 
-        remote_deleted = self.refs.delete_remote(self.book_id)
-        self.assertEqual(remote_deleted["remoteDeletedAt"], 1_000_000)
-        self.assertIsNone(remote_deleted["localDeletedAt"])
+        class UnsupportedProvider:
+            def __init__(self):
+                self.calls = []
+
+            def delete_notebook(self, **request):
+                self.calls.append(request)
+                return {"outcome": "unsupported", "error": "notebook_cleanup_unsupported"}
+
+        provider = UnsupportedProvider()
+        remote = self.refs.cleanup_remote(self.book_id, provider)
+        self.assertEqual(remote["remoteCleanup"]["status"], "unsupported")
+        self.assertIsNone(remote["remoteDeletedAt"])
+        self.assertIsNone(remote["localDeletedAt"])
+        self.assertEqual(provider.calls, [{"notebook_id": "notebook-remote", "source_id": "source-remote"}])
         self.assertTrue(os.path.isfile(os.path.join(
             self.root, "books", self.book_id, "notebook-ref.json")))
+        self.assertTrue(os.path.isfile(os.path.join(self.root, "books", self.book_id, "book.epub")))
         local_deleted = self.refs.delete_local(self.book_id)
         self.assertEqual(local_deleted["localDeletedAt"], 1_000_000)
 

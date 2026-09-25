@@ -116,7 +116,15 @@ class AiProxy:
             if not isinstance(message, dict) or message.get("role") not in ("user", "assistant") \
                     or not isinstance(message.get("content"), str) or not message["content"].strip():
                 raise ValueError("messages must be {role: user|assistant, content} entries")
-            cleaned.append({"role": message["role"], "content": message["content"]})
+            cleaned_message = {"role": message["role"], "content": message["content"]}
+            if "contextSnapshot" in message:
+                snapshot = message["contextSnapshot"]
+                if snapshot is not None and (not isinstance(snapshot, dict)
+                                             or not snapshot.get("bookId")
+                                             or not snapshot.get("contentHash")):
+                    raise ValueError("historical BookContext snapshots must be valid objects")
+                cleaned_message["contextSnapshot"] = snapshot
+            cleaned.append(cleaned_message)
         if cleaned[-1]["role"] != "user":
             raise ValueError("the last message must be the new user message")
         return cleaned

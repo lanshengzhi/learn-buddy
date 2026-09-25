@@ -206,6 +206,7 @@ ROUTE_TABLE = (
     ("POST", re.compile(r"^/books/(?P<book>[^/]+)/context$"), "api_compile_context"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync$"), "api_notebook_sync_status"),
     ("POST", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync$"), "api_notebook_sync"),
+    ("POST", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync/remote-cleanup$"), "api_notebook_sync_remote_cleanup"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/study-jobs$"), "api_list_study_jobs"),
     ("POST", re.compile(r"^/books/(?P<book>[^/]+)/study-jobs$"), "api_create_study_job"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/study-artifacts$"), "api_list_study_artifacts"),
@@ -457,6 +458,14 @@ class TtsHandler(BaseHTTPRequestHandler):
             retry=body.get("retry", False),
         )
         self._json_response(200, result)
+
+    def api_notebook_sync_remote_cleanup(self, params, groups):
+        body = self._read_json()
+        if body.get("confirm") is not True:
+            raise ApiError("bad_request", "explicit Notebook/Source cleanup confirmation is required")
+        ref = self.server.app.notebook_refs.cleanup_remote(
+            groups["book"], self.server.app.notebooklm)
+        self._json_response(200, {"notebookRef": ref, "cleanup": ref["remoteCleanup"]})
 
     def api_list_study_jobs(self, params, groups):
         result = self.server.app.study_jobs.list(params.get("profile", ""), groups["book"])

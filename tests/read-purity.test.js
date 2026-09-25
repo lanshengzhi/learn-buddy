@@ -27,6 +27,7 @@ test('legacy ids remain unique; Read lookup returns while study/library tools st
     'text-input', 'history-pane', 'history-list', 'hl-toggle', 'library-btn',
     'library-overlay', 'tab-lookup', 'lookup-drawer', 'book-ai-panel', 'book-ai-open',
     'book-ai-form', 'book-ai-quick-prompts', 'book-ai-job', 'book-ai-job-list',
+    'book-ai-notebook-sync-button', 'book-ai-notebook-cleanup-button',
     'book-ai-artifact-list', 'book-ai-artifact-status', 'book-artifact-preview',
     'book-artifact-return',
   ]) assert.equal(occurrences(id), 1, `${id} exists exactly once`);
@@ -117,6 +118,12 @@ test('Book AI task and artifact centers keep every safe action reachable', () =>
   assert.match(shell, /refreshBookAiJobs/);
   assert.match(shell, /bookAi\.setJobs/);
   assert.match(shell, /bookAi\.openJob\(jobView\(job\)\)/);
+  assert.match(html, /id="book-ai-notebook-confirm-input"[^>]*type="checkbox"/);
+  assert.match(html, /确认将这本 EPUB 上传到 Google NotebookLM/);
+  assert.match(shell, /getNotebookSync\(bookId\)/);
+  assert.match(shell, /syncNotebook\(bookAi\.state\.bookId, \{ confirmUpload: true \}\)/);
+  assert.match(shell, /!notebookConfirmed\(\)/);
+  assert.match(shell, /cleanupNotebookRemote\(bookAi\.state\.bookId\)/);
   for (const action of [
     'openArtifactPreview', 'studyArtifactDownloadUrl', 'deleteStudyArtifact',
     'regenerateStudyArtifact', 'remoteCleanupStudyArtifact', 'retryStudyJob',

@@ -145,6 +145,22 @@ class NotebookLMWorkerApp:
         return self._job_result(request, result["state"], result.get("error"),
                                 result.get("artifact"), result.get("remote"))
 
+    def delete_notebook(self, request):
+        if not isinstance(request, dict) or request.get("service") != "notebooklm" \
+                or not all(isinstance(request.get(key), str) and request[key].strip()
+                           for key in ("notebookId", "sourceId")):
+            return {"outcome": "failed", "error": "notebook_cleanup_failed"}
+        try:
+            result = self.job_provider.delete_notebook(**request)
+        except AttributeError:
+            return {"outcome": "unsupported", "error": "notebook_cleanup_unsupported"}
+        except Exception:
+            return {"outcome": "failed", "error": "notebook_cleanup_failed"}
+        allowed = ("deleted", "not_found", "unsupported", "partial", "failed")
+        if not isinstance(result, dict) or result.get("outcome") not in allowed:
+            return {"outcome": "failed", "error": "notebook_cleanup_failed"}
+        return result
+
     def delete_artifact(self, request):
         if not isinstance(request, dict) or request.get("service") != "notebooklm" \
                 or not isinstance(request.get("artifactId"), str) or not request["artifactId"].strip() \
@@ -403,10 +419,14 @@ class NotebookLMJobProvider:
             result["remote"] = remote
             return result
 
+    def delete_notebook(self, **request):
+        # notebooklm-py 0.8.2 exposes no stable Notebook/Source deletion API.
+        return {"outcome": "unsupported", "error": "notebook_cleanup_unsupported"}
+
     def delete_artifact(self, **request):
         # notebooklm-py has no stable artifact-delete API. The worker reports
-        # not_found rather than claiming a remote deletion it cannot verify.
-        return {"outcome": "not_found"}
+        # unsupported rather than claiming a remote deletion it cannot verify.
+        return {"outcome": "unsupported", "error": "artifact_cleanup_unsupported"}
 
     def cancel_job(self, **request):
         # notebooklm-py 0.8.2 has no public generation-cancel method.
@@ -495,7 +515,8 @@ class NotebookLMWorkerHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         if path in ("/operations/study-jobs", "/operations/study-jobs/reconcile",
-                    "/operations/study-jobs/cancel", "/operations/artifacts/delete"):
+                    "/operations/study-jobs/cancel", "/operations/artifacts/delete",
+                    "/operations/notebook/delete"):
             try:
                 length = int(self.headers.get("Content-Length", ""))
                 if length < 0 or length > 64 * 1024:
@@ -509,6 +530,8 @@ class NotebookLMWorkerHandler(BaseHTTPRequestHandler):
                 result = self.server.worker_app.cancel_job(request)
             elif path.endswith("/artifacts/delete"):
                 result = self.server.worker_app.delete_artifact(request)
+            elif path.endswith("/notebook/delete"):
+                result = self.server.worker_app.delete_notebook(request)
             elif path.endswith("/reconcile"):
                 result = self.server.worker_app.reconcile_job(request)
             else:

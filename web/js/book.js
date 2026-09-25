@@ -104,6 +104,7 @@ export class BookView {
 
   /** Opens a Book at its Reading position (or chapter 0) and switches the view. */
   async openBook(bookId) {
+    await this.#replayPendingPosition(bookId);
     let book;
     let toc = [];
     try {
@@ -805,11 +806,40 @@ export class BookView {
 
   flushPosition() {
     if (this.positionTimer == null || this.lastSentence == null) return;
+    sessionStorage.setItem(this.#pendingPositionKey(), JSON.stringify({
+      bookId: this.book.id,
+      chapter: this.chapterIndex,
+      sentence: this.lastSentence,
+    }));
     clearTimeout(this.positionTimer);
     this.positionTimer = null;
     // keepalive: the fetch must survive the navigation that triggered the
     // pagehide — a plain fetch is aborted and the position is lost (#17).
     void this.api.putPosition(this.book.id, this.chapterIndex, this.lastSentence, { keepalive: true }).catch(() => {});
+  }
+
+  #pendingPositionKey() {
+    return `learnbuddy.pending-position:${this.api.profile ?? ''}:${this.book?.id ?? ''}`;
+  }
+
+  async #replayPendingPosition(bookId) {
+    const key = `learnbuddy.pending-position:${this.api.profile ?? ''}:${bookId}`;
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return;
+    sessionStorage.removeItem(key);
+    let pending;
+    try {
+      pending = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (pending?.bookId !== bookId || !Number.isInteger(pending?.chapter)
+        || !Number.isInteger(pending?.sentence) || pending.chapter < 0 || pending.sentence < 0) return;
+    try {
+      await this.api.putPosition(bookId, pending.chapter, pending.sentence);
+    } catch {
+      // The normal Book-open path still remains usable if this replay fails.
+    }
   }
 
   #restoreScroll() {

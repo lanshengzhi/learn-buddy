@@ -103,10 +103,13 @@ class BookConversations:
         snapshot = json.loads(json.dumps(context_snapshot, ensure_ascii=False))
         if snapshot.get("bookId") != book_id:
             raise ApiError("book_not_found", "context belongs to another book")
-        history = [
-            {"role": message["role"], "content": message["content"]}
-            for message in conversation["messages"]
-        ]
+        history = []
+        for message in conversation["messages"]:
+            historical = {"role": message["role"], "content": message["content"]}
+            if isinstance(message.get("contextSnapshot"), dict):
+                historical["contextSnapshot"] = json.loads(json.dumps(
+                    message["contextSnapshot"], ensure_ascii=False))
+            history.append(historical)
         history.append({"role": "user", "content": text})
         return {
             "conversation": conversation,
@@ -332,6 +335,7 @@ class NotebookRefs:
             "syncedAt": at,
             "localDeletedAt": None,
             "remoteDeletedAt": None,
+            "remoteCleanup": {"status": "not_requested", "error": None},
             "createdAt": at,
             "updatedAt": at,
         }
@@ -417,9 +421,28 @@ class NotebookRefs:
         """Mark local mapping metadata deleted without changing remote state."""
         return self._delete_side(book_id, "localDeletedAt")
 
-    def delete_remote(self, book_id):
-        """Mark remote cleanup complete without changing the local Book."""
-        return self._delete_side(book_id, "remoteDeletedAt")
+    def cleanup_remote(self, book_id, provider):
+        """Attempt remote cleanup without deleting the Book or local mapping."""
+        document = self.get(book_id)
+        if document is None or document.get("mutationStatus") != "confirmed" \
+                or not document.get("notebookId") or not document.get("sourceId"):
+            raise ApiError("notebook_ref_not_found", "no confirmed NotebookRef is available")
+        try:
+            result = provider.delete_notebook(
+                notebook_id=document["notebookId"], source_id=document["sourceId"])
+            allowed = ("deleted", "not_found", "unsupported", "partial", "failed")
+            if not isinstance(result, dict) or result.get("outcome") not in allowed:
+                raise LookupError("notebook_cleanup_failed")
+            status = result["outcome"]
+            error = result.get("error")
+        except Exception:
+            status, error = "failed", "notebook_cleanup_failed"
+        at = self._timestamp()
+        document["remoteCleanup"] = {"status": status, "error": error, "at": at}
+        if status in ("deleted", "not_found"):
+            document["remoteDeletedAt"] = at
+        document["updatedAt"] = at
+        return self._write_and_view(book_id, document)
 
     def _set_status(self, book_id, side, status):
         document = self.get(book_id)
@@ -483,6 +506,7 @@ class NotebookRefs:
             "syncedAt": None,
             "localDeletedAt": None,
             "remoteDeletedAt": None,
+            "remoteCleanup": {"status": "not_requested", "error": None},
             "createdAt": at,
             "updatedAt": at,
         }
@@ -494,6 +518,7 @@ class NotebookRefs:
             "local": "deleted" if document.get("localDeletedAt") is not None else "active",
             "remote": "deleted" if document.get("remoteDeletedAt") is not None else "active",
         }
+        result.setdefault("remoteCleanup", {"status": "not_requested", "error": None})
         return result
 
     @staticmethod
@@ -664,9 +689,11 @@ class StudyJobs:
             raise ApiError("bad_request", "invalid artifactType or contextScope")
         with self._lock:
             existing = next((job for job in self._read_all(profile_id)
-                             if job.get("requestId") == request_id), None)
+                             if request_id in (job.get("requestIdentities") or [job.get("requestId")])), None)
             if existing is not None:
-                if (existing.get("bookId") != book_id or existing.get("request") != request):
+                identities = existing.get("requestIdentities") or {}
+                prior_request = identities.get(request_id)
+                if existing.get("bookId") != book_id or prior_request != request:
                     raise ApiError("study_job_conflict", "requestId belongs to a different StudyJob")
                 return {"job": self._view(existing), "created": False}
             at = self._timestamp()
@@ -674,6 +701,7 @@ class StudyJobs:
             document = {
                 "id": job_id,
                 "requestId": request_id,
+                "requestIdentities": {request_id: json.loads(json.dumps(request, ensure_ascii=False))},
                 "personId": profile_id,
                 "bookId": book_id,
                 "provider": "notebooklm",
@@ -706,6 +734,9 @@ class StudyJobs:
             if state == "ready":
                 if not isinstance(artifact_result, dict) or not artifact_result:
                     raise ApiError("bad_request", "ready requires a controlled artifact result")
+                if not isinstance(document.get("artifactId"), str) or not document["artifactId"].strip():
+                    raise ApiError("invalid_study_job_transition",
+                                   "ready requires a durably published local artifact")
                 if not _valid_remote_provenance(artifact_result.get("remote"), require_artifact=True):
                     raise ApiError("bad_request", "ready requires controlled remote provenance")
             elif artifact_result is not None:
@@ -739,12 +770,27 @@ class StudyJobs:
             return self._view(document)
 
     def retry(self, profile_id, job_id):
-        """Requeue only a known local failure after an explicit user action."""
+        """Authorize a fresh worker attempt for a known local failure."""
         with self._lock:
             document = self._require(profile_id, job_id)
             if document["state"] not in ("failed", "not_configured"):
                 raise ApiError("study_job_not_retryable", f"StudyJob is already {document['state']}")
-            return self.transition(profile_id, job_id, "queued", reason="user_retry")
+            attempt = int(document.get("retryAttempt", 0)) + 1
+            previous_request = document["request"]
+            request_id = f"study-job:retry:{uuid.uuid4().hex}"
+            request = dict(previous_request)
+            request["requestId"] = request_id
+            identities = dict(document.get("requestIdentities") or {})
+            identities[document["requestId"]] = previous_request
+            identities[request_id] = json.loads(json.dumps(request, ensure_ascii=False))
+            document["requestId"] = request_id
+            document["request"] = request
+            document["requestIdentities"] = identities
+            document["retryAttempt"] = attempt
+            document["artifactId"] = None
+            document["updatedAt"] = self._timestamp()
+            self._write(profile_id, document)
+            return self.transition(profile_id, job_id, "queued", reason="user_retry_authorized")
 
     def set_artifact(self, profile_id, job_id, artifact_id):
         with self._lock:
@@ -903,28 +949,37 @@ class StudyArtifacts:
                              if r.get("jobId") == job["id"] and r.get("status") != "deleted"), None)
             if existing:
                 return self._public(existing)
-            artifact_id = f"artifact-{uuid.uuid4().hex}"
-            data = None
+            artifact_id = "artifact-" + hashlib.sha256(
+                f"{profile_id}:{job['id']}".encode("utf-8")).hexdigest()[:32]
             encoded = artifact_result.get("dataBase64")
-            if encoded is not None:
-                try:
-                    data = base64.b64decode(encoded, validate=True)
-                except (ValueError, TypeError):
-                    raise ApiError("artifact_download_failed", "invalid downloaded artifact")
-            if data is None:
-                # Older deterministic workers only returned a receipt. Keep the
-                # record viewable, while making the missing original explicit.
-                data = b""
+            if not isinstance(encoded, str) or not encoded:
+                raise ApiError("artifact_download_failed", "downloaded artifact bytes are required")
+            try:
+                data = base64.b64decode(encoded, validate=True)
+            except (ValueError, TypeError):
+                raise ApiError("artifact_download_failed", "invalid downloaded artifact")
             content_hash = hashlib.sha256(data).hexdigest()
-            if encoded is not None and artifact_result.get("byteSize") not in (None, len(data)):
+            if artifact_result.get("byteSize") not in (None, len(data)):
                 raise ApiError("artifact_download_failed", "downloaded artifact size mismatch")
+            if not _valid_remote_provenance(remote, require_artifact=True) \
+                    or artifact_result.get("remote") != remote:
+                raise ApiError("artifact_download_failed", "downloaded artifact provenance is invalid")
             suffix = {"learning_report": "md", "mind_map": "json",
                       "flashcard_set": "json", "audio_explanation": "m4a"}[job["request"]["artifactType"]]
             directory = os.path.join(self._dir(profile_id), artifact_id)
             os.makedirs(directory, exist_ok=True)
             original = os.path.join(directory, f"original.{suffix}")
-            with open(original, "wb") as handle:
+            temporary = original + ".tmp"
+            with open(temporary, "wb") as handle:
                 handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, original)
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
             at = self._timestamp()
             record = {
                 "id": artifact_id, "jobId": job["id"], "personId": profile_id,
@@ -965,7 +1020,8 @@ class StudyArtifacts:
             remote = record.get("remoteProvenance") or {}
             try:
                 result = provider.delete_artifact(artifact_id=record["id"], remote=remote)
-                if not isinstance(result, dict) or result.get("outcome") not in ("deleted", "not_found", "partial", "failed"):
+                if not isinstance(result, dict) or result.get("outcome") not in (
+                        "deleted", "not_found", "unsupported", "partial", "failed"):
                     raise LookupError("artifact_cleanup_failed")
                 status = result["outcome"]
                 error = result.get("error")
@@ -1166,25 +1222,19 @@ class StudyJobRunner:
         if state == "waiting_remote" and job["state"] not in ("waiting_remote", "downloading"):
             job = self.jobs.transition(profile_id, job["id"], "waiting_remote", reason="remote_generation_started")
         elif state == "ready":
-            if job["state"] == "unknown":
-                job = self.jobs.transition(profile_id, job["id"], "ready",
-                                           artifact_result=artifact, remote_provenance=remote,
-                                           reason="worker_ready")
-                if self.artifacts is not None:
-                    artifact_record = self.artifacts.publish(profile_id, job, artifact, remote)
-                    job = self.jobs.set_artifact(profile_id, job["id"], artifact_record["id"])
-            else:
-                if job["state"] in ("preparing", "uploading"):
-                    job = self.jobs.transition(profile_id, job["id"], "waiting_remote",
-                                               reason="remote_generation_started")
-                if job["state"] != "downloading":
-                    job = self.jobs.transition(profile_id, job["id"], "downloading",
-                                               reason="artifact_download_started")
-                job = self.jobs.transition(profile_id, job["id"], "ready",
-                                           artifact_result=artifact, remote_provenance=remote)
-                if self.artifacts is not None:
-                    artifact_record = self.artifacts.publish(profile_id, job, artifact, remote)
-                    job = self.jobs.set_artifact(profile_id, job["id"], artifact_record["id"])
+            if job["state"] in ("preparing", "uploading"):
+                job = self.jobs.transition(profile_id, job["id"], "waiting_remote",
+                                           reason="remote_generation_started")
+            if job["state"] not in ("downloading", "unknown"):
+                job = self.jobs.transition(profile_id, job["id"], "downloading",
+                                           reason="artifact_download_started")
+            if self.artifacts is None:
+                raise ApiError("artifact_download_failed", "local artifact storage is unavailable")
+            artifact_record = self.artifacts.publish(profile_id, job, artifact, remote)
+            job = self.jobs.set_artifact(profile_id, job["id"], artifact_record["id"])
+            job = self.jobs.transition(profile_id, job["id"], "ready",
+                                       artifact_result=artifact, remote_provenance=remote,
+                                       reason="local_artifact_published")
         elif state == "failed":
             job = self._apply_error(profile_id, job, result.get("error"))
         elif state == "unknown":
@@ -1232,7 +1282,7 @@ class StudyJobRunner:
         return {"state": state, "error": error, "artifact": artifact, "remote": remote}
 
     def retry(self, profile_id, job_id):
-        """Explicitly retry a known local failure with the same request identity."""
+        """Explicitly authorize a new worker attempt for a known local failure."""
         return self._start(profile_id, self.jobs.retry(profile_id, job_id))
 
     def recheck(self, profile_id, job_id):

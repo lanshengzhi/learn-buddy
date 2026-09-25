@@ -18,6 +18,7 @@ import { initShelf } from './shelf.js';
 import { initChat } from './chat.js';
 import { onReadReady } from './read-ready.js';
 import { ServerApi } from '/js/core/api.js';
+import { API_ERROR_CODES, apiErrorToMessage } from '/js/core/errors.js';
 import { storedProfile } from '/js/browser/profile.js';
 import {
   BOOK_AI_QUICK_PROMPTS, BookAiPanelController, BookAiPanelState, STUDY_ARTIFACT_TYPES,
@@ -56,6 +57,7 @@ const topbarTitle = $('shell-topbar-title');
 
 const bookAi = new BookAiPanelController({ onEvent: renderBookAi });
 let bookAiApi = null;
+let notebookSync = null;
 let preservedReaderAnchor = null;
 let bookAiOpenRequest = 0;
 
@@ -293,19 +295,13 @@ function jobLabel(status) {
 }
 
 function showBookAiError(error) {
-  bookAi.failTurn(providerMessage(error) ?? error.message ?? error.code ?? 'AI 暂时不可用，请稍后再试。');
+  const mapped = providerMessage(error);
+  bookAi.failTurn(mapped ?? error.message ?? error.code ?? 'AI 暂时不可用，请稍后再试。');
 }
 
 function providerMessage(error) {
-  return ({
-    notebooklm_not_configured: 'NotebookLM 尚未配置；可继续本地阅读。',
-    notebooklm_auth_required: 'NotebookLM 需要重新登录；可继续本地阅读。',
-    notebooklm_unavailable: 'NotebookLM 暂时不可用；可继续本地阅读。',
-    notebooklm_quota: 'NotebookLM 当前用量受限，请稍后再试。',
-    notebooklm_source_rejected: 'NotebookLM 未能处理这本书或所选范围。',
-    notebooklm_job_unknown: '远端结果未知；不会自动重复生成。',
-    artifact_download_failed: '产物下载失败；本地阅读不受影响。',
-  })[error?.code];
+  const code = error?.code;
+  return code && Object.values(API_ERROR_CODES).includes(code) ? apiErrorToMessage(code) : null;
 }
 
 function positionToolbar() {
@@ -654,13 +650,16 @@ async function openBookAi(selection = null) {
     context,
     selectedText: selection?.text ?? '',
   });
+  notebookSync = null;
   renderArtifactTypeControls();
+  renderNotebookSync();
   // Lists are supplementary to the Ask surface. A listing/provider failure
   // must not prevent the reader from asking, previewing, or returning.
   await Promise.allSettled([
     refreshBookAiJobs(book.id),
     refreshBookAiArtifacts(book.id),
     refreshBookAiConversations({ bookId: book.id, personId }),
+    refreshNotebookSync(book.id),
   ]);
   if (openRequest !== bookAiOpenRequest
       || bookAi.state.bookId !== book.id
@@ -680,6 +679,73 @@ async function openBookAi(selection = null) {
           && bookAi.state.bookId === book.id
           && bookAi.state.personId === personId) showBookAiError(error);
     }
+  }
+}
+
+async function refreshNotebookSync(bookId = bookAi.state.bookId) {
+  if (!bookAiApi || !bookId) return;
+  try {
+    const result = await bookAiApi.getNotebookSync(bookId);
+    if (bookAi.state.bookId === bookId) notebookSync = result.notebookRef;
+  } catch (error) {
+    showBookAiError(error);
+  } finally {
+    renderNotebookSync();
+  }
+}
+
+function notebookConfirmed() {
+  return notebookSync?.mutationStatus === 'confirmed'
+    && notebookSync?.uploadStatus === 'uploaded'
+    && notebookSync?.syncStatus === 'synced'
+    && Boolean(notebookSync?.notebookId && notebookSync?.sourceId);
+}
+
+function renderNotebookSync() {
+  const ref = notebookSync;
+  const confirmed = notebookConfirmed();
+  $('book-ai-notebook-status').textContent = confirmed
+    ? '本书已上传并同步，可以生成学习产物。'
+    : '尚未同步；生成前需要上传整本书并确认。';
+  $('book-ai-notebook-confirm-label').hidden = confirmed;
+  $('book-ai-notebook-sync-button').hidden = confirmed
+    || $('book-ai-notebook-confirm-input').checked === false;
+  $('book-ai-notebook-cleanup-button').hidden = !confirmed;
+  renderArtifactTypeControls();
+}
+
+async function syncNotebook() {
+  if (!bookAiApi || !bookAi.state.bookId) return;
+  if ($('book-ai-notebook-confirm-input').checked !== true) {
+    showBookAiError({ code: 'cloud_confirmation_required' });
+    return;
+  }
+  $('book-ai-notebook-sync-button').disabled = true;
+  try {
+    const result = await bookAiApi.syncNotebook(bookAi.state.bookId, { confirmUpload: true });
+    notebookSync = result.notebookRef;
+    $('book-ai-notebook-confirm-input').checked = false;
+  } catch (error) {
+    showBookAiError(error);
+  } finally {
+    $('book-ai-notebook-sync-button').disabled = false;
+    renderNotebookSync();
+  }
+}
+
+async function cleanupNotebookRemote() {
+  if (!bookAiApi || !bookAi.state.bookId || !notebookConfirmed()) return;
+  if (!window.confirm('确认删除远端 Notebook/Source？本地书籍和阅读数据不会删除。')) return;
+  try {
+    const result = await bookAiApi.cleanupNotebookRemote(bookAi.state.bookId);
+    notebookSync = result.notebookRef;
+    if (['partial', 'failed', 'unsupported'].includes(result.cleanup.status)) {
+      showBookAiError({ code: 'artifact_cleanup_failed', message: `远端清理状态：${result.cleanup.status}` });
+    }
+  } catch (error) {
+    showBookAiError(error);
+  } finally {
+    renderNotebookSync();
   }
 }
 
@@ -793,7 +859,7 @@ function renderArtifactTypeControls() {
   }));
   const scope = $('book-ai-artifact-scope').value;
   $('book-ai-whole-book-confirm').hidden = scope !== 'book';
-  $('book-ai-generate').disabled = !bookAiApi || !bookAi.state.bookId;
+  $('book-ai-generate').disabled = !bookAiApi || !bookAi.state.bookId || !notebookConfirmed();
 }
 
 function generationScope() {
@@ -836,6 +902,9 @@ function scheduleJobRecheck(jobId) {
 }
 
 $('book-ai-artifact-scope').addEventListener('change', renderArtifactTypeControls);
+$('book-ai-notebook-confirm-input').addEventListener('change', renderNotebookSync);
+$('book-ai-notebook-sync-button').addEventListener('click', () => void syncNotebook());
+$('book-ai-notebook-cleanup-button').addEventListener('click', () => void cleanupNotebookRemote());
 $('book-ai-generate').addEventListener('click', async () => {
   const s = bookAi.state;
   const scope = generationScope();

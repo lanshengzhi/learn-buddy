@@ -342,6 +342,7 @@ class _DeterministicNotebookLM:
     def __init__(self):
         self.calls = []
         self.job_calls = []
+        self.artifact_data = json.dumps({"summary": "deterministic artifact"}, ensure_ascii=False).encode("utf-8")
 
     def sync_source(self, **kwargs):
         self.calls.append(kwargs)
@@ -361,7 +362,9 @@ class _DeterministicNotebookLM:
             "state": "ready", "error": None, "remote": remote,
             "artifact": {
                 "remoteArtifactId": remote["artifactId"], "contentType": "application/json",
-                "byteSize": 10, "remote": remote,
+                "byteSize": len(self.artifact_data),
+                "dataBase64": base64.b64encode(self.artifact_data).decode("ascii"),
+                "remote": remote,
             },
         }
 
@@ -490,6 +493,61 @@ class TestStudyArtifactEndpoint(ApiTestCase):
         self.assertEqual(json.loads(self.get(f"/books/{other_book}/study-artifacts?profile=dad")[2])["artifacts"][0]["id"],
                          other_artifact_id)
 
+    def test_invalid_artifact_never_becomes_ready_and_reconcile_recovers_idempotently(self):
+        book_id = json.loads(self.upload()[2])["book"]["id"]
+        self._sync(book_id)
+        request = {
+            "requestId": "study-job:artifact-interruption",
+            "artifactType": "learning_report",
+            "contextScope": {"scope": "chapter", "anchor": {"chapter": 0}},
+        }
+        initial_provider = _DeterministicNotebookLM()
+        self.harness.httpd.app.study_job_runner.provider = initial_provider
+        _, _, body = self.json_request(
+            "POST", f"/books/{book_id}/study-jobs?profile=dad", {"request": request})
+        job = json.loads(body)["job"]
+        remote = {
+            "provider": "notebooklm", "notebookId": "notebook-1",
+            "sourceId": "source-1", "artifactId": "artifact-interrupted",
+        }
+
+        class InterruptedProvider:
+            def __init__(self):
+                self.calls = 0
+
+            def reconcile_job(self, **kwargs):
+                self.calls += 1
+                data = b'{"summary":"recovered"}'
+                return {
+                    "state": "ready", "error": None, "remote": remote,
+                    "artifact": {
+                        "remoteArtifactId": remote["artifactId"], "contentType": "application/json",
+                        "byteSize": len(data) if self.calls > 1 else 99,
+                        "dataBase64": base64.b64encode(data).decode("ascii"), "remote": remote,
+                    },
+                }
+
+        provider = InterruptedProvider()
+        self.harness.httpd.app.study_job_runner.provider = provider
+        status, _, body = self.json_request(
+            "POST", f"/study-jobs/{job['id']}/reconcile?profile=dad", {})
+        self.assertEqual(status, 502)
+        self.assertEqual(json.loads(body)["error"], "artifact_download_failed")
+        persisted = self.body(self.get(f"/study-jobs/{job['id']}?profile=dad"))["job"]
+        self.assertEqual(persisted["state"], "downloading")
+        self.assertIsNone(persisted.get("artifactId"))
+
+        status, _, body = self.json_request(
+            "POST", f"/study-jobs/{job['id']}/reconcile?profile=dad", {})
+        self.assertEqual(status, 200, body)
+        ready = json.loads(body)["job"]
+        self.assertEqual(ready["state"], "ready")
+        self.assertEqual(self.get(f"/study-artifacts/{ready['artifactId']}/download?profile=dad")[2],
+                         b'{"summary":"recovered"}')
+        artifact_count = len(json.loads(
+            self.get(f"/books/{book_id}/study-artifacts?profile=dad")[2])["artifacts"])
+        self.assertEqual(artifact_count, 1)
+
     def test_remote_cleanup_is_explicit_and_regeneration_keeps_the_prior_artifact(self):
         provider = _ArtifactNotebookLM([
             {"outcome": "not_found"},
@@ -566,6 +624,29 @@ class TestNotebookLMSyncEndpoint(ApiTestCase):
         self.assertEqual(json.loads(body)["notebookRef"]["deletionStatus"], {
             "local": "active", "remote": "active",
         })
+
+        class CleanupProvider:
+            def __init__(self):
+                self.calls = []
+
+            def delete_notebook(self, **request):
+                self.calls.append(request)
+                return {"outcome": "unsupported", "error": "notebook_cleanup_unsupported"}
+
+        cleanup_provider = CleanupProvider()
+        self.harness.httpd.app.notebooklm = cleanup_provider
+        status, _, body = self.json_request(
+            "POST", f"/books/{book_id}/notebook-sync/remote-cleanup", {})
+        self.assertEqual(status, 400)
+        self.assertEqual(cleanup_provider.calls, [])
+        status, _, body = self.json_request(
+            "POST", f"/books/{book_id}/notebook-sync/remote-cleanup", {"confirm": True})
+        self.assertEqual(status, 200, body)
+        result = json.loads(body)
+        self.assertEqual(result["cleanup"]["status"], "unsupported")
+        self.assertIsNone(result["notebookRef"]["remoteDeletedAt"])
+        self.assertEqual(cleanup_provider.calls, [{"notebook_id": "notebook-1", "source_id": "source-1"}])
+        self.assertEqual(self.get(f"/books/{book_id}/chapters/0?profile=dad")[0], 200)
 
 
 class TestStudyJobEndpoint(ApiTestCase):
@@ -665,16 +746,23 @@ class TestStudyJobEndpoint(ApiTestCase):
             "dad", job["id"], "failed", error="notebooklm_unavailable")
 
         class FailedProvider:
+            def __init__(self):
+                self.request_ids = []
+
             def job_request(self, **kwargs):
+                self.request_ids.append(kwargs["request_id"])
                 return {"state": "failed", "error": "notebooklm_unavailable", "artifact": None}
 
-        self.harness.httpd.app.study_job_runner.provider = FailedProvider()
+        failed_provider = FailedProvider()
+        self.harness.httpd.app.study_job_runner.provider = failed_provider
         status, _, body = self.json_request(
             "POST", f"/study-jobs/{job['id']}/retry?profile=dad", {})
         self.assertEqual(status, 200)
         result = json.loads(body)["job"]
         self.assertEqual(result["state"], "failed")
         self.assertEqual(result["error"], "notebooklm_unavailable")
+        self.assertEqual(failed_provider.request_ids, [result["requestId"]])
+        self.assertNotEqual(result["requestId"], job["requestId"])
         self.assertNotIn("rawUpstream", body.decode("utf-8"))
         self.assertEqual(self.get(f"/books/{book_id}/chapters/0?profile=dad")[0], 200)
 
@@ -702,8 +790,10 @@ class TestStudyJobEndpoint(ApiTestCase):
             def reconcile_job(self, **kwargs):
                 self.rechecks += 1
                 remote = kwargs["remote_provenance"]
+                data = b"unknown reconciled"
                 return {"state": "ready", "error": None, "remote": remote, "artifact": {
-                    "remoteArtifactId": remote["artifactId"],
+                    "remoteArtifactId": remote["artifactId"], "contentType": "text/plain",
+                    "byteSize": len(data), "dataBase64": base64.b64encode(data).decode("ascii"),
                     "remote": remote,
                 }}
 

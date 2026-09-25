@@ -1,8 +1,8 @@
 # Book AI v1 acceptance and rollout gate
 
 - **Issue:** [#81](https://github.com/lanshengzhi/learn-buddy/issues/81)
-- **Implementation under test:** `16cf46e` (integrated Book AI through #80)
-- **Recorded:** 2026-09-25
+- **Implementation under test:** consolidated Standards and Spec review-fix pass on `feat/book-ai-notebooklm-v1`
+- **Recorded:** 2026-09-25 (review-fix rerun)
 - **Decision:** automated acceptance passes; household rollout is **BLOCKED** pending the human gates below.
 
 ## Acceptance story map
@@ -28,14 +28,14 @@ The v1 stories are covered by focused deterministic tests rather than one large 
 
 ## Automated results
 
-All commands were run on the worktree containing `16cf46e` plus this gate's smoke-test portability fix.
+All commands were rerun after the consolidated Standards and Spec review fixes.
 
 | Command | Result |
 |---|---|
-| `(cd server && python3 -m unittest discover -s tests -p 'test_*.py' -v)` | **PASS** — 292 tests, 11 optional-tokenizer skips (SudachiPy/Jieba unavailable) |
-| `node --test` | **PASS** — 167 tests, 0 failures |
+| `(cd server && python3 -m unittest discover -s tests -p 'test_*.py' -v)` | **PASS** — 295 tests, 11 optional-tokenizer skips (SudachiPy/Jieba unavailable) |
+| `node --test` | **PASS** — 169 tests, 0 failures |
 | `DATA=$(mktemp -d /tmp/learnbuddy-81-data.XXXXXX); python3 server/tts_server.py --port 8123 --data-dir "$DATA"; node scripts/shell-smoke.mjs` | **PASS** — fresh data dir; `/next/`, Learn, Chat, narrow layout, Book AI, old `/` parity, rollback path |
-| `DATA=$(mktemp -d /tmp/learnbuddy-81-browser-data.XXXXXX); python3 server/tts_server.py --port 8123 --data-dir "$DATA" &` then `LEARNBUDDY_BASE=http://127.0.0.1:8123 LEARNBUDDY_EPUB=server/tests/fixtures/nav.epub node scripts/browser-smoke.mjs` | **PASS** — fresh data dir and project `nav.epub`; EPUB upload/open, position resume, lookup, TTS, Learn, and legacy shell |
+| `DATA=$(mktemp -d /tmp/learnbuddy-81-browser-data.XXXXXX); python3 server/tts_server.py --port 8123 --data-dir "$DATA" &` then `LEARNBUDDY_BASE=http://127.0.0.1:8123 LEARNBUDDY_EPUB=server/tests/fixtures/nav.epub node scripts/browser-smoke.mjs` | **PASS** — fresh data dir and project `nav.epub`; EPUB upload/open, immediate mid-debounce pagehide position flush, position resume, lookup, TTS, Learn, and legacy shell |
 
 The browser smoke now supplies a deterministic lookup response at the browser boundary so a fresh data directory does not depend on an installed dictionary database. It still exercises the real word-card and `mark-known` rendering path. NotebookLM remains unconfigured; no live account or quota was used.
 

@@ -236,7 +236,7 @@ class TestNotebookLMSyncBoundary(unittest.TestCase):
         self.assertTrue(repeated["reused"])
         self.assertEqual(repeated["blockedReason"], "notebooklm_mutation_unknown")
         self.assertEqual(len(self.provider.calls), 1)
-        self.refs.delete_remote(self.book_id)
+        self.assertIsNone(self.refs.get(self.book_id)["remoteDeletedAt"])
         self.assertEqual(self.library.get_book(self.book_id)["book"]["id"], self.book_id)
 
     def test_changed_content_is_a_new_explicit_sync_decision(self):
@@ -322,6 +322,7 @@ class TestStudyJobStateMachine(unittest.TestCase):
         self.assertFalse(job["terminal"])
         remote = {"provider": "notebooklm", "notebookId": "notebook-1",
                   "sourceId": "source-1", "artifactId": "artifact-1"}
+        self.jobs.set_artifact("dad", first["id"], "artifact-" + "a" * 32)
         self.assertEqual(
             self.jobs.transition("dad", first["id"], "ready",
                                  artifact_result={"remoteArtifactId": "artifact-1", "remote": remote},
@@ -380,6 +381,12 @@ class TestStudyJobStateMachine(unittest.TestCase):
         self.jobs.transition("dad", job["id"], "downloading")
         remote = {"provider": "notebooklm", "notebookId": "notebook-1",
                   "sourceId": "source-1", "artifactId": "remote-1"}
+        with self.assertRaises(ApiError):
+            self.jobs.transition(
+                "dad", job["id"], "ready",
+                artifact_result={"remoteArtifactId": "remote-1", "remote": remote},
+                remote_provenance=remote)
+        self.jobs.set_artifact("dad", job["id"], "artifact-" + "b" * 32)
         ready = self.jobs.transition(
             "dad", job["id"], "ready",
             artifact_result={"remoteArtifactId": "remote-1", "remote": remote},
@@ -580,6 +587,12 @@ class TestNotebookLMWorker(unittest.TestCase):
             ],
         )
         app = NotebookLMWorkerApp(job_provider=provider)
+        notebook = app.delete_notebook({
+            "service": "notebooklm", "notebookId": "notebook-1", "sourceId": "source-1",
+        })
+        self.assertEqual(notebook, {
+            "outcome": "unsupported", "error": "notebook_cleanup_unsupported",
+        })
         for artifact_id, expected in (
             ("artifact-local-1", {"outcome": "not_found"}),
             ("artifact-local-2", {"outcome": "partial", "error": "artifact_cleanup_failed"}),
@@ -591,6 +604,31 @@ class TestNotebookLMWorker(unittest.TestCase):
             self.assertEqual(provider.calls[-1]["delete_artifact"], {
                 "service": "notebooklm", "artifactId": artifact_id, "remote": remote,
             })
+
+    def test_explicit_retry_identity_bypasses_cached_failed_result(self):
+        root = tempfile.mkdtemp()
+        try:
+            storage = os.path.join(root, "storage_state.json")
+            with open(storage, "w", encoding="utf-8") as handle:
+                handle.write("{}")
+            provider = DeterministicJobProvider({"state": "failed", "error": "notebooklm_quota"})
+            app = NotebookLMWorkerApp(storage_path=storage, provider=DeterministicProvider(),
+                                      job_provider=provider)
+            request = {
+                "jobId": "job-1", "requestId": "study-job:original", "personId": "dad",
+                "bookId": "a" * 64, "bookContentHash": "a" * 64,
+                "artifactType": "learning_report", "contextScope": {"scope": "chapter"},
+                "notebookId": "notebook-1", "sourceId": "source-1", "contextText": "chapter text",
+            }
+            self.assertEqual(app.submit_job(request)["state"], "failed")
+            self.assertEqual(app.submit_job(request)["state"], "failed")
+            retry = dict(request, requestId="study-job:retry:authorized-1")
+            self.assertEqual(app.submit_job(retry)["state"], "failed")
+            self.assertEqual([call["requestId"] for call in provider.calls], [
+                "study-job:original", "study-job:retry:authorized-1",
+            ])
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     def test_worker_protocol_reconciles_identity_and_explicitly_cancels(self):
         root = tempfile.mkdtemp()

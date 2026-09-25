@@ -228,6 +228,24 @@ export class ServerApi {
     ))?.conversation ?? null;
   }
 
+  async getNotebookSync(bookId) {
+    return this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}/notebook-sync`));
+  }
+
+  async syncNotebook(bookId, { confirmUpload, retry = false } = {}) {
+    return this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/notebook-sync`),
+      { method: 'POST', body: { confirmUpload, retry } },
+    );
+  }
+
+  async cleanupNotebookRemote(bookId) {
+    return this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/notebook-sync/remote-cleanup`),
+      { method: 'POST', body: { confirm: true } },
+    );
+  }
+
   async cancelStudyJob(jobId) {
     return (await this.#request(this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/cancel`), {
       method: 'POST', body: { confirm: true },
@@ -361,13 +379,6 @@ export class ServerApi {
     return this.#request(
       this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/reconcile`),
       { method: 'POST', body: {} },
-    );
-  }
-
-  async cancelStudyJob(jobId) {
-    return this.#request(
-      this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/cancel`),
-      { method: 'POST', body: { confirm: true } },
     );
   }
 

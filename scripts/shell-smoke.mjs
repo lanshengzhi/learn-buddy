@@ -358,6 +358,9 @@ const narrowPanel = await np.locator('#book-ai-panel').boundingBox();
 check('narrow: Book AI is a full-width overlay below the topbar',
   narrowPanel.x === 0 && narrowPanel.width >= 389 && narrowPanel.y >= 53);
 await np.locator('#book-ai-input').focus();
+await np.keyboard.type('space safe input');
+check('narrow: real keyboard typing preserves spaces in Book AI input',
+  (await np.locator('#book-ai-input').inputValue()) === 'space safe input');
 const narrowInput = await np.locator('#book-ai-input').boundingBox();
 check('narrow: focused Book AI input remains inside the visible overlay',
   narrowInput.y >= 53 && narrowInput.y + narrowInput.height <= 844);

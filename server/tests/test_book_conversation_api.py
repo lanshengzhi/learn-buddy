@@ -162,6 +162,11 @@ class TestBookConversationApi(ApiTestCase):
             status, _, _ = self.messages(
                 conversation["id"], context=context, text=f"{scope} question")
             self.assertEqual(status, 200)
+            outbound = self.calls[-1]["body"]["messages"]
+            self.assertTrue(outbound)
+            for message in outbound[:-1]:
+                self.assertIn("contextSnapshot", message)
+            self.assertNotIn("contextSnapshot", outbound[-1])
 
         stored = self.body(self.get(
             f"/book-conversations/{conversation['id']}?profile=dad"))["conversation"]
@@ -178,6 +183,12 @@ class TestBookConversationApi(ApiTestCase):
             f"/book-conversations/{conversation['id']}?profile=dad"))["conversation"]
         self.assertEqual(reread["messages"][0]["contextSnapshot"], contexts["sentence"])
         self.assertEqual(reread["messages"][-2]["contextSnapshot"], contexts["selection"])
+        follow_up_messages = self.calls[-1]["body"]["messages"]
+        historical = follow_up_messages[:-1]
+        self.assertEqual(len(historical), 8)
+        for message, stored in zip(historical, reread["messages"][:-1]):
+            self.assertEqual(message["contextSnapshot"], stored["contextSnapshot"])
+        self.assertEqual(follow_up_messages[-1], {"role": "user", "content": "follow up"})
 
     def test_cross_book_context_is_rejected_before_the_model_and_not_persisted(self):
         self.fake_stream()

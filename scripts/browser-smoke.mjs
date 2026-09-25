@@ -508,17 +508,22 @@ try {
     () => document.querySelector('#chapter-body .sent.playing')?.dataset.sentence === '2',
     { timeout: 30000 },
   );
-  // Let the debounced write settle before navigation. The keepalive itself is
-  // covered by the API-client contract; this browser assertion checks the
-  // observable persisted position on a fresh reload without racing pagehide.
-  await bpage.waitForTimeout(1800);
+  // Reload immediately while the normal debounce is still pending. Prove both
+  // the pending timer and old server value before pagehide must advance it.
+  const pendingPosition = await bpage.evaluate(() => ({
+    pending: window.learnbuddyRead.bookView().positionTimer != null,
+    sentence: window.learnbuddyRead.bookView().lastSentence,
+  }));
+  if (!pendingPosition.pending || pendingPosition.sentence !== 2) {
+    throw new Error(`mid-debounce precondition missing: ${JSON.stringify(pendingPosition)}`);
+  }
   const persistedBeforeReload = await bpage.evaluate(async () => {
     const bookId = window.learnbuddyRead.currentBookId();
     const profile = localStorage.getItem('lb.profile');
     return (await (await fetch(`/books/${bookId}?profile=${encodeURIComponent(profile)}`)).json()).book?.reading?.sentence ?? null;
   });
-  if (persistedBeforeReload !== 2) {
-    throw new Error(`position debounce did not persist sentence 2, got ${persistedBeforeReload}`);
+  if (persistedBeforeReload !== 1) {
+    throw new Error(`mid-debounce precondition changed, expected sentence 1, got ${persistedBeforeReload}`);
   }
   await bpage.reload({ waitUntil: 'domcontentloaded' });
   await bpage.waitForFunction(() => document.body.dataset.view === 'book', { timeout: 10000 });

@@ -65,6 +65,7 @@ export function contextualReadingForRange(sentence, start, end, language) {
     if (!Number.isFinite(rubyStart) || !Number.isFinite(rubyLength) || !rubyText) continue;
     const rubyEnd = rubyStart + rubyLength;
     if (rubyEnd <= from || rubyStart >= to) continue;
+    if (rubyStart < from || rubyEnd > to) return '';
     const overlapStart = Math.max(from, rubyStart);
     const overlapEnd = Math.min(to, rubyEnd);
     reading += surface.slice(cursor - from, overlapStart - from) + rubyText;
