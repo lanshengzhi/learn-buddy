@@ -162,6 +162,14 @@ export class ServerApi {
     );
   }
 
+  /** Compile the exact local BookContext used by the Read selection action. */
+  async compileBookContext(bookId, context) {
+    return (await this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/context`),
+      { method: 'POST', body: { bookId, ...context } },
+    ))?.context ?? null;
+  }
+
   async putPosition(bookId, chapter, sentence, { keepalive = false } = {}) {
     await this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}/position`), {
       method: 'PUT',

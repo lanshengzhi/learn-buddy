@@ -356,6 +356,60 @@ body[data-face="learn"] #back-to-book {
   cursor: pointer;
 }
 
+/* ---- Book selection actions and Read-owned Book AI panel ---- */
+
+#chapter-body p.sent.sentence-highlight {
+  background: color-mix(in srgb, var(--primary-soft) 75%, transparent);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.book-ai-panel {
+  position: absolute;
+  top: 76px;
+  right: 20px;
+  z-index: 45;
+  width: min(360px, calc(100vw - 40px));
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+}
+
+.book-ai-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.book-ai-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#book-ai-selection {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--primary);
+  background: var(--primary-soft);
+  white-space: pre-wrap;
+}
+
+@media (max-width: 899.98px) {
+  .book-ai-panel {
+    top: 62px;
+    right: 10px;
+    left: 10px;
+    width: auto;
+  }
+}
+
+#sel-toolbar button[hidden] {
+  display: none;
+}
+
 /* ---- narrow shell (< ~900px, §4.2; verified by the narrow-IA prototype) ---- */
 
 #shell-topbar {

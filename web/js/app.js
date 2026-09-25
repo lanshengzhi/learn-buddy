@@ -207,6 +207,9 @@ async function boot() {
   window.learnbuddyRead = {
     openBook: (bookId) => bookView?.openBook(bookId),
     currentBookId: () => bookView?.book?.id ?? null,
+    profileId: () => api.profile,
+    bookView: () => bookView,
+    compileContext: (context) => api.compileBookContext(context.bookId, context),
   };
   // Additive /next seam only; keep it absent from the live legacy shell.
   if (document.getElementById('learn-face')) {

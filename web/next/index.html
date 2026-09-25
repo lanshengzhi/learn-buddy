@@ -113,6 +113,21 @@
           </aside>
         </section>
 
+        <!-- Read-owned Book AI surface. It is a sibling of the mounted reader,
+             so opening a context never rebuilds #book-view. -->
+        <aside id="book-ai-panel" class="book-ai-panel" hidden aria-label="Book AI">
+          <div class="book-ai-head">
+            <div>
+              <b>Book AI</b>
+              <span id="book-ai-book" class="muted">—</span>
+            </div>
+            <button id="book-ai-close" class="plain" type="button" aria-label="关闭 Book AI">×</button>
+          </div>
+          <p id="book-ai-context" class="muted">选择文本后问这本书。</p>
+          <blockquote id="book-ai-selection" hidden></blockquote>
+          <p id="book-ai-error" class="error" role="alert" hidden></p>
+        </aside>
+
         <nav id="bottom-bar" class="bottom-bar" hidden aria-label="播放控制">
           <div class="playback-group" role="group" aria-label="句子播放">
             <button id="prev-button" class="icon-button" type="button" aria-label="上一句" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></button>
@@ -214,10 +229,15 @@
   <!-- 壳自有的抽屉遮罩（与 app 的 #scrim 分开：那个归词卡用） -->
   <div id="shell-scrim" hidden></div>
 
-  <!-- 拖选工具条：切片 1 只有「复制」；马克笔 / 写想法 / AI问书随切片 3/2 加入 -->
+  <!-- 拖选工具条：Copy / Highlight / Ask Book. All actions preserve the
+       browser's exact selection; the reader DOM is never replaced. -->
   <div id="sel-toolbar" hidden>
     <button id="sel-copy" type="button">复制</button>
-    <button id="sel-lookup" type="button">查义</button>
+    <button id="sel-highlight" type="button">马克笔</button>
+    <button id="sel-ask-book" type="button">AI 问书</button>
+    <!-- Legacy Learn lookup action is hidden in Read; kept mounted for the
+         existing Learn path and its browser smoke coverage. -->
+    <button id="sel-lookup" type="button" hidden>查义</button>
   </div>
 
   <div id="scrim" hidden></div>

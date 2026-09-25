@@ -16,6 +16,7 @@ import { ShellController, Layer, Face } from '/js/core/shell-controller.js';
 import { detectLanguage } from '/js/core/language.js';
 import { initShelf } from './shelf.js';
 import { initChat } from './chat.js';
+import { onReadReady } from './read-ready.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -27,7 +28,16 @@ const shell = new ShellController({ narrow: NARROW.matches, onEvent: render });
 const shellScrim = $('shell-scrim');
 const selToolbar = $('sel-toolbar');
 const selCopy = $('sel-copy');
+const selHighlight = $('sel-highlight');
+const selAskBook = $('sel-ask-book');
+// Learn keeps the established phrase lookup action. In Read this control is
+// hidden so the Book actions are exactly Copy / Highlight / Ask Book.
 const selLookup = $('sel-lookup');
+const bookAiPanel = $('book-ai-panel');
+const bookAiBook = $('book-ai-book');
+const bookAiContext = $('book-ai-context');
+const bookAiSelection = $('book-ai-selection');
+const bookAiError = $('book-ai-error');
 const lookupDrawer = $('lookup-drawer');
 const chatFace = $('chat-face');
 const readingArea = $('reading-area');
@@ -53,6 +63,7 @@ function render() {
   document.body.classList.toggle('nav-collapsed', navCollapsed && !narrow);
   const toolbarOpen = openLayers.includes(Layer.Toolbar);
   selToolbar.hidden = !toolbarOpen;
+  selLookup.hidden = activeFace !== Face.Learn;
   if (toolbarOpen) positionToolbar();
 
   // Face switch (ticket #47): both faces stay mounted; only `hidden`
@@ -167,24 +178,98 @@ new MutationObserver(() => {
   lastTappedSentence.scrollIntoView({ block: 'start', behavior: 'instant' });
 }).observe(lookupDrawer, { attributes: true, attributeFilter: ['hidden'] });
 
-// --- selection toolbar (slice 1: copy only) -----------------------------------
+// --- Read selection actions ---------------------------------------------------
 
 let selectionTimer = null;
+let activeSelection = null;
+
+function sentenceFor(selection) {
+  const node = selection?.anchorNode?.nodeType === Node.ELEMENT_NODE
+    ? selection.anchorNode
+    : selection?.anchorNode?.parentElement;
+  return node?.closest?.('#chapter-body .sent') ?? null;
+}
+
+/** Return the exact browser selection, but only when it is in the open Book. */
+function readSelection() {
+  const selection = window.getSelection?.();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+  const text = selection.toString();
+  if (!text.trim()) return null;
+  const sentence = sentenceFor(selection);
+  const book = window.learnbuddyRead?.bookView?.();
+  if (!sentence || !book?.book || book.chapter == null) return null;
+  return {
+    text,
+    sentence,
+    sentenceIndex: Number(sentence.dataset.sentence),
+    chapter: book.chapterIndex,
+    bookId: book.book.id,
+  };
+}
+
+function highlightKey(bookId, chapter, sentence) {
+  return `${bookId}:${chapter}:${sentence}`;
+}
+
+function readHighlights() {
+  try {
+    const profile = window.learnbuddyRead?.profileId?.() ?? 'default';
+    return new Set(JSON.parse(localStorage.getItem(`learnbuddy:highlights:${profile}`) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function writeHighlights(highlights) {
+  try {
+    const profile = window.learnbuddyRead?.profileId?.() ?? 'default';
+    localStorage.setItem(`learnbuddy:highlights:${profile}`, JSON.stringify([...highlights]));
+  } catch {
+    /* private mode or disabled storage: the current sentence still highlights */
+  }
+}
+
+let highlights = new Set();
+function applyHighlights() {
+  const book = window.learnbuddyRead?.bookView?.();
+  const bookId = book?.book?.id;
+  for (const sentence of document.querySelectorAll('#chapter-body .sent')) {
+    const key = highlightKey(bookId, book?.chapterIndex, sentence.dataset.sentence);
+    const marked = Boolean(bookId) && highlights.has(key);
+    sentence.dataset.highlightAnchor = marked ? key : '';
+    sentence.classList.toggle('sentence-highlight', marked);
+  }
+}
+
+const highlightObserver = new MutationObserver(applyHighlights);
+highlightObserver.observe($('chapter-body'), { childList: true, subtree: false });
+
+function rememberSelection() {
+  const selection = shell.state.activeFace === Face.Read ? readSelection() : null;
+  if (!selection) return false;
+  activeSelection = selection;
+  return true;
+}
+
 document.addEventListener('selectionchange', () => {
   clearTimeout(selectionTimer);
   selectionTimer = setTimeout(() => {
-    const selection = window.getSelection();
-    const text = selection?.toString().trim() ?? '';
-    if (!selection || selection.isCollapsed || text.length === 0) {
-      shell.close(Layer.Toolbar);
+    const selection = window.getSelection?.();
+    if (shell.state.activeFace === Face.Learn) {
+      const text = selection?.toString().trim() ?? '';
+      const anchor = selection?.anchorNode?.nodeType === Node.ELEMENT_NODE
+        ? selection.anchorNode : selection?.anchorNode?.parentElement;
+      if (!selection || selection.isCollapsed || !text || text.length <= WORD_SELECTION_MAX
+          || !anchor?.closest('#sentence-list')) {
+        shell.close(Layer.Toolbar);
+        return;
+      }
+      activeSelection = null;
+      shell.open(Layer.Toolbar);
       return;
     }
-    const anchor =
-      selection.anchorNode?.nodeType === Node.ELEMENT_NODE
-        ? selection.anchorNode
-        : selection.anchorNode?.parentElement;
-    const inLearnSentence = shell.state.activeFace === Face.Learn && anchor?.closest('#sentence-list');
-    if (!inLearnSentence && (text.length <= WORD_SELECTION_MAX || !anchor?.closest('#chapter-body'))) {
+    if (!rememberSelection() || activeSelection.text.trim().length <= WORD_SELECTION_MAX) {
       shell.close(Layer.Toolbar);
       return;
     }
@@ -195,35 +280,69 @@ document.addEventListener('selectionchange', () => {
 // §4.2 #6: the keyboard belongs to the bottom sheet — the toolbar retreats.
 $('text-input').addEventListener('focus', () => shell.close(Layer.Toolbar));
 
-// §4.3 硬约束:查词与问书只能按选区长度分流。book.js 的旧行为会对 ≤30 字
-// 的选区弹词卡;新壳里长选(>3 字)归工具条 —— capture 阶段拦下 pointerup,
-// book.js 的处理器收不到;短选照常放行给词卡。
-$('chapter-body').addEventListener(
-  'pointerup',
-  (event) => {
-    if (event.pointerType === 'touch') return;
-    const text = window.getSelection()?.toString().trim() ?? '';
-    if (text.length > WORD_SELECTION_MAX) event.stopPropagation();
-  },
-  true,
-);
+// Selectionchange can race the pointerup listener. Capture valid Read ranges
+// before the established BookView lookup handler sees them.
+$('chapter-body').addEventListener('pointerdown', rememberSelection, true);
+$('chapter-body').addEventListener('pointerup', rememberSelection, true);
 
-// Preserve the selection across the copy tap (mousedown would collapse it).
-selCopy.addEventListener('mousedown', (event) => event.preventDefault());
+// Preserve the exact selection across each toolbar tap (mousedown otherwise
+// collapses it before click handlers can read it).
+for (const button of [selCopy, selHighlight, selAskBook, selLookup]) {
+  button.addEventListener('mousedown', (event) => event.preventDefault());
+}
+
 selCopy.addEventListener('click', async () => {
-  const text = window.getSelection()?.toString() ?? '';
+  const selection = rememberSelection() || activeSelection;
+  const text = selection?.text ?? window.getSelection()?.toString() ?? '';
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
     selCopy.textContent = '已复制';
-    setTimeout(() => {
-      selCopy.textContent = '复制';
-    }, 900);
+    setTimeout(() => { selCopy.textContent = '复制'; }, 900);
   } catch {
-    /* clipboard unavailable (non-secure context) — the selection stays for Ctrl+C */
+    /* clipboard unavailable (non-secure context) — selection remains usable */
   }
   shell.close(Layer.Toolbar);
 });
+
+selHighlight.addEventListener('click', () => {
+  const selection = rememberSelection() || activeSelection;
+  if (!selection) return;
+  const key = highlightKey(selection.bookId, selection.chapter, selection.sentenceIndex);
+  highlights.add(key);
+  writeHighlights(highlights);
+  applyHighlights();
+  shell.close(Layer.Toolbar);
+});
+
+selAskBook.addEventListener('click', async () => {
+  const selection = rememberSelection() || activeSelection;
+  if (!selection || typeof window.learnbuddyRead?.compileContext !== 'function') return;
+  bookAiError.hidden = true;
+  const book = window.learnbuddyRead?.bookView?.();
+  bookAiPanel.hidden = false;
+  bookAiBook.textContent = book.book.title || book.book.id;
+  bookAiContext.textContent = `第 ${selection.chapter + 1} 章 · 第 ${selection.sentenceIndex + 1} 句 · 选区`;
+  bookAiSelection.textContent = selection.text;
+  bookAiSelection.hidden = false;
+  try {
+    const context = await window.learnbuddyRead.compileContext({
+      bookId: selection.bookId,
+      scope: 'selection',
+      chapter: selection.chapter,
+      start: selection.sentenceIndex,
+      end: selection.sentenceIndex,
+      selectedText: selection.text,
+    });
+    bookAiContext.textContent = `${context?.scope ?? 'selection'} · 第 ${selection.chapter + 1} 章 · 第 ${selection.sentenceIndex + 1} 句`;
+  } catch (error) {
+    bookAiError.textContent = error.message ?? '暂时无法打开书本上下文。';
+    bookAiError.hidden = false;
+  }
+  shell.close(Layer.Toolbar);
+});
+
+$('book-ai-close').addEventListener('click', () => { bookAiPanel.hidden = true; });
 
 selLookup.addEventListener('mousedown', (event) => event.preventDefault());
 selLookup.addEventListener('click', () => {
@@ -242,6 +361,15 @@ selLookup.addEventListener('click', () => {
 
 new MutationObserver(() => {
   readEmpty.hidden = !bookView.hidden;
+  if (!bookView.hidden) {
+    highlights = readHighlights();
+    applyHighlights();
+  }
 }).observe(bookView, { attributes: true, attributeFilter: ['hidden'] });
+
+onReadReady(() => {
+  highlights = readHighlights();
+  applyHighlights();
+});
 
 render();

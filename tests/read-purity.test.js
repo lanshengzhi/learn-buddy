@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 const html = readFileSync(new URL('../web/next/index.html', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../web/next/shell.css', import.meta.url), 'utf8');
 const shell = readFileSync(new URL('../web/next/shell.js', import.meta.url), 'utf8');
+const api = readFileSync(new URL('../web/js/core/api.js', import.meta.url), 'utf8');
 
 const occurrences = (value) => [...html.matchAll(new RegExp(`id="${value}"`, 'g'))].length;
 
@@ -32,6 +33,23 @@ test('legacy ids remain unique; Read lookup returns while study/library tools st
   assert.match(css, /body\[data-face="learn"\] #lookup-drawer:not\(\[hidden\]\)/);
   assert.doesNotMatch(html, /id="d3(?:"|-)/i);
   assert.doesNotMatch(shell, /Layer\.D3|d3-trigger/);
+});
+
+test('Read selection actions are exact, sentence-anchored, and open a Book AI surface', () => {
+  assert.match(html, /id="sel-copy"[^>]*>复制/);
+  assert.match(html, /id="sel-highlight"[^>]*>马克笔/);
+  assert.match(html, /id="sel-ask-book"[^>]*>AI 问书/);
+  assert.match(html, /id="book-ai-panel"/);
+  assert.match(shell, /selection\.toString\(\)/);
+  assert.match(shell, /sentenceIndex: Number\(sentence\.dataset\.sentence\)/);
+  assert.match(shell, /highlightKey\(selection\.bookId, selection\.chapter, selection\.sentenceIndex\)/);
+  assert.match(shell, /data-highlight-anchor|highlightAnchor/);
+  assert.match(shell, /scope: 'selection'/);
+  assert.match(shell, /start: selection\.sentenceIndex/);
+  assert.match(shell, /end: selection\.sentenceIndex/);
+  assert.match(shell, /selectedText: selection\.text/);
+  assert.match(shell, /compileContext/);
+  assert.match(api, /compileBookContext/);
 });
 
 test('face and controller surface visibility stay independent without rebuilding Read', () => {
