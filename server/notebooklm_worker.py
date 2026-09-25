@@ -16,16 +16,21 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class NotebookLMWorkerApp:
-    def __init__(self, storage_path=None, token_path=None, provider=None, max_source_bytes=256 * 1024 * 1024):
+    def __init__(self, storage_path=None, token_path=None, provider=None, max_source_bytes=256 * 1024 * 1024,
+                 job_provider=None):
         self.storage_path = storage_path
         self.token_path = token_path
         self.provider = provider or NotebookLMSyncProvider()
+        self.job_provider = job_provider or DeterministicJobProvider()
         self.max_source_bytes = max_source_bytes
+        self._jobs = {}
+        self._jobs_lock = threading.Lock()
 
     def status(self):
         configured = any(path and os.path.isfile(path) for path in (self.storage_path, self.token_path))
@@ -62,6 +67,104 @@ class NotebookLMWorkerApp:
                     os.unlink(temporary_path)
                 except OSError:
                     pass
+
+    def submit_job(self, request):
+        """Reconcile stable job identity in worker memory and return a safe DTO."""
+        string_fields = ("jobId", "requestId", "personId", "bookId", "bookContentHash",
+                          "artifactType")
+        if not isinstance(request, dict) or any(not isinstance(request.get(key), str)
+                                                 or not request[key].strip() for key in string_fields) \
+                or not isinstance(request.get("contextScope"), dict):
+            return self._job_result(request, "failed", "notebooklm_source_rejected")
+        if not self.status().get("configured"):
+            return self._job_result(request, "not_configured", "notebooklm_not_configured")
+        key = (request["personId"], request["requestId"])
+        with self._jobs_lock:
+            existing = self._jobs.get(key)
+            if existing is not None:
+                return self._job_result(request, existing["state"], existing.get("error"),
+                                        existing.get("artifact"))
+        try:
+            result = self.job_provider.start_job(**request)
+        except Exception as error:
+            result = _job_error_outcome(error)
+        with self._jobs_lock:
+            # A concurrent retry with the same identity may have won the race.
+            existing = self._jobs.get(key)
+            if existing is not None:
+                return self._job_result(request, existing["state"], existing.get("error"),
+                                        existing.get("artifact"))
+            self._jobs[key] = dict(result)
+        return self._job_result(request, result["state"], result.get("error"), result.get("artifact"))
+
+    def reconcile_job(self, request):
+        required = ("jobId", "requestId", "personId", "bookId", "bookContentHash")
+        if not isinstance(request, dict) or any(not isinstance(request.get(key), str)
+                                                 or not request[key].strip() for key in required):
+            return self._job_result(request, "failed", "notebooklm_source_rejected")
+        key = (request["personId"], request["requestId"])
+        with self._jobs_lock:
+            existing = self._jobs.get(key)
+        if existing is not None:
+            return self._job_result(request, existing["state"], existing.get("error"),
+                                    existing.get("artifact"))
+        # A restarted worker has no local receipt.  The stable request identity
+        # must be checked remotely; an adapter that cannot do so reports unknown.
+        try:
+            result = self.job_provider.reconcile_job(**request)
+        except AttributeError:
+            return self._job_result(request, "unknown", "notebooklm_job_unknown")
+        except Exception as error:
+            result = _job_error_outcome(error)
+        with self._jobs_lock:
+            self._jobs[key] = dict(result)
+        return self._job_result(request, result["state"], result.get("error"), result.get("artifact"))
+
+    def cancel_job(self, request):
+        required = ("jobId", "requestId", "personId", "bookId", "bookContentHash")
+        if not isinstance(request, dict) or any(not isinstance(request.get(key), str)
+                                                 or not request[key].strip() for key in required):
+            return self._job_result(request, "failed", "notebooklm_source_rejected")
+        key = (request["personId"], request["requestId"])
+        with self._jobs_lock:
+            existing = self._jobs.get(key)
+        if existing is None:
+            return self._job_result(request, "unknown", "notebooklm_job_unknown")
+        if existing["state"] in ("ready", "failed", "cancelled"):
+            return self._job_result(request, existing["state"], existing.get("error"),
+                                    existing.get("artifact"))
+        if existing["state"] == "unknown":
+            return self._job_result(request, "unknown", "notebooklm_job_unknown")
+        cancelled = {"state": "cancelled", "error": None, "artifact": None}
+        try:
+            self.job_provider.cancel_job(**request)
+        except Exception:
+            # Cancellation is local worker intent; inability to contact a
+            # remote service must not be reported as confirmed cancellation.
+            return self._job_result(request, "unknown", "notebooklm_job_unknown")
+        with self._jobs_lock:
+            self._jobs[key] = cancelled
+        return self._job_result(request, **cancelled)
+
+    @staticmethod
+    def _job_result(request, state, error=None, artifact=None):
+        result = {
+            "service": "notebooklm",
+            "jobId": request.get("jobId"),
+            "requestId": request.get("requestId"),
+            "personId": request.get("personId"),
+            "bookId": request.get("bookId"),
+            "bookContentHash": request.get("bookContentHash"),
+            "state": state,
+        }
+        if error:
+            result["error"] = error
+        if state == "ready" and isinstance(artifact, dict):
+            allowed = ("remoteArtifactId", "contentType", "byteSize")
+            if isinstance(artifact.get("remoteArtifactId"), str) \
+                    and artifact["remoteArtifactId"].strip():
+                result["artifact"] = {key: artifact[key] for key in allowed if key in artifact}
+        return result
 
     @staticmethod
     def _result(book_id, content_hash, request_id, outcome, error=None, notebook_id=None, source_id=None):
@@ -111,6 +214,35 @@ class NotebookLMSyncProvider:
         }
 
 
+class DeterministicJobProvider:
+    """Worker-contract fake used until a provider-specific job adapter exists."""
+
+    def start_job(self, **request):
+        return {"state": "unknown", "error": "notebooklm_job_unknown", "artifact": None}
+
+    def reconcile_job(self, **request):
+        return {"state": "unknown", "error": "notebooklm_job_unknown", "artifact": None}
+
+    def cancel_job(self, **request):
+        return {"state": "cancelled"}
+
+
+def _job_error_outcome(error):
+    code = getattr(error, "code", None)
+    aliases = {
+        "notebooklm_authentication_required": "notebooklm_auth_required",
+        "notebooklm_quota_limited": "notebooklm_quota",
+        "notebooklm_mutation_unknown": "notebooklm_job_unknown",
+    }
+    code = aliases.get(code, code)
+    if code not in ("notebooklm_auth_required", "notebooklm_unavailable", "notebooklm_quota",
+                    "notebooklm_source_rejected", "notebooklm_job_unknown",
+                    "artifact_download_failed"):
+        code = "notebooklm_job_unknown"
+    return {"state": "failed" if code != "notebooklm_job_unknown" else "unknown",
+            "error": code, "artifact": None}
+
+
 def _classify_provider_error(error):
     if getattr(error, "unconfirmed", False):
         return _ProviderError("notebooklm_mutation_unknown", "unknown")
@@ -150,7 +282,27 @@ class NotebookLMWorkerHandler(BaseHTTPRequestHandler):
         self._json(200, self.server.worker_app.status())
 
     def do_POST(self):
-        if self.path.split("?", 1)[0] != "/operations/sync-book":
+        path = self.path.split("?", 1)[0]
+        if path in ("/operations/study-jobs", "/operations/study-jobs/reconcile",
+                    "/operations/study-jobs/cancel"):
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+                if length < 0 or length > 64 * 1024:
+                    self._json(413, {"error": "bad_request"})
+                    return
+                request = json.loads(self.rfile.read(length).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                self._json(400, {"error": "bad_request"})
+                return
+            if path.endswith("/cancel"):
+                result = self.server.worker_app.cancel_job(request)
+            elif path.endswith("/reconcile"):
+                result = self.server.worker_app.reconcile_job(request)
+            else:
+                result = self.server.worker_app.submit_job(request)
+            self._json(200, result)
+            return
+        if path != "/operations/sync-book":
             self._json(404, {"error": "not_found"})
             return
         try:

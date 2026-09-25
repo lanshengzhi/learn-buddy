@@ -17,7 +17,17 @@ DEFAULT_URL = ""
 STATUS_TIMEOUT_SECONDS = 2
 OPERATION_TIMEOUT_SECONDS = 180
 _OPERATION_PATH = "/operations/sync-book"
+_JOB_PATH = "/operations/study-jobs"
 _SAFE_ERROR_RE = re.compile(r"[a-z0-9_]{1,64}")
+_JOB_STATES = {
+    "not_configured", "queued", "preparing", "uploading", "waiting_remote",
+    "downloading", "ready", "failed", "unknown", "cancelled",
+}
+_JOB_ERRORS = {
+    "notebooklm_not_configured", "notebooklm_auth_required", "notebooklm_unavailable",
+    "notebooklm_quota", "notebooklm_source_rejected", "notebooklm_job_unknown",
+    "artifact_download_failed",
+}
 
 
 class NotebookLMProxy:
@@ -115,6 +125,94 @@ class NotebookLMProxy:
                 raise NotebookLMOperationError("notebooklm_mutation_unknown", "unknown")
             result["error"] = error_code
         return result
+
+    def job_request(self, *, job_id, request_id, book_id, content_hash, person_id,
+                    artifact_type, context_scope):
+        """Submit or reconcile one stable remote job request.
+
+        The host persists ``request_id`` before this call.  Repeating the exact
+        request is therefore a reconciliation request, not permission to start
+        a second generation.
+        """
+        return self._job_operation(
+            "submit", job_id=job_id, request_id=request_id, book_id=book_id,
+            content_hash=content_hash, person_id=person_id, artifact_type=artifact_type,
+            context_scope=context_scope)
+
+    def reconcile_job(self, *, job_id, request_id, book_id, content_hash, person_id,
+                      artifact_type, context_scope):
+        """Recheck stable identity after a worker restart without resubmitting."""
+        return self._job_operation(
+            "reconcile", job_id=job_id, request_id=request_id, book_id=book_id,
+            content_hash=content_hash, person_id=person_id, artifact_type=artifact_type,
+            context_scope=context_scope)
+
+    def cancel_job(self, *, job_id, request_id, book_id, content_hash, person_id):
+        return self._job_operation(
+            "cancel", job_id=job_id, request_id=request_id, book_id=book_id,
+            content_hash=content_hash, person_id=person_id)
+
+    def _job_operation(self, action, **identity):
+        if not self.url:
+            raise NotebookLMOperationError("notebooklm_not_configured", "not_configured")
+        try:
+            self._validate_url()
+        except ValueError as error:
+            raise NotebookLMOperationError("notebooklm_not_configured", "not_configured") from error
+        payload = {
+            "service": "notebooklm", "action": action,
+            "jobId": identity["job_id"], "requestId": identity["request_id"],
+            "personId": identity["person_id"], "bookId": identity["book_id"],
+            "bookContentHash": identity["content_hash"],
+        }
+        if action in ("submit", "reconcile"):
+            payload.update({
+                "artifactType": identity["artifact_type"],
+                "contextScope": identity["context_scope"],
+            })
+        path = {"submit": _JOB_PATH, "reconcile": f"{_JOB_PATH}/reconcile",
+                "cancel": f"{_JOB_PATH}/cancel"}[action]
+        request = urllib.request.Request(
+            self.url.rstrip("/") + path,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST", headers={"Content-Type": "application/json; charset=utf-8"},
+        )
+        try:
+            with self._urlopen(request, timeout=self.operation_timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError,
+                ValueError, UnicodeDecodeError) as error:
+            raise NotebookLMOperationError("notebooklm_unavailable", "failed") from error
+        return self._validate_job_result(result, payload)
+
+    @staticmethod
+    def _validate_job_result(result, request):
+        if not isinstance(result, dict) or result.get("service") != "notebooklm" \
+                or any(result.get(key) != request.get(key)
+                       for key in ("jobId", "requestId", "personId", "bookId", "bookContentHash")):
+            raise NotebookLMOperationError("notebooklm_job_unknown", "unknown")
+        state = result.get("state")
+        if state not in _JOB_STATES:
+            raise NotebookLMOperationError("notebooklm_job_unknown", "unknown")
+        error = result.get("error")
+        if error is not None and error not in _JOB_ERRORS:
+            raise NotebookLMOperationError("notebooklm_job_unknown", "unknown")
+        controlled = {"state": state, "error": error, "artifact": None}
+        if state == "ready":
+            artifact = result.get("artifact")
+            allowed = ("remoteArtifactId", "contentType", "byteSize")
+            if not isinstance(artifact, dict) \
+                    or not isinstance(artifact.get("remoteArtifactId"), str) \
+                    or not artifact["remoteArtifactId"].strip() \
+                    or ("contentType" in artifact and not isinstance(artifact["contentType"], str)) \
+                    or ("byteSize" in artifact and (not isinstance(artifact["byteSize"], int)
+                                                    or isinstance(artifact["byteSize"], bool)
+                                                    or artifact["byteSize"] < 0)):
+                raise NotebookLMOperationError("notebooklm_job_unknown", "unknown")
+            controlled["artifact"] = {
+                key: artifact[key] for key in allowed if key in artifact
+            }
+        return controlled
 
     def _validate_url(self):
         parsed = urllib.parse.urlparse(self.url)

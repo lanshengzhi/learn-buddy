@@ -50,7 +50,7 @@ from edge_tts import (
 from library import ApiError, Library
 from book_context import BookContextCompiler
 from conversations import Conversations
-from book_ai import BookConversations, NotebookRefs, NotebookSync
+from book_ai import BookConversations, NotebookRefs, NotebookSync, StudyJobs
 from notebooklm_host import NotebookLMProxy
 import reading
 
@@ -167,6 +167,11 @@ STATUS_BY_CODE = {
     # Lazy NotebookLM sync (#74).
     "cloud_confirmation_required": 400,
     "notebook_ref_conflict": 409,
+    # Durable NotebookLM StudyJobs (#75).
+    "study_job_not_found": 404,
+    "study_job_conflict": 409,
+    "study_job_not_cancellable": 409,
+    "invalid_study_job_transition": 409,
 }
 
 # Hand-written routes: path says what, `?profile=` says who is asking.
@@ -186,6 +191,10 @@ ROUTE_TABLE = (
     ("POST", re.compile(r"^/books/(?P<book>[^/]+)/context$"), "api_compile_context"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync$"), "api_notebook_sync_status"),
     ("POST", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync$"), "api_notebook_sync"),
+    ("GET", re.compile(r"^/books/(?P<book>[^/]+)/study-jobs$"), "api_list_study_jobs"),
+    ("POST", re.compile(r"^/books/(?P<book>[^/]+)/study-jobs$"), "api_create_study_job"),
+    ("GET", re.compile(r"^/study-jobs/(?P<job>[^/]+)$"), "api_get_study_job"),
+    ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/cancel$"), "api_cancel_study_job"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/chapters/(?P<chapter>[^/]+)$"), "api_get_chapter"),
     ("PUT", re.compile(r"^/books/(?P<book>[^/]+)/position$"), "api_put_position"),
     ("GET", re.compile(r"^/conversations$"), "api_list_conversations"),
@@ -229,6 +238,8 @@ class TtsServer:
         self.book_conversations = BookConversations(
             data_dir, self.library.require_profile, self.library.require_book)
         self.notebook_refs = NotebookRefs(data_dir, self.library.require_book)
+        self.study_jobs = StudyJobs(
+            data_dir, self.library.require_profile, self.library.require_book)
         self.dicts = Dicts(os.path.join(data_dir, "dicts"))
         self.ai = AiProxy(os.path.join(data_dir, "ai-cache"))
         # The optional NotebookLM process is deliberately a separate, private
@@ -417,6 +428,36 @@ class TtsHandler(BaseHTTPRequestHandler):
             retry=body.get("retry", False),
         )
         self._json_response(200, result)
+
+    def api_list_study_jobs(self, params, groups):
+        result = self.server.app.study_jobs.list(params.get("profile", ""), groups["book"])
+        self._json_response(200, {**result, "book": groups["book"]})
+
+    def api_create_study_job(self, params, groups):
+        profile = params.get("profile", "")
+        body = self._read_json()
+        request = body.get("request")
+        if not isinstance(request, dict):
+            raise ApiError("bad_request", "request must be an object")
+        request = dict(request)
+        request.setdefault("bookId", groups["book"])
+        request.setdefault("bookContentHash", groups["book"])
+        request.setdefault("personId", profile)
+        created = self.server.app.study_jobs.create(profile, groups["book"], request)
+        self._json_response(201 if created["created"] else 200, {
+            "job": created["job"], "book": groups["book"],
+        })
+
+    def api_get_study_job(self, params, groups):
+        job = self.server.app.study_jobs.get(params.get("profile", ""), groups["job"])
+        self._json_response(200, {"job": job, "book": job["bookId"]})
+
+    def api_cancel_study_job(self, params, groups):
+        body = self._read_json()
+        if body.get("confirm") is not True:
+            raise ApiError("bad_request", "explicit cancellation confirmation is required")
+        job = self.server.app.study_jobs.cancel(params.get("profile", ""), groups["job"])
+        self._json_response(200, {"job": job, "book": job["bookId"]})
 
     def api_get_chapter(self, params, groups):
         self._json_response(200, self._library().get_chapter(

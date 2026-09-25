@@ -365,6 +365,46 @@ class TestNotebookLMSyncEndpoint(ApiTestCase):
         })
 
 
+class TestStudyJobEndpoint(ApiTestCase):
+    def test_job_is_person_scoped_durable_and_explicitly_cancellable(self):
+        book_id = json.loads(self.upload()[2])["book"]["id"]
+        request = {
+            "requestId": "study-job:api-stable-1",
+            "artifactType": "learning_report",
+            "contextScope": {"scope": "chapter", "anchor": {"chapter": 0}},
+        }
+        status, _, body = self.json_request(
+            "POST", f"/books/{book_id}/study-jobs?profile=dad", {"request": request})
+        self.assertEqual(status, 201)
+        job = json.loads(body)["job"]
+        self.assertEqual(job["state"], "queued")
+        self.assertEqual(job["request"]["bookContentHash"], book_id)
+
+        status, _, body = self.json_request(
+            "POST", f"/books/{book_id}/study-jobs?profile=dad", {"request": request})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["job"]["id"], job["id"])
+
+        status, _, body = self.get(f"/study-jobs/{job['id']}?profile=dad")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["job"]["requestId"], request["requestId"])
+        status, _, _ = self.get(f"/study-jobs/{job['id']}?profile=mom")
+        self.assertEqual(status, 404)
+
+        status, _, body = self.json_request(
+            "POST", f"/study-jobs/{job['id']}/cancel?profile=dad", {})
+        self.assertEqual(status, 400)
+        status, _, body = self.json_request(
+            "POST", f"/study-jobs/{job['id']}/cancel?profile=dad", {"confirm": True})
+        self.assertEqual(status, 200)
+        cancelled = json.loads(body)["job"]
+        self.assertEqual(cancelled["state"], "cancelled")
+        self.assertTrue(cancelled["cancelled"])
+
+        status, _, body = self.get(f"/books/{book_id}/chapters/0?profile=dad")
+        self.assertEqual(status, 200)
+
+
 class TestNotebookLMStatusEndpoint(ApiTestCase):
     def test_browser_sees_only_safe_status(self):
         self.harness.httpd.app.notebooklm.url = ""
