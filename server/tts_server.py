@@ -386,6 +386,7 @@ class TtsHandler(BaseHTTPRequestHandler):
             sentence=body.get("sentence"),
             start=body.get("start"),
             end=body.get("end"),
+            selected_text=body.get("selectedText"),
             expected_book_id=body.get("bookId"),
             content_hash=body.get("contentHash"),
             max_chars=body.get("maxChars"),

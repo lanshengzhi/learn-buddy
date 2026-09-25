@@ -183,11 +183,9 @@ new MutationObserver(() => {
 let selectionTimer = null;
 let activeSelection = null;
 
-function sentenceFor(selection) {
-  const node = selection?.anchorNode?.nodeType === Node.ELEMENT_NODE
-    ? selection.anchorNode
-    : selection?.anchorNode?.parentElement;
-  return node?.closest?.('#chapter-body .sent') ?? null;
+function sentenceForNode(node) {
+  const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+  return element?.closest?.('#chapter-body .sent') ?? null;
 }
 
 /** Return the exact browser selection, but only when it is in the open Book. */
@@ -196,13 +194,20 @@ function readSelection() {
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
   const text = selection.toString();
   if (!text.trim()) return null;
-  const sentence = sentenceFor(selection);
+  const range = selection.getRangeAt(0);
+  const startSentence = sentenceForNode(range.startContainer);
+  const endSentence = sentenceForNode(range.endContainer);
+  const sentence = startSentence;
   const book = window.learnbuddyRead?.bookView?.();
-  if (!sentence || !book?.book || book.chapter == null) return null;
+  // Both endpoints must be in the mounted chapter. This rejects a selection
+  // that merely begins in the Book and extends into another surface.
+  if (!startSentence || !endSentence || !book?.book || book.chapter == null
+      || startSentence.closest('#chapter-body') !== endSentence.closest('#chapter-body')) return null;
   return {
     text,
     sentence,
     sentenceIndex: Number(sentence.dataset.sentence),
+    endSentenceIndex: Number(endSentence.dataset.sentence),
     chapter: book.chapterIndex,
     bookId: book.book.id,
   };
@@ -247,7 +252,10 @@ highlightObserver.observe($('chapter-body'), { childList: true, subtree: false }
 
 function rememberSelection() {
   const selection = shell.state.activeFace === Face.Read ? readSelection() : null;
-  if (!selection) return false;
+  if (!selection) {
+    activeSelection = null;
+    return false;
+  }
   activeSelection = selection;
   return true;
 }
@@ -331,7 +339,7 @@ selAskBook.addEventListener('click', async () => {
       scope: 'selection',
       chapter: selection.chapter,
       start: selection.sentenceIndex,
-      end: selection.sentenceIndex,
+      end: selection.endSentenceIndex,
       selectedText: selection.text,
     });
     bookAiContext.textContent = `${context?.scope ?? 'selection'} · 第 ${selection.chapter + 1} 章 · 第 ${selection.sentenceIndex + 1} 句`;

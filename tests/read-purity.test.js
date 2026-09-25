@@ -46,7 +46,7 @@ test('Read selection actions are exact, sentence-anchored, and open a Book AI su
   assert.match(shell, /data-highlight-anchor|highlightAnchor/);
   assert.match(shell, /scope: 'selection'/);
   assert.match(shell, /start: selection\.sentenceIndex/);
-  assert.match(shell, /end: selection\.sentenceIndex/);
+  assert.match(shell, /end: selection\.endSentenceIndex/);
   assert.match(shell, /selectedText: selection\.text/);
   assert.match(shell, /compileContext/);
   assert.match(api, /compileBookContext/);

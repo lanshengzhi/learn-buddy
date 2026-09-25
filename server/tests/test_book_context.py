@@ -100,6 +100,14 @@ class TestBookContextEndpoint(ApiTestCase):
         self.assertEqual(context["bookId"], book_id)
         self.assertEqual(context["scope"], "sentence")
         self.assertEqual(context["contentHash"], book_id)
+        self.assertNotIn("selectedText", context)
+
+        status, _, body = self.json_request("POST", f"/books/{book_id}/context", {
+            "bookId": book_id, "scope": "selection", "chapter": 0,
+            "start": 0, "end": 0, "selectedText": "  Chapter  ",
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["context"]["selectedText"], "  Chapter  ")
 
         status, _, body = self.json_request("POST", f"/books/{book_id}/context", {
             "bookId": "b" * 64, "scope": "sentence",

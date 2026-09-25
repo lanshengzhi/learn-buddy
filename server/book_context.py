@@ -98,7 +98,7 @@ class BookContextCompiler:
         self.max_chars = max_chars
 
     def compile(self, book_id, scope, chapter=0, sentence=None, start=None, end=None,
-                 expected_book_id=None, content_hash=None, max_chars=None):
+                 selected_text=None, expected_book_id=None, content_hash=None, max_chars=None):
         manifest = _manifest(self.library, book_id)
         digest = _book_hash(self.library, book_id)
         if expected_book_id is not None and expected_book_id != book_id:
@@ -110,6 +110,8 @@ class BookContextCompiler:
         budget = self.max_chars if max_chars is None else _require_int(max_chars, "maxChars", 1)
         if budget > self.max_chars:
             raise ApiError("bad_request", f"maxChars exceeds the {self.max_chars} character budget")
+        if selected_text is not None and (not isinstance(selected_text, str) or not selected_text.strip()):
+            raise ApiError("bad_request", "selectedText must be non-empty text or null")
         selected = None
         if scope in ("sentence", "selection"):
             data = _chapter(self.library, book_id, chapter, manifest)
@@ -144,7 +146,7 @@ class BookContextCompiler:
                 parts.extend(_text(item) for item in data["sentences"])
             text, original, truncated = _fit(parts, budget)
             anchor = {"wholeBook": True}
-        return {
+        context = {
             "bookId": book_id,
             "book": {"id": book_id, "title": manifest.get("title", ""), "contentHash": digest},
             "contentHash": digest,
@@ -163,6 +165,11 @@ class BookContextCompiler:
                 "truncated": truncated,
             },
         }
+        if selected_text is not None:
+            # This is provenance for the exact browser selection. It never
+            # replaces the host-assembled, bounded context text above.
+            context["selectedText"] = selected_text
+        return context
 
     def snapshot(self, context):
         """Return a defensive, fail-closed JSON snapshot for a turn."""
