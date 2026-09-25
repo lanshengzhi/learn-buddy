@@ -153,7 +153,7 @@ class TestBookConversationApi(ApiTestCase):
             scope: self.context(scope, **anchor)
             for scope, anchor in (
                 ("sentence", {"sentence": 0}),
-                ("selection", {"start": 0, "end": 1}),
+                ("selection", {"start": 0, "end": 1, "selectedText": "  Chapter  "}),
                 ("chapter", {"chapter": 1}),
                 ("book", {}),
             )

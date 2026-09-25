@@ -562,6 +562,7 @@ class TtsHandler(BaseHTTPRequestHandler):
             sentence=(snapshot.get("anchor") or {}).get("sentence"),
             start=(snapshot.get("anchor") or {}).get("start"),
             end=(snapshot.get("anchor") or {}).get("end"),
+            selected_text=snapshot.get("selectedText"),
             expected_book_id=expected_book_id if expected_book_id is not None else snapshot["bookId"],
             content_hash=snapshot["contentHash"],
             max_chars=(snapshot.get("metadata") or {}).get("budgetChars"),
