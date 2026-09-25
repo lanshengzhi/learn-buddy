@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import io
 import json
 import os
@@ -30,6 +32,19 @@ def _zip(files):
         for name, text in files.items():
             archive.writestr(name, text)
     return buffer.getvalue()
+
+
+def _read_bytes(path):
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def _tree_bytes(root):
+    return {
+        os.path.relpath(os.path.join(directory, name), root): _read_bytes(
+            os.path.join(directory, name))
+        for directory, _, names in os.walk(root) for name in names
+    }
 
 
 CONTAINER = """<?xml version="1.0" encoding="utf-8"?>
@@ -352,6 +367,172 @@ class _DeterministicNotebookLM:
 
     def cancel_job(self, **kwargs):
         return {"state": "cancelled", "error": None, "artifact": None}
+
+
+class _ArtifactNotebookLM(_DeterministicNotebookLM):
+    def __init__(self, cleanup_outcomes=None):
+        super().__init__()
+        self.artifact_data = json.dumps({"summary": "deterministic artifact"}, ensure_ascii=False).encode("utf-8")
+        self.cleanup_outcomes = list(cleanup_outcomes or [])
+
+    def reconcile_job(self, **kwargs):
+        remote = kwargs["remote_provenance"]
+        return {
+            "state": "ready", "error": None, "remote": remote,
+            "artifact": {
+                "remoteArtifactId": remote["artifactId"],
+                "contentType": "application/json", "byteSize": len(self.artifact_data),
+                "dataBase64": base64.b64encode(self.artifact_data).decode("ascii"), "remote": remote,
+            },
+        }
+
+    def delete_artifact(self, *, artifact_id, remote):
+        self.cleanup_calls = getattr(self, "cleanup_calls", [])
+        self.cleanup_calls.append({"artifact_id": artifact_id, "remote": dict(remote)})
+        return dict(self.cleanup_outcomes.pop(0))
+
+
+class TestStudyArtifactEndpoint(ApiTestCase):
+    def _sync(self, book_id):
+        self.harness.httpd.app.notebook_refs.ensure(book_id, "notebook-1", "source-1")
+
+    def _ready_artifact(self, profile, book_id, request_id, artifact_type="learning_report"):
+        request = {
+            "requestId": request_id, "artifactType": artifact_type,
+            "contextScope": {"scope": "chapter", "anchor": {"chapter": 0}},
+        }
+        status, _, body = self.json_request(
+            "POST", f"/books/{book_id}/study-jobs?profile={profile}", {"request": request})
+        self.assertEqual(status, 201, body)
+        job = json.loads(body)["job"]
+        status, _, body = self.json_request(
+            "POST", f"/study-jobs/{job['id']}/reconcile?profile={profile}", {})
+        self.assertEqual(status, 200, body)
+        ready = json.loads(body)["job"]
+        self.assertEqual(ready["state"], "ready")
+        return ready["artifactId"]
+
+    def test_original_preview_download_isolation_and_local_delete_preserve_reading_data(self):
+        provider = _ArtifactNotebookLM()
+        self.harness.httpd.app.study_job_runner.provider = provider
+        dad_book = json.loads(self.upload()[2])["book"]["id"]
+        other_book = json.loads(self.upload("spine.epub")[2])["book"]["id"]
+        for book_id in (dad_book, other_book):
+            self._sync(book_id)
+        status, _, _ = self.json_request(
+            "PUT", f"/books/{dad_book}/position?profile=dad", {"chapter": 1, "sentence": 2})
+        self.assertEqual(status, 204)
+
+        dad_artifact_id = self._ready_artifact("dad", dad_book, "study-job:artifact-dad")
+        mom_artifact_id = self._ready_artifact("mom", dad_book, "study-job:artifact-mom")
+        other_artifact_id = self._ready_artifact("dad", other_book, "study-job:artifact-other")
+
+        status, _, body = self.get(f"/books/{dad_book}/study-artifacts?profile=dad")
+        self.assertEqual(status, 200)
+        dad_listing = json.loads(body)
+        self.assertEqual(dad_listing["book"], dad_book)
+        self.assertEqual([item["id"] for item in dad_listing["artifacts"]], [dad_artifact_id])
+        self.assertEqual(json.loads(self.get(f"/books/{other_book}/study-artifacts?profile=dad")[2])["artifacts"][0]["id"],
+                         other_artifact_id)
+        self.assertEqual(json.loads(self.get(f"/books/{dad_book}/study-artifacts?profile=mom")[2])["artifacts"][0]["id"],
+                         mom_artifact_id)
+        for profile in ("mom", "d1"):
+            self.assertEqual(self.get(f"/study-artifacts/{dad_artifact_id}?profile={profile}")[0], 404)
+            self.assertEqual(self.get(f"/study-artifacts/{dad_artifact_id}/download?profile={profile}")[0], 404)
+
+        status, _, body = self.get(f"/study-artifacts/{dad_artifact_id}?profile=dad")
+        artifact = json.loads(body)["artifact"]
+        expected_hash = hashlib.sha256(provider.artifact_data).hexdigest()
+        self.assertEqual((artifact["byteSize"], artifact["contentHash"]), (len(provider.artifact_data), expected_hash))
+        self.assertEqual(artifact["previewData"], {
+            "kind": "structured", "data": {"summary": "deterministic artifact"},
+        })
+        self.assertNotIn("originalPath", artifact)
+        status, headers, downloaded = self.get(f"/study-artifacts/{dad_artifact_id}/download?profile=dad")
+        self.assertEqual(status, 200)
+        self.assertEqual(downloaded, provider.artifact_data)
+        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertIn(dad_artifact_id, headers["Content-Disposition"])
+
+        class UnavailableProvider:
+            def job_request(self, **kwargs):
+                raise AssertionError("ready local artifact must not submit a provider job")
+
+            def reconcile_job(self, **kwargs):
+                raise AssertionError("ready local artifact must not contact the provider")
+
+            def delete_artifact(self, **kwargs):
+                raise AssertionError("local preview must not trigger remote cleanup")
+
+        self.harness.httpd.app.notebooklm = UnavailableProvider()
+        self.harness.httpd.app.study_job_runner.provider = self.harness.httpd.app.notebooklm
+        self.assertEqual(json.loads(self.get(f"/study-artifacts/{dad_artifact_id}?profile=dad")[2])["artifact"],
+                         artifact)
+        self.assertEqual(self.get(f"/study-artifacts/{dad_artifact_id}/download?profile=dad")[2],
+                         provider.artifact_data)
+
+        data_dir = self.harness.data_dir
+        book_dir = os.path.join(data_dir, "books", dad_book)
+        # This snapshot includes the EPUB, chapters, NotebookRef, positions, and
+        # any Book-owned annotation/highlight files. Person definitions live
+        # separately, and neither boundary may be touched by artifact deletion.
+        book_data_before = _tree_bytes(book_dir)
+        profiles_before = _read_bytes(os.path.join(data_dir, "profiles.json"))
+        status, _, body = self.harness.request(
+            "DELETE", f"/study-artifacts/{dad_artifact_id}?profile=dad")
+        self.assertEqual(status, 204, body)
+        self.assertEqual(json.loads(self.get(f"/books/{dad_book}/study-artifacts?profile=dad")[2])["artifacts"], [])
+        self.assertEqual(self.get(f"/study-artifacts/{dad_artifact_id}/download?profile=dad")[0], 404)
+        self.assertEqual(_tree_bytes(book_dir), book_data_before)
+        self.assertEqual(_read_bytes(os.path.join(data_dir, "profiles.json")), profiles_before)
+        self.assertEqual(json.loads(self.get(f"/books/{dad_book}/study-artifacts?profile=mom")[2])["artifacts"][0]["id"],
+                         mom_artifact_id)
+        self.assertEqual(json.loads(self.get(f"/books/{other_book}/study-artifacts?profile=dad")[2])["artifacts"][0]["id"],
+                         other_artifact_id)
+
+    def test_remote_cleanup_is_explicit_and_regeneration_keeps_the_prior_artifact(self):
+        provider = _ArtifactNotebookLM([
+            {"outcome": "not_found"},
+            {"outcome": "partial", "error": "artifact_cleanup_failed"},
+        ])
+        self.harness.httpd.app.study_job_runner.provider = provider
+        self.harness.httpd.app.notebooklm = provider
+        book_id = json.loads(self.upload()[2])["book"]["id"]
+        self._sync(book_id)
+        first_id = self._ready_artifact("dad", book_id, "study-job:artifact-cleanup-1")
+        second_id = self._ready_artifact("dad", book_id, "study-job:artifact-cleanup-2")
+
+        status, _, body = self.json_request(
+            "POST", f"/study-artifacts/{first_id}/remote-cleanup?profile=dad", {})
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "bad_request")
+        self.assertFalse(hasattr(provider, "cleanup_calls"))
+
+        for artifact_id, expected in (
+            (first_id, {"status": "not_found", "error": None}),
+            (second_id, {"status": "partial", "error": "artifact_cleanup_failed"}),
+        ):
+            status, _, body = self.json_request(
+                "POST", f"/study-artifacts/{artifact_id}/remote-cleanup?profile=dad", {"confirm": True})
+            self.assertEqual(status, 200, body)
+            result = json.loads(body)
+            self.assertEqual(result["cleanup"], {**expected, "at": result["cleanup"]["at"]})
+            self.assertEqual(result["artifact"]["status"], "ready")
+            self.assertEqual(self.get(f"/study-artifacts/{artifact_id}/download?profile=dad")[0], 200)
+        self.assertEqual([call["artifact_id"] for call in provider.cleanup_calls], [first_id, second_id])
+
+        before_ids = {item["id"] for item in json.loads(
+            self.get(f"/books/{book_id}/study-artifacts?profile=dad")[2])["artifacts"]}
+        status, _, body = self.json_request(
+            "POST", f"/study-artifacts/{first_id}/regenerate?profile=dad", {})
+        self.assertEqual(status, 201, body)
+        regenerated = json.loads(body)
+        self.assertTrue(regenerated["created"])
+        self.assertNotEqual(regenerated["job"]["id"], self.harness.httpd.app.study_artifacts.get(
+            "dad", first_id)["jobId"])
+        after = json.loads(self.get(f"/books/{book_id}/study-artifacts?profile=dad")[2])["artifacts"]
+        self.assertTrue(before_ids.issubset({item["id"] for item in after}))
+        self.assertEqual(self.get(f"/study-artifacts/{first_id}/download?profile=dad")[2], provider.artifact_data)
 
 
 class TestNotebookLMSyncEndpoint(ApiTestCase):

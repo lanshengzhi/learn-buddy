@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import shutil
@@ -31,9 +32,10 @@ def _fixture(name):
 
 
 class DeterministicJobProvider:
-    def __init__(self, result, sequence=None):
+    def __init__(self, result, sequence=None, cleanup_outcomes=None):
         self.result = dict(result)
         self.sequence = list(sequence or [])
+        self.cleanup_outcomes = list(cleanup_outcomes or [])
         self.calls = []
 
     def _next(self):
@@ -50,6 +52,10 @@ class DeterministicJobProvider:
     def cancel_job(self, **request):
         self.calls.append({"cancel": dict(request)})
         return {"state": "cancelled"}
+
+    def delete_artifact(self, **request):
+        self.calls.append({"delete_artifact": dict(request)})
+        return dict(self.cleanup_outcomes.pop(0))
 
 
 class DeterministicProvider:
@@ -516,6 +522,7 @@ class TestNotebookLMJobProvider(unittest.TestCase):
             self.assertEqual(started["state"], "waiting_remote")
             self.assertEqual(ready["state"], "ready")
             self.assertEqual(ready["artifact"]["byteSize"], 8)
+            self.assertEqual(base64.b64decode(ready["artifact"]["dataBase64"]), b"artifact")
             self.assertEqual(ready["remote"]["sourceId"], "source-1")
             self.assertEqual(ready["remote"]["scopeSourceId"], "scope-source-1")
             names = [call["name"] for call in _FakeNotebookLMClient.calls]
@@ -561,6 +568,29 @@ class TestNotebookLMWorker(unittest.TestCase):
     def test_worker_is_disabled_when_no_credentials_exist(self):
         app = NotebookLMWorkerApp(storage_path="/missing/storage_state.json", token_path="/missing/master_token.json")
         self.assertEqual(app.status()["configured"], False)
+
+    def test_worker_reports_explicit_cleanup_outcomes_without_deleting_local_data(self):
+        remote = {"provider": "notebooklm", "notebookId": "notebook-1",
+                  "sourceId": "source-1", "artifactId": "remote-1"}
+        provider = DeterministicJobProvider(
+            {"state": "cancelled", "error": None, "artifact": None},
+            cleanup_outcomes=[
+                {"outcome": "not_found"},
+                {"outcome": "partial", "error": "artifact_cleanup_failed"},
+            ],
+        )
+        app = NotebookLMWorkerApp(job_provider=provider)
+        for artifact_id, expected in (
+            ("artifact-local-1", {"outcome": "not_found"}),
+            ("artifact-local-2", {"outcome": "partial", "error": "artifact_cleanup_failed"}),
+        ):
+            result = app.delete_artifact({
+                "service": "notebooklm", "artifactId": artifact_id, "remote": remote,
+            })
+            self.assertEqual(result, expected)
+            self.assertEqual(provider.calls[-1]["delete_artifact"], {
+                "service": "notebooklm", "artifactId": artifact_id, "remote": remote,
+            })
 
     def test_worker_protocol_reconciles_identity_and_explicitly_cancels(self):
         root = tempfile.mkdtemp()

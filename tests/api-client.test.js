@@ -130,6 +130,47 @@ test('a rejected upload/books request surfaces the server’s error code', async
   });
 });
 
+test('StudyArtifact list, preview, download, delete, regenerate, and cleanup stay Person-scoped', async () => {
+  const calls = [];
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      if (options?.method === 'DELETE') return response(null, 204);
+      if (path.includes('/regenerate?')) return response({ job: { id: 'job-new' }, created: true }, 201);
+      if (path.includes('/remote-cleanup?')) {
+        return response({ artifact: { id: 'artifact-local' }, cleanup: { status: 'not_requested' } });
+      }
+      if (path.includes('/study-artifacts/')) {
+        return response({ artifact: { id: 'artifact-local', previewData: { kind: 'text', text: 'ready' } } });
+      }
+      return response({ artifacts: [{ id: 'artifact-local' }] });
+    },
+  });
+
+  const artifacts = await api.listStudyArtifacts('book-hash');
+  const artifact = await api.getStudyArtifact('artifact-local');
+  const downloadUrl = api.studyArtifactDownloadUrl('artifact-local');
+  await api.deleteStudyArtifact('artifact-local');
+  const regenerated = await api.regenerateStudyArtifact('artifact-local');
+  const cleaned = await api.remoteCleanupStudyArtifact('artifact-local');
+
+  assert.deepEqual(artifacts, [{ id: 'artifact-local' }]);
+  assert.equal(artifact.previewData.text, 'ready');
+  assert.equal(downloadUrl, '/study-artifacts/artifact-local/download?profile=dad');
+  assert.equal(regenerated.job.id, 'job-new');
+  assert.equal(cleaned.cleanup.status, 'not_requested');
+  assert.deepEqual(calls.map((call) => `${call.options?.method ?? 'GET'} ${call.path}`), [
+    'GET /books/book-hash/study-artifacts?profile=dad',
+    'GET /study-artifacts/artifact-local?profile=dad',
+    'DELETE /study-artifacts/artifact-local?profile=dad',
+    'POST /study-artifacts/artifact-local/regenerate?profile=dad',
+    'POST /study-artifacts/artifact-local/remote-cleanup?profile=dad',
+  ]);
+  assert.deepEqual(JSON.parse(calls[3].options.body), {});
+  assert.deepEqual(JSON.parse(calls[4].options.body), { confirm: true });
+});
+
 // --- Chat / Conversations (ticket #47: every request stays inside the
 // active profile; a turn carries only the new text — the server assembles
 // the Conversation context, so nothing else can leak from the client) ---
