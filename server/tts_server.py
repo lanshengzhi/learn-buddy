@@ -51,7 +51,7 @@ from library import ApiError, Library
 from book_context import BookContextCompiler
 from conversations import Conversations
 from book_ai import (
-    BookConversations, NotebookRefs, NotebookSync, StudyJobRunner, StudyJobs,
+    BookConversations, NotebookRefs, NotebookSync, StudyArtifacts, StudyJobRunner, StudyJobs,
 )
 from notebooklm_host import NotebookLMProxy
 import reading
@@ -185,6 +185,8 @@ STATUS_BY_CODE = {
     "notebooklm_source_rejected": 422,
     "notebooklm_job_unknown": 502,
     "artifact_download_failed": 502,
+    "artifact_not_found": 404,
+    "artifact_cleanup_failed": 502,
 }
 
 # Hand-written routes: path says what, `?profile=` says who is asking.
@@ -206,6 +208,12 @@ ROUTE_TABLE = (
     ("POST", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync$"), "api_notebook_sync"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/study-jobs$"), "api_list_study_jobs"),
     ("POST", re.compile(r"^/books/(?P<book>[^/]+)/study-jobs$"), "api_create_study_job"),
+    ("GET", re.compile(r"^/books/(?P<book>[^/]+)/study-artifacts$"), "api_list_study_artifacts"),
+    ("GET", re.compile(r"^/study-artifacts/(?P<artifact>[^/]+)$"), "api_get_study_artifact"),
+    ("GET", re.compile(r"^/study-artifacts/(?P<artifact>[^/]+)/download$"), "api_download_study_artifact"),
+    ("DELETE", re.compile(r"^/study-artifacts/(?P<artifact>[^/]+)$"), "api_delete_study_artifact"),
+    ("POST", re.compile(r"^/study-artifacts/(?P<artifact>[^/]+)/regenerate$"), "api_regenerate_study_artifact"),
+    ("POST", re.compile(r"^/study-artifacts/(?P<artifact>[^/]+)/remote-cleanup$"), "api_remote_cleanup_study_artifact"),
     ("GET", re.compile(r"^/study-jobs/(?P<job>[^/]+)$"), "api_get_study_job"),
     ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/reconcile$"), "api_reconcile_study_job"),
     ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/cancel$"), "api_cancel_study_job"),
@@ -256,6 +264,8 @@ class TtsServer:
         self.notebook_refs = NotebookRefs(data_dir, self.library.require_book)
         self.study_jobs = StudyJobs(
             data_dir, self.library.require_profile, self.library.require_book)
+        self.study_artifacts = StudyArtifacts(
+            data_dir, self.library.require_profile, self.library.require_book)
         self.dicts = Dicts(os.path.join(data_dir, "dicts"))
         self.ai = AiProxy(os.path.join(data_dir, "ai-cache"))
         # The optional NotebookLM process is deliberately a separate, private
@@ -265,7 +275,7 @@ class TtsServer:
         self.notebook_sync = NotebookSync(self.library, self.notebook_refs, self.notebooklm)
         self.study_job_runner = StudyJobRunner(
             self.library, self.book_context, self.study_jobs,
-            self.notebook_refs, self.notebooklm)
+            self.notebook_refs, self.notebooklm, self.study_artifacts)
 
     def _use_azure(self):
         """Azure is primary exactly when it holds a subscription key."""
@@ -467,6 +477,44 @@ class TtsHandler(BaseHTTPRequestHandler):
         self._json_response(201 if created["created"] else 200, {
             "job": created["job"], "book": groups["book"],
         })
+
+    def api_list_study_artifacts(self, params, groups):
+        result = self.server.app.study_artifacts.list(params.get("profile", ""), groups["book"])
+        self._json_response(200, {**result, "book": groups["book"]})
+
+    def api_get_study_artifact(self, params, groups):
+        artifact = self.server.app.study_artifacts.get(params.get("profile", ""), groups["artifact"])
+        self._json_response(200, {"artifact": artifact, "book": artifact["bookId"]})
+
+    def api_download_study_artifact(self, params, groups):
+        path, artifact = self.server.app.study_artifacts.download_path(
+            params.get("profile", ""), groups["artifact"])
+        with open(path, "rb") as handle:
+            data = handle.read()
+        self.send_response(200)
+        self.send_header("Content-Type", artifact.get("contentType", "application/octet-stream"))
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f'attachment; filename="{artifact["originalFileName"]}"')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def api_delete_study_artifact(self, params, groups):
+        self.server.app.study_artifacts.delete_local(params.get("profile", ""), groups["artifact"])
+        self._no_content()
+
+    def api_regenerate_study_artifact(self, params, groups):
+        self._read_json()
+        result = self.server.app.study_artifacts.regenerate(
+            params.get("profile", ""), groups["artifact"], self.server.app.study_job_runner)
+        self._json_response(201 if result.get("created") else 200, result)
+
+    def api_remote_cleanup_study_artifact(self, params, groups):
+        body = self._read_json()
+        if body.get("confirm") is not True:
+            raise ApiError("bad_request", "explicit remote cleanup confirmation is required")
+        artifact = self.server.app.study_artifacts.remote_cleanup(
+            params.get("profile", ""), groups["artifact"], self.server.app.notebooklm)
+        self._json_response(200, {"artifact": artifact, "cleanup": artifact["remoteCleanup"]})
 
     def api_get_study_job(self, params, groups):
         job = self.server.app.study_jobs.get(params.get("profile", ""), groups["job"])

@@ -64,6 +64,7 @@ export class BookAiPanelController {
       error: null,
       job: { status: 'unavailable', message: '学习产物生成尚未启用。' },
       artifact: null,
+      artifacts: [],
     };
   }
 

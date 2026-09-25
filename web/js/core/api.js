@@ -240,6 +240,30 @@ export class ServerApi {
     }))?.job ?? null;
   }
 
+  async listStudyArtifacts(bookId) {
+    return (await this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}/study-artifacts`)))?.artifacts ?? [];
+  }
+
+  async getStudyArtifact(artifactId) {
+    return (await this.#request(this.#withProfile(`/study-artifacts/${encodeURIComponent(artifactId)}`)))?.artifact ?? null;
+  }
+
+  async deleteStudyArtifact(artifactId) {
+    await this.#request(this.#withProfile(`/study-artifacts/${encodeURIComponent(artifactId)}`), { method: 'DELETE' });
+  }
+
+  async regenerateStudyArtifact(artifactId) {
+    return this.#request(this.#withProfile(`/study-artifacts/${encodeURIComponent(artifactId)}/regenerate`), { method: 'POST', body: {} });
+  }
+
+  async remoteCleanupStudyArtifact(artifactId) {
+    return this.#request(this.#withProfile(`/study-artifacts/${encodeURIComponent(artifactId)}/remote-cleanup`), { method: 'POST', body: { confirm: true } });
+  }
+
+  studyArtifactDownloadUrl(artifactId) {
+    return `${this.baseUrl}${this.#withProfile(`/study-artifacts/${encodeURIComponent(artifactId)}/download`)}`;
+  }
+
   async recheckStudyJob(jobId) {
     return (await this.#request(this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/recheck`), {
       method: 'POST', body: {},

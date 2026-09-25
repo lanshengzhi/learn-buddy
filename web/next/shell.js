@@ -129,9 +129,19 @@ function renderBookAi() {
   $('book-ai-job-cancel').hidden = jobAction !== 'cancel';
   $('book-ai-job-recheck').hidden = jobAction !== 'recheck';
   if (s.artifact) {
-    $('book-artifact-title').textContent = s.artifact.title || '学习产物';
-    $('book-artifact-content').textContent = s.artifact.previewText || '此产物没有文本预览。';
+    $('book-artifact-title').textContent = s.artifact.title || artifactLabel(s.artifact.artifactType);
+    const preview = s.artifact.previewData ?? {};
+    if (preview.kind === 'structured') {
+      $('book-artifact-content').textContent = JSON.stringify(preview.data, null, 2);
+    } else if (preview.kind === 'audio') {
+      $('book-artifact-content').replaceChildren(Object.assign(document.createElement('audio'), {
+        controls: true, src: bookAiApi?.studyArtifactDownloadUrl(s.artifact.id) ?? '',
+      }));
+    } else {
+      $('book-artifact-content').textContent = preview.text || '此产物没有文本预览。';
+    }
   }
+  renderArtifactList();
 
   $('book-ai-error').hidden = !s.error;
   $('book-ai-error').textContent = s.error ?? '';
@@ -170,6 +180,45 @@ function renderBookAi() {
       }).catch(showBookAiError);
     });
     li.append(button);
+    return li;
+  }));
+}
+
+function renderArtifactList() {
+  const list = $('book-ai-artifact-list');
+  if (!list) return;
+  const artifacts = bookAi.state.artifacts ?? [];
+  list.replaceChildren(...artifacts.map((artifact) => {
+    const li = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = `${artifactLabel(artifact.artifactType)} · ${artifact.scope?.scope ?? '范围'}`;
+    button.addEventListener('click', () => bookAi.openArtifactPreview(artifact));
+    const download = document.createElement('a');
+    download.href = bookAiApi?.studyArtifactDownloadUrl(artifact.id) ?? '#';
+    download.textContent = '下载';
+    const regenerate = document.createElement('button');
+    regenerate.type = 'button';
+    regenerate.textContent = '重新生成';
+    regenerate.addEventListener('click', () => void bookAiApi?.regenerateStudyArtifact(artifact.id)
+      .then((result) => {
+        if (result?.job) { bookAi.openJob(jobView(result.job)); scheduleJobRecheck(result.job.id); }
+      }).catch(showBookAiError));
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '删除本地';
+    remove.addEventListener('click', () => void bookAiApi?.deleteStudyArtifact(artifact.id).then(() => {
+      bookAi.state.artifacts = artifacts.filter((item) => item.id !== artifact.id);
+      renderArtifactList();
+    }).catch(showBookAiError));
+    const cleanup = document.createElement('button');
+    cleanup.type = 'button';
+    cleanup.textContent = '清理远端';
+    cleanup.addEventListener('click', () => {
+      if (!window.confirm('确认删除远端产物？本地阅读数据不会删除。')) return;
+      void bookAiApi?.remoteCleanupStudyArtifact(artifact.id).catch(showBookAiError);
+    });
+    li.append(button, download, regenerate, cleanup, remove);
     return li;
   }));
 }
@@ -586,6 +635,7 @@ async function openBookAi(selection = null) {
     selectedText: selection?.text ?? '',
   });
   renderArtifactTypeControls();
+  await refreshBookAiArtifacts(book.id);
   await refreshBookAiConversations({ bookId: book.id, personId });
   if (openRequest !== bookAiOpenRequest
       || bookAi.state.bookId !== book.id
@@ -606,6 +656,14 @@ async function openBookAi(selection = null) {
           && bookAi.state.personId === personId) showBookAiError(error);
     }
   }
+}
+
+async function refreshBookAiArtifacts(bookId = bookAi.state.bookId) {
+  if (!bookAiApi || !bookId) return;
+  try {
+    bookAi.state.artifacts = await bookAiApi.listStudyArtifacts(bookId);
+    renderArtifactList();
+  } catch (error) { showBookAiError(error); }
 }
 
 async function refreshBookAiConversations({

@@ -157,6 +157,26 @@ class NotebookLMProxy:
             "cancel", job_id=job_id, request_id=request_id, book_id=book_id,
             content_hash=content_hash, person_id=person_id)
 
+    def delete_artifact(self, *, artifact_id, remote):
+        """Explicit remote cleanup; never removes local data."""
+        if not isinstance(remote, dict) or remote.get("provider") != "notebooklm" \
+                or not isinstance(artifact_id, str) or not artifact_id.strip():
+            return {"outcome": "failed", "error": "artifact_cleanup_failed"}
+        if not self.url:
+            return {"outcome": "failed", "error": "notebooklm_not_configured"}
+        payload = {"service": "notebooklm", "artifactId": artifact_id, "remote": remote}
+        request = urllib.request.Request(
+            self.url.rstrip("/") + "/operations/artifacts/delete", data=json.dumps(payload).encode("utf-8"),
+            method="POST", headers={"Content-Type": "application/json; charset=utf-8"})
+        try:
+            with self._urlopen(request, timeout=self.operation_timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return {"outcome": "failed", "error": "artifact_cleanup_failed"}
+        if not isinstance(result, dict) or result.get("outcome") not in ("deleted", "not_found", "partial", "failed"):
+            return {"outcome": "failed", "error": "artifact_cleanup_failed"}
+        return {"outcome": result["outcome"], **({"error": "artifact_cleanup_failed"} if result.get("error") else {})}
+
     def _job_operation(self, action, **identity):
         if not self.url:
             raise NotebookLMOperationError("notebooklm_not_configured", "not_configured")
@@ -227,15 +247,20 @@ class NotebookLMProxy:
         controlled = {"state": state, "error": error, "artifact": None, "remote": remote}
         if state == "ready":
             artifact = result.get("artifact")
-            allowed = ("remoteArtifactId", "contentType", "byteSize", "remote")
-            if not isinstance(remote, dict) or not isinstance(artifact, dict) \
-                    or not isinstance(artifact.get("remoteArtifactId"), str) \
-                    or artifact["remoteArtifactId"] != remote["artifactId"] \
-                    or artifact.get("remote") != remote \
-                    or ("contentType" in artifact and not isinstance(artifact["contentType"], str)) \
-                    or ("byteSize" in artifact and (not isinstance(artifact["byteSize"], int)
-                                                    or isinstance(artifact["byteSize"], bool)
-                                                    or artifact["byteSize"] < 0)):
+            allowed = ("remoteArtifactId", "contentType", "byteSize", "dataBase64", "remote")
+            valid_bytes = ("byteSize" not in artifact
+                           or (isinstance(artifact["byteSize"], int)
+                               and not isinstance(artifact["byteSize"], bool)
+                               and artifact["byteSize"] >= 0))
+            valid_data = ("dataBase64" not in artifact
+                          or (isinstance(artifact["dataBase64"], str)
+                              and len(artifact["dataBase64"]) <= 32 * 1024 * 1024))
+            if (not isinstance(remote, dict) or not isinstance(artifact, dict)
+                    or not isinstance(artifact.get("remoteArtifactId"), str)
+                    or artifact["remoteArtifactId"] != remote["artifactId"]
+                    or artifact.get("remote") != remote
+                    or ("contentType" in artifact and not isinstance(artifact["contentType"], str))
+                    or not valid_bytes or not valid_data):
                 raise NotebookLMOperationError("notebooklm_job_unknown", "unknown")
             controlled["artifact"] = {
                 key: artifact[key] for key in allowed if key in artifact

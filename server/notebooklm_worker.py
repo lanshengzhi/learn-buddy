@@ -9,6 +9,7 @@ remote identifiers to the host.
 
 import argparse
 import asyncio
+import base64
 import hashlib
 import ipaddress
 import json
@@ -144,6 +145,21 @@ class NotebookLMWorkerApp:
         return self._job_result(request, result["state"], result.get("error"),
                                 result.get("artifact"), result.get("remote"))
 
+    def delete_artifact(self, request):
+        if not isinstance(request, dict) or request.get("service") != "notebooklm" \
+                or not isinstance(request.get("artifactId"), str) or not request["artifactId"].strip() \
+                or not isinstance(request.get("remote"), dict):
+            return {"outcome": "failed", "error": "artifact_cleanup_failed"}
+        try:
+            result = self.job_provider.delete_artifact(**request)
+        except AttributeError:
+            return {"outcome": "not_found"}
+        except Exception:
+            return {"outcome": "failed", "error": "artifact_cleanup_failed"}
+        if not isinstance(result, dict) or result.get("outcome") not in ("deleted", "not_found", "partial", "failed"):
+            return {"outcome": "failed", "error": "artifact_cleanup_failed"}
+        return {"outcome": result["outcome"], **({"error": "artifact_cleanup_failed"} if result.get("error") else {})}
+
     def cancel_job(self, request):
         required = ("jobId", "requestId", "personId", "bookId", "bookContentHash")
         if not isinstance(request, dict) or any(not isinstance(request.get(key), str)
@@ -196,7 +212,7 @@ class NotebookLMWorkerApp:
         if error:
             result["error"] = error
         if state == "ready" and isinstance(artifact, dict):
-            allowed = ("remoteArtifactId", "contentType", "byteSize", "remote")
+            allowed = ("remoteArtifactId", "contentType", "byteSize", "dataBase64", "remote")
             if isinstance(artifact.get("remoteArtifactId"), str) \
                     and artifact["remoteArtifactId"].strip() \
                     and isinstance(result.get("remote"), dict) \
@@ -366,13 +382,16 @@ class NotebookLMJobProvider:
                     else:
                         await client.artifacts.download_audio(
                             request["notebookId"], path, artifact_id)
-                    byte_size = os.path.getsize(path)
+                    with open(path, "rb") as handle:
+                        downloaded = handle.read()
+                    byte_size = len(downloaded)
                 return {
                     "state": "ready", "error": None, "remote": remote,
                     "artifact": {
                         "remoteArtifactId": artifact_id,
                         "contentType": content_type,
                         "byteSize": byte_size,
+                        "dataBase64": base64.b64encode(downloaded).decode("ascii"),
                         "remote": remote,
                     },
                 }
@@ -383,6 +402,11 @@ class NotebookLMJobProvider:
             result = _job_error_outcome(error)
             result["remote"] = remote
             return result
+
+    def delete_artifact(self, **request):
+        # notebooklm-py has no stable artifact-delete API. The worker reports
+        # not_found rather than claiming a remote deletion it cannot verify.
+        return {"outcome": "not_found"}
 
     def cancel_job(self, **request):
         # notebooklm-py 0.8.2 has no public generation-cancel method.
@@ -471,7 +495,7 @@ class NotebookLMWorkerHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         if path in ("/operations/study-jobs", "/operations/study-jobs/reconcile",
-                    "/operations/study-jobs/cancel"):
+                    "/operations/study-jobs/cancel", "/operations/artifacts/delete"):
             try:
                 length = int(self.headers.get("Content-Length", ""))
                 if length < 0 or length > 64 * 1024:
@@ -483,6 +507,8 @@ class NotebookLMWorkerHandler(BaseHTTPRequestHandler):
                 return
             if path.endswith("/cancel"):
                 result = self.server.worker_app.cancel_job(request)
+            elif path.endswith("/artifacts/delete"):
+                result = self.server.worker_app.delete_artifact(request)
             elif path.endswith("/reconcile"):
                 result = self.server.worker_app.reconcile_job(request)
             else:

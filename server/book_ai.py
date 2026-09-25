@@ -15,6 +15,8 @@ SHA-256 identity, even when remote provider IDs are present. Both stores use
 atomically.
 """
 
+import base64
+import hashlib
 import json
 import os
 import re
@@ -744,6 +746,14 @@ class StudyJobs:
                 raise ApiError("study_job_not_retryable", f"StudyJob is already {document['state']}")
             return self.transition(profile_id, job_id, "queued", reason="user_retry")
 
+    def set_artifact(self, profile_id, job_id, artifact_id):
+        with self._lock:
+            document = self._require(profile_id, job_id)
+            document["artifactId"] = artifact_id
+            document["updatedAt"] = self._timestamp()
+            self._write(profile_id, document)
+            return self._view(document)
+
     def recheck(self, profile_id, job_id):
         """Reconcile an unknown result without ever submitting a new job."""
         with self._lock:
@@ -860,6 +870,173 @@ def _valid_remote_provenance(value, require_artifact=True):
     )
 
 
+class StudyArtifacts:
+    """Durable Person/Book StudyArtifact records and their original downloads.
+
+    Metadata and the downloaded bytes are both host-owned. Provider IDs are
+    provenance only and never identify a local Book or artifact record.
+    """
+    def __init__(self, root, require_profile, require_book, now=None):
+        self.root = os.path.abspath(root)
+        self.require_profile = require_profile
+        self.require_book = require_book
+        self.now = now or time.time
+        self._lock = threading.RLock()
+
+    def list(self, profile_id, book_id):
+        self.require_profile(profile_id)
+        self.require_book(book_id)
+        records = [r for r in self._read_all(profile_id) if r.get("bookId") == book_id
+                   and r.get("status") != "deleted"]
+        records.sort(key=lambda r: (r.get("createdAt", 0), r.get("id", "")), reverse=True)
+        return {"artifacts": [self._public(r) for r in records]}
+
+    def get(self, profile_id, artifact_id):
+        self.require_profile(profile_id)
+        return self._public(self._require(profile_id, artifact_id))
+
+    def publish(self, profile_id, job, artifact_result, remote):
+        self.require_profile(profile_id)
+        self.require_book(job["bookId"])
+        with self._lock:
+            existing = next((r for r in self._read_all(profile_id)
+                             if r.get("jobId") == job["id"] and r.get("status") != "deleted"), None)
+            if existing:
+                return self._public(existing)
+            artifact_id = f"artifact-{uuid.uuid4().hex}"
+            data = None
+            encoded = artifact_result.get("dataBase64")
+            if encoded is not None:
+                try:
+                    data = base64.b64decode(encoded, validate=True)
+                except (ValueError, TypeError):
+                    raise ApiError("artifact_download_failed", "invalid downloaded artifact")
+            if data is None:
+                # Older deterministic workers only returned a receipt. Keep the
+                # record viewable, while making the missing original explicit.
+                data = b""
+            content_hash = hashlib.sha256(data).hexdigest()
+            if encoded is not None and artifact_result.get("byteSize") not in (None, len(data)):
+                raise ApiError("artifact_download_failed", "downloaded artifact size mismatch")
+            suffix = {"learning_report": "md", "mind_map": "json",
+                      "flashcard_set": "json", "audio_explanation": "m4a"}[job["request"]["artifactType"]]
+            directory = os.path.join(self._dir(profile_id), artifact_id)
+            os.makedirs(directory, exist_ok=True)
+            original = os.path.join(directory, f"original.{suffix}")
+            with open(original, "wb") as handle:
+                handle.write(data)
+            at = self._timestamp()
+            record = {
+                "id": artifact_id, "jobId": job["id"], "personId": profile_id,
+                "bookId": job["bookId"], "bookContentHash": job["request"]["bookContentHash"],
+                "artifactType": job["request"]["artifactType"], "type": job["request"]["artifactType"],
+                "scope": job["request"]["contextScope"], "contextScope": job["request"]["contextScope"],
+                "status": "ready", "contentHash": content_hash, "byteSize": len(data),
+                "originalFileName": f"{artifact_id}.{suffix}", "originalPath": original,
+                "contentType": artifact_result.get("contentType", "application/octet-stream"),
+                "previewData": _artifact_preview(job["request"]["artifactType"], data),
+                "remoteProvenance": json.loads(json.dumps(remote, ensure_ascii=False)),
+                "createdAt": at, "updatedAt": at, "deletedAt": None,
+                "remoteCleanup": {"status": "not_requested", "error": None},
+            }
+            _write_json(os.path.join(directory, "metadata.json"), record)
+            return self._public(record)
+
+    def delete_local(self, profile_id, artifact_id):
+        with self._lock:
+            record = self._require(profile_id, artifact_id)
+            if record.get("status") == "deleted":
+                return self._public(record)
+            at = self._timestamp()
+            record.update({"status": "deleted", "deletedAt": at, "updatedAt": at})
+            _write_json(os.path.join(self._dir(profile_id), artifact_id, "metadata.json"), record)
+            try:
+                os.unlink(record["originalPath"])
+            except OSError:
+                pass
+            return self._public(record)
+
+    def remote_cleanup(self, profile_id, artifact_id, provider):
+        """Explicit remote operation; local record and files are never touched."""
+        with self._lock:
+            record = self._require(profile_id, artifact_id)
+            if record.get("status") == "deleted":
+                raise ApiError("artifact_not_found", "unknown StudyArtifact")
+            remote = record.get("remoteProvenance") or {}
+            try:
+                result = provider.delete_artifact(artifact_id=record["id"], remote=remote)
+                if not isinstance(result, dict) or result.get("outcome") not in ("deleted", "not_found", "partial", "failed"):
+                    raise LookupError("artifact_cleanup_failed")
+                status = result["outcome"]
+                error = result.get("error")
+            except Exception:
+                status, error = "failed", "artifact_cleanup_failed"
+            at = self._timestamp()
+            record["remoteCleanup"] = {"status": status, "error": error, "at": at}
+            record["updatedAt"] = at
+            _write_json(os.path.join(self._dir(profile_id), artifact_id, "metadata.json"), record)
+            return self._public(record)
+
+    def download_path(self, profile_id, artifact_id):
+        record = self._require(profile_id, artifact_id)
+        if record.get("status") == "deleted" or not os.path.isfile(record["originalPath"]):
+            raise ApiError("artifact_not_found", "StudyArtifact original is unavailable")
+        return record["originalPath"], record
+
+    def regenerate(self, profile_id, artifact_id, runner):
+        record = self.get(profile_id, artifact_id)
+        if record.get("status") != "ready":
+            raise ApiError("artifact_not_found", "StudyArtifact is not available")
+        request = {"artifactType": record["artifactType"], "contextScope": record["contextScope"]}
+        return runner.create(profile_id, record["bookId"], request,
+                             confirm_whole_book=record["contextScope"].get("scope") == "book")
+
+    def _dir(self, profile_id):
+        return os.path.join(self.root, "state", profile_id, "study-artifacts")
+
+    def _require(self, profile_id, artifact_id):
+        if not isinstance(artifact_id, str) or not re.fullmatch(r"artifact-[0-9a-f]{32}", artifact_id):
+            raise ApiError("artifact_not_found", f"unknown StudyArtifact: {artifact_id}")
+        record = _read_json(os.path.join(self._dir(profile_id), artifact_id, "metadata.json"), None)
+        if not isinstance(record, dict) or record.get("id") != artifact_id or record.get("personId") != profile_id:
+            raise ApiError("artifact_not_found", f"unknown StudyArtifact: {artifact_id}")
+        return record
+
+    def _read_all(self, profile_id):
+        directory = self._dir(profile_id)
+        ids = [n for n in os.listdir(directory)] if os.path.isdir(directory) else []
+        records = []
+        for name in ids:
+            record = _read_json(os.path.join(directory, name, "metadata.json"), None)
+            if isinstance(record, dict) and record.get("id") == name:
+                records.append(record)
+        return records
+
+    def _timestamp(self):
+        return int(self.now() * 1000)
+
+    @staticmethod
+    def _public(record):
+        result = dict(record)
+        result.pop("originalPath", None)
+        return result
+
+
+def _artifact_preview(artifact_type, data):
+    if artifact_type == "audio_explanation":
+        return {"kind": "audio", "playback": True}
+    try:
+        value = json.loads(data.decode("utf-8"))
+        if isinstance(value, dict):
+            return {"kind": "structured", "data": value}
+    except (UnicodeDecodeError, ValueError):
+        pass
+    try:
+        return {"kind": "text", "text": data.decode("utf-8")}
+    except UnicodeDecodeError:
+        return {"kind": "binary"}
+
+
 class StudyJobRunner:
     """Validate scoped generation and drive the isolated worker safely.
 
@@ -868,12 +1045,13 @@ class StudyJobRunner:
     is an explicit operation that never creates a second remote artifact.
     """
 
-    def __init__(self, library, context_compiler, jobs, refs, provider):
+    def __init__(self, library, context_compiler, jobs, refs, provider, artifacts=None):
         self.library = library
         self.context_compiler = context_compiler
         self.jobs = jobs
         self.refs = refs
         self.provider = provider
+        self.artifacts = artifacts
 
     def create(self, profile_id, book_id, request, confirm_whole_book=False):
         self.library.require_profile(profile_id)
@@ -992,6 +1170,9 @@ class StudyJobRunner:
                 job = self.jobs.transition(profile_id, job["id"], "ready",
                                            artifact_result=artifact, remote_provenance=remote,
                                            reason="worker_ready")
+                if self.artifacts is not None:
+                    artifact_record = self.artifacts.publish(profile_id, job, artifact, remote)
+                    job = self.jobs.set_artifact(profile_id, job["id"], artifact_record["id"])
             else:
                 if job["state"] in ("preparing", "uploading"):
                     job = self.jobs.transition(profile_id, job["id"], "waiting_remote",
@@ -1001,6 +1182,9 @@ class StudyJobRunner:
                                                reason="artifact_download_started")
                 job = self.jobs.transition(profile_id, job["id"], "ready",
                                            artifact_result=artifact, remote_provenance=remote)
+                if self.artifacts is not None:
+                    artifact_record = self.artifacts.publish(profile_id, job, artifact, remote)
+                    job = self.jobs.set_artifact(profile_id, job["id"], artifact_record["id"])
         elif state == "failed":
             job = self._apply_error(profile_id, job, result.get("error"))
         elif state == "unknown":
@@ -1028,7 +1212,7 @@ class StudyJobRunner:
         if state == "ready":
             if not _valid_remote_provenance(remote, require_artifact=True) \
                     or not isinstance(artifact, dict) \
-                    or any(key not in ("remoteArtifactId", "contentType", "byteSize", "remote")
+                    or any(key not in ("remoteArtifactId", "contentType", "byteSize", "dataBase64", "remote")
                            for key in artifact) \
                     or artifact.get("remoteArtifactId") != remote.get("artifactId") \
                     or artifact.get("remote") != remote:
