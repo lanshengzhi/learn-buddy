@@ -175,6 +175,16 @@ STATUS_BY_CODE = {
     "study_job_not_cancellable": 409,
     "invalid_study_job_transition": 409,
     "notebook_ref_not_found": 409,
+    "study_job_not_retryable": 409,
+    "study_job_not_recheckable": 409,
+    # NotebookLM product failures (the host never forwards worker bodies).
+    "notebooklm_not_configured": 503,
+    "notebooklm_auth_required": 503,
+    "notebooklm_unavailable": 502,
+    "notebooklm_quota": 503,
+    "notebooklm_source_rejected": 422,
+    "notebooklm_job_unknown": 502,
+    "artifact_download_failed": 502,
 }
 
 # Hand-written routes: path says what, `?profile=` says who is asking.
@@ -199,6 +209,8 @@ ROUTE_TABLE = (
     ("GET", re.compile(r"^/study-jobs/(?P<job>[^/]+)$"), "api_get_study_job"),
     ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/reconcile$"), "api_reconcile_study_job"),
     ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/cancel$"), "api_cancel_study_job"),
+    ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/retry$"), "api_retry_study_job"),
+    ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/recheck$"), "api_recheck_study_job"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/chapters/(?P<chapter>[^/]+)$"), "api_get_chapter"),
     ("PUT", re.compile(r"^/books/(?P<book>[^/]+)/position$"), "api_put_position"),
     ("GET", re.compile(r"^/conversations$"), "api_list_conversations"),
@@ -472,6 +484,16 @@ class TtsHandler(BaseHTTPRequestHandler):
             raise ApiError("bad_request", "explicit cancellation confirmation is required")
         job = self.server.app.study_jobs.cancel(
             params.get("profile", ""), groups["job"], provider=self.server.app.notebooklm)
+        self._json_response(200, {"job": job, "book": job["bookId"]})
+
+    def api_retry_study_job(self, params, groups):
+        self._read_json()
+        job = self.server.app.study_job_runner.retry(params.get("profile", ""), groups["job"])
+        self._json_response(200, {"job": job, "book": job["bookId"]})
+
+    def api_recheck_study_job(self, params, groups):
+        self._read_json()
+        job = self.server.app.study_job_runner.recheck(params.get("profile", ""), groups["job"])
         self._json_response(200, {"job": job, "book": job["bookId"]})
 
     def api_get_chapter(self, params, groups):

@@ -596,8 +596,13 @@ _STUDY_JOB_TRANSITIONS = {
     "queued": {"preparing", "not_configured", "failed", "unknown", "cancelled"},
     "preparing": {"uploading", "waiting_remote", "not_configured", "failed", "unknown", "cancelled"},
     "uploading": {"waiting_remote", "not_configured", "failed", "unknown", "cancelled"},
-    "waiting_remote": {"downloading", "failed", "unknown", "cancelled"},
-    "downloading": {"ready", "failed", "unknown", "cancelled"},
+    "waiting_remote": {"downloading", "not_configured", "failed", "unknown", "cancelled"},
+    "downloading": {"ready", "not_configured", "failed", "unknown", "cancelled"},
+    # A user may explicitly retry only a known local failure.  Unknown is
+    # deliberately absent: the remote side effect may already have succeeded.
+    "failed": {"queued"},
+    "not_configured": {"queued"},
+    "unknown": {"ready", "failed", "not_configured", "unknown", "cancelled"},
 }
 
 
@@ -729,6 +734,22 @@ class StudyJobs:
                     "from": current, "to": state, "at": at, "reason": reason or state,
                 })
             self._write(profile_id, document)
+            return self._view(document)
+
+    def retry(self, profile_id, job_id):
+        """Requeue only a known local failure after an explicit user action."""
+        with self._lock:
+            document = self._require(profile_id, job_id)
+            if document["state"] not in ("failed", "not_configured"):
+                raise ApiError("study_job_not_retryable", f"StudyJob is already {document['state']}")
+            return self.transition(profile_id, job_id, "queued", reason="user_retry")
+
+    def recheck(self, profile_id, job_id):
+        """Reconcile an unknown result without ever submitting a new job."""
+        with self._lock:
+            document = self._require(profile_id, job_id)
+            if document["state"] != "unknown":
+                raise ApiError("study_job_not_recheckable", f"StudyJob is already {document['state']}")
             return self._view(document)
 
     def cancel(self, profile_id, job_id, provider=None):
@@ -955,23 +976,31 @@ class StudyJobRunner:
         return self._apply_result(profile_id, self.jobs.get(profile_id, job["id"]), result)
 
     def _apply_result(self, profile_id, job, result):
+        result = self._validate_provider_result(result)
         state = result["state"]
         remote = result.get("remote")
         artifact = result.get("artifact")
-        if remote is not None:
+        if remote is not None and job.get("remoteProvenance") != remote:
             self.jobs.transition(profile_id, job["id"], job["state"],
+                                 error=job.get("error"),
                                  remote_provenance=remote, reason="remote_provenance_recorded")
             job = self.jobs.get(profile_id, job["id"])
         if state == "waiting_remote" and job["state"] not in ("waiting_remote", "downloading"):
             job = self.jobs.transition(profile_id, job["id"], "waiting_remote", reason="remote_generation_started")
         elif state == "ready":
-            if job["state"] in ("preparing", "uploading"):
-                job = self.jobs.transition(profile_id, job["id"], "waiting_remote",
-                                           reason="remote_generation_started")
-            if job["state"] != "downloading":
-                job = self.jobs.transition(profile_id, job["id"], "downloading", reason="artifact_download_started")
-            job = self.jobs.transition(profile_id, job["id"], "ready",
-                                       artifact_result=artifact, remote_provenance=remote)
+            if job["state"] == "unknown":
+                job = self.jobs.transition(profile_id, job["id"], "ready",
+                                           artifact_result=artifact, remote_provenance=remote,
+                                           reason="worker_ready")
+            else:
+                if job["state"] in ("preparing", "uploading"):
+                    job = self.jobs.transition(profile_id, job["id"], "waiting_remote",
+                                               reason="remote_generation_started")
+                if job["state"] != "downloading":
+                    job = self.jobs.transition(profile_id, job["id"], "downloading",
+                                               reason="artifact_download_started")
+                job = self.jobs.transition(profile_id, job["id"], "ready",
+                                           artifact_result=artifact, remote_provenance=remote)
         elif state == "failed":
             job = self._apply_error(profile_id, job, result.get("error"))
         elif state == "unknown":
@@ -983,6 +1012,65 @@ class StudyJobRunner:
             job = self.jobs.transition(profile_id, job["id"], "not_configured")
         return job
 
+    @staticmethod
+    def _validate_provider_result(result):
+        """Accept only the worker's controlled job DTO and fixed error codes."""
+        allowed = {"state", "error", "artifact", "remote"}
+        if not isinstance(result, dict) or any(key not in allowed for key in result) \
+                or result.get("state") not in STUDY_JOB_STATES:
+            raise ApiError("notebooklm_job_unknown", "invalid NotebookLM job result")
+        state = result["state"]
+        error = result.get("error")
+        artifact = result.get("artifact")
+        remote = result.get("remote")
+        if error is not None and error not in STUDY_JOB_ERRORS:
+            raise ApiError("notebooklm_job_unknown", "invalid NotebookLM job error")
+        if state == "ready":
+            if not _valid_remote_provenance(remote, require_artifact=True) \
+                    or not isinstance(artifact, dict) \
+                    or any(key not in ("remoteArtifactId", "contentType", "byteSize", "remote")
+                           for key in artifact) \
+                    or artifact.get("remoteArtifactId") != remote.get("artifactId") \
+                    or artifact.get("remote") != remote:
+                raise ApiError("notebooklm_job_unknown", "ready job has no local artifact")
+        elif artifact is not None:
+            raise ApiError("notebooklm_job_unknown", "only ready jobs publish an artifact")
+        if state == "waiting_remote" and not _valid_remote_provenance(remote):
+            raise ApiError("notebooklm_job_unknown", "waiting job has no remote receipt")
+        if state == "failed" and error in (None, "notebooklm_not_configured", "notebooklm_job_unknown"):
+            raise ApiError("notebooklm_job_unknown", "invalid failed job")
+        if state == "unknown" and error != "notebooklm_job_unknown":
+            raise ApiError("notebooklm_job_unknown", "invalid unknown job")
+        if state in ("ready", "cancelled") and error is not None:
+            raise ApiError("notebooklm_job_unknown", "successful or cancelled job has an error")
+        if state == "not_configured" and error != "notebooklm_not_configured":
+            raise ApiError("notebooklm_job_unknown", "invalid not-configured job")
+        return {"state": state, "error": error, "artifact": artifact, "remote": remote}
+
+    def retry(self, profile_id, job_id):
+        """Explicitly retry a known local failure with the same request identity."""
+        return self._start(profile_id, self.jobs.retry(profile_id, job_id))
+
+    def recheck(self, profile_id, job_id):
+        """Recheck an unknown job without ever submitting another generation."""
+        job = self.jobs.recheck(profile_id, job_id)
+        remote = job.get("remoteProvenance")
+        if remote is None:
+            return job
+        request = job["request"]
+        try:
+            result = self.provider.reconcile_job(
+                job_id=job["id"], request_id=job["requestId"],
+                book_id=job["bookId"], content_hash=request["bookContentHash"],
+                person_id=job["personId"], artifact_type=request["artifactType"],
+                context_scope=request["contextScope"], context_text=request["context"]["text"],
+                notebook_id=request["notebookId"], source_id=request["sourceId"],
+                remote_provenance=remote,
+            )
+        except LookupError as error:
+            return self._apply_error(profile_id, job, getattr(error, "code", str(error)))
+        return self._apply_result(profile_id, job, result)
+
     def _apply_error(self, profile_id, job, code):
         if code == "notebooklm_not_configured":
             return self.jobs.transition(profile_id, job["id"], "not_configured")
@@ -990,4 +1078,6 @@ class StudyJobRunner:
             return self.jobs.transition(profile_id, job["id"], "unknown", error=code)
         if code not in STUDY_JOB_ERRORS:
             code = "notebooklm_job_unknown"
+        if job["state"] == "not_configured":
+            return self.jobs.transition(profile_id, job["id"], "queued", reason="provider_reconfigured")
         return self.jobs.transition(profile_id, job["id"], "failed", error=code)

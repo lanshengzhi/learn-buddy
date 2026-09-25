@@ -228,6 +228,24 @@ export class ServerApi {
     ))?.conversation ?? null;
   }
 
+  async cancelStudyJob(jobId) {
+    return (await this.#request(this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/cancel`), {
+      method: 'POST', body: { confirm: true },
+    }))?.job ?? null;
+  }
+
+  async retryStudyJob(jobId) {
+    return (await this.#request(this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/retry`), {
+      method: 'POST', body: {},
+    }))?.job ?? null;
+  }
+
+  async recheckStudyJob(jobId) {
+    return (await this.#request(this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/recheck`), {
+      method: 'POST', body: {},
+    }))?.job ?? null;
+  }
+
   async resumeBookConversation(conversationId) {
     return (await this.#request(
       this.#withProfile(`/book-conversations/${encodeURIComponent(conversationId)}/resume`),

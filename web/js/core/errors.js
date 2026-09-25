@@ -43,7 +43,10 @@ export function ttsErrorToMessage(code) {
  * `entry_not_found`, `not_found`, `too_large`, `not_epub`, `parse_failed`,
  * `lookup_unavailable`, `ai_not_configured`, `ai_upstream_error`, `ai_timeout`
  * (plus `unknown` and the TTS exception codes), and Chat (ticket #47):
- * `conversation_not_found`, `ai_usage_limit`.
+ * `conversation_not_found`, `ai_usage_limit`, plus the fixed NotebookLM
+ * StudyJob failures (`notebooklm_not_configured`, `notebooklm_auth_required`,
+ * `notebooklm_unavailable`, `notebooklm_quota`, `notebooklm_source_rejected`,
+ * `notebooklm_job_unknown`, and `artifact_download_failed`).
  */
 export const API_ERROR_CODES = Object.freeze({
   BAD_REQUEST: 'bad_request',

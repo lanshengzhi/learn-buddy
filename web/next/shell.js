@@ -120,14 +120,14 @@ function renderBookAi() {
   $('book-ai-job-scope').textContent = s.job
     ? `${artifactLabel(s.job.artifactType)} · ${scopeLabel(s.job.contextScope)}`
     : '';
-  $('book-ai-job-status').textContent = s.job?.message ?? jobLabel(s.job?.status);
-  $('book-ai-job-recheck').hidden = !s.job
-    || !['queued', 'preparing', 'uploading', 'waiting_remote', 'downloading'].includes(s.job.status);
-  $('book-ai-job-cancel').hidden = !s.job
-    || ['not_configured', 'ready', 'failed', 'unknown', 'cancelled'].includes(s.job.status);
+  $('book-ai-job-status').textContent = s.job?.message ?? jobLabel(s.job?.state ?? s.job?.status);
   $('book-ai-artifact-summary').textContent = s.artifact
     ? `${s.artifact.title || '学习产物'} · ${s.artifact.type || '未知类型'}`
     : '尚无可预览的学习产物。';
+  const jobAction = bookAi.jobAction(s.job);
+  $('book-ai-job-retry').hidden = jobAction !== 'retry';
+  $('book-ai-job-cancel').hidden = jobAction !== 'cancel';
+  $('book-ai-job-recheck').hidden = jobAction !== 'recheck';
   if (s.artifact) {
     $('book-artifact-title').textContent = s.artifact.title || '学习产物';
     $('book-artifact-content').textContent = s.artifact.previewText || '此产物没有文本预览。';
@@ -767,27 +767,23 @@ $('book-ai-generate').addEventListener('click', async () => {
     renderArtifactTypeControls();
   }
 });
-$('book-ai-job-recheck').addEventListener('click', async () => {
+async function runBookAiJobAction(action) {
   const job = bookAi.state.job;
-  if (!job?.id) return;
+  if (!bookAiApi || !job?.id || bookAi.jobAction(job) !== action) return;
   try {
-    const result = await bookAiApi.reconcileStudyJob(job.id);
-    bookAi.openJob(jobView(result.job));
-    scheduleJobRecheck(job.id);
+    const next = action === 'retry' ? await bookAiApi.retryStudyJob(job.id)
+      : action === 'cancel' ? await bookAiApi.cancelStudyJob(job.id)
+        : await bookAiApi.recheckStudyJob(job.id);
+    bookAi.openJob(jobView(next));
+    if (action === 'cancel' && studyJobTimer) window.clearTimeout(studyJobTimer);
+    else scheduleJobRecheck(job.id);
   } catch (error) {
     showBookAiError(error);
   }
-});
-$('book-ai-job-cancel').addEventListener('click', async () => {
-  const job = bookAi.state.job;
-  if (!job?.id) return;
-  try {
-    const result = await bookAiApi.cancelStudyJob(job.id);
-    bookAi.openJob(jobView(result.job));
-  } catch (error) {
-    showBookAiError(error);
-  }
-});
+}
+$('book-ai-job-retry').addEventListener('click', () => void runBookAiJobAction('retry'));
+$('book-ai-job-cancel').addEventListener('click', () => void runBookAiJobAction('cancel'));
+$('book-ai-job-recheck').addEventListener('click', () => void runBookAiJobAction('recheck'));
 renderArtifactTypeControls();
 
 $('book-ai-job-back').addEventListener('click', () => {

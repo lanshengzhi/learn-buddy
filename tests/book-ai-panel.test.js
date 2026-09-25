@@ -139,6 +139,28 @@ test('an incomplete answer is not shown as a persisted conversation turn', () =>
   assert.equal(panel.state.error, 'ai_upstream_error');
 });
 
+test('job actions are safe and unknown is recheck-only', () => {
+  const panel = new BookAiPanelController();
+  assert.equal(panel.jobAction({ state: 'queued' }), 'cancel');
+  for (const state of ['preparing', 'uploading', 'waiting_remote', 'downloading']) {
+    assert.equal(panel.jobAction({ state }), 'cancel');
+  }
+  assert.equal(panel.jobAction({ state: 'failed' }), 'retry');
+  assert.equal(panel.jobAction({ state: 'not_configured' }), 'retry');
+  assert.equal(panel.jobAction({ state: 'unknown' }), 'recheck');
+  assert.equal(panel.jobAction({ state: 'ready' }), null);
+  assert.equal(panel.jobAction({ state: 'cancelled' }), null);
+  assert.equal(panel.jobAction(null), null);
+});
+
+test('provider failure is rendered as a fixed product code and never raw body', () => {
+  const panel = new BookAiPanelController();
+  panel.openAsk(identity);
+  panel.failTurn('notebooklm_unavailable');
+  assert.equal(panel.state.error, 'notebooklm_unavailable');
+  assert.equal(panel.state.messages.length, 0);
+});
+
 test('only a ready local artifact can enter center preview', () => {
   const panel = new BookAiPanelController();
   panel.openAsk(identity);

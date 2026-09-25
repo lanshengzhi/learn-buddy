@@ -467,6 +467,92 @@ class TestStudyJobEndpoint(ApiTestCase):
         self.assertEqual(ready["artifactResult"]["remote"]["artifactId"], "artifact-0")
         self.assertEqual(self.get(f"/books/{book_id}?profile=dad")[2], before_book)
 
+    def test_job_actions_map_failures_and_preserve_local_read(self):
+        provider = _DeterministicNotebookLM()
+        self.harness.httpd.app.study_job_runner.provider = provider
+        book_id = json.loads(self.upload()[2])["book"]["id"]
+        self._sync(book_id)
+        request = {
+            "requestId": "study-job:api-failure-1",
+            "artifactType": "learning_report",
+            "contextScope": {"scope": "chapter", "anchor": {"chapter": 0}},
+        }
+        _, _, body = self.json_request(
+            "POST", f"/books/{book_id}/study-jobs?profile=dad", {"request": request})
+        job = json.loads(body)["job"]
+        self.harness.httpd.app.study_jobs.transition(
+            "dad", job["id"], "failed", error="notebooklm_unavailable")
+
+        class FailedProvider:
+            def job_request(self, **kwargs):
+                return {"state": "failed", "error": "notebooklm_unavailable", "artifact": None}
+
+        self.harness.httpd.app.study_job_runner.provider = FailedProvider()
+        status, _, body = self.json_request(
+            "POST", f"/study-jobs/{job['id']}/retry?profile=dad", {})
+        self.assertEqual(status, 200)
+        result = json.loads(body)["job"]
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(result["error"], "notebooklm_unavailable")
+        self.assertNotIn("rawUpstream", body.decode("utf-8"))
+        self.assertEqual(self.get(f"/books/{book_id}/chapters/0?profile=dad")[0], 200)
+
+        self.harness.httpd.app.study_job_runner.provider = _DeterministicNotebookLM()
+        unknown_request = dict(request, requestId="study-job:api-unknown-1")
+        _, _, body = self.json_request(
+            "POST", f"/books/{book_id}/study-jobs?profile=dad",
+            {"request": unknown_request})
+        unknown_job = json.loads(body)["job"]
+        self.harness.httpd.app.study_jobs.transition(
+            "dad", unknown_job["id"], "unknown", error="notebooklm_job_unknown")
+
+        class UnknownProvider:
+            def __init__(self):
+                self.submits = 0
+                self.rechecks = 0
+
+            def job_request(self, **kwargs):
+                self.submits += 1
+                return {"state": "waiting_remote", "error": None, "artifact": None, "remote": {
+                    "provider": "notebooklm", "notebookId": "notebook-1",
+                    "sourceId": "source-1", "artifactId": "artifact-retry",
+                }}
+
+            def reconcile_job(self, **kwargs):
+                self.rechecks += 1
+                remote = kwargs["remote_provenance"]
+                return {"state": "ready", "error": None, "remote": remote, "artifact": {
+                    "remoteArtifactId": remote["artifactId"],
+                    "remote": remote,
+                }}
+
+        unknown_provider = UnknownProvider()
+        self.harness.httpd.app.study_job_runner.provider = unknown_provider
+        status, _, body = self.json_request(
+            "POST", f"/study-jobs/{unknown_job['id']}/recheck?profile=dad", {})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["job"]["state"], "ready")
+        self.assertEqual((unknown_provider.rechecks, unknown_provider.submits), (1, 0))
+
+        invalid_provider = type("InvalidProvider", (), {
+            "job_request": lambda self, **kwargs: {
+                "state": "ready", "error": None, "artifact": {"raw": "upstream secret"},
+            },
+        })()
+        retry_request = dict(request, requestId="study-job:api-invalid-1")
+        _, _, body = self.json_request(
+            "POST", f"/books/{book_id}/study-jobs?profile=dad",
+            {"request": retry_request})
+        invalid_job = json.loads(body)["job"]
+        self.harness.httpd.app.study_jobs.transition(
+            "dad", invalid_job["id"], "failed", error="notebooklm_unavailable")
+        self.harness.httpd.app.study_job_runner.provider = invalid_provider
+        status, _, body = self.json_request(
+            "POST", f"/study-jobs/{invalid_job['id']}/retry?profile=dad", {})
+        self.assertEqual(status, 502)
+        self.assertEqual(json.loads(body), {"error": "notebooklm_job_unknown"})
+        self.assertNotIn("upstream secret", body.decode("utf-8"))
+
 
 class TestNotebookLMStatusEndpoint(ApiTestCase):
     def test_browser_sees_only_safe_status(self):

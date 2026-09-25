@@ -102,9 +102,19 @@ export class BookAiPanelController {
   }
 
   openJob(job) {
-    if (!job || typeof job.status !== 'string') return false;
-    this.#set({ panelState: BookAiPanelState.Job, job, error: null }, 'job-opened');
+    const status = job?.state ?? job?.status;
+    if (!job || typeof status !== 'string') return false;
+    const normalized = { ...job, status, state: status };
+    this.#set({ panelState: BookAiPanelState.Job, job: normalized, error: null }, 'job-opened');
     return true;
+  }
+
+  jobAction(job) {
+    const state = job?.state ?? job?.status;
+    if (state === 'failed' || state === 'not_configured') return 'retry';
+    if (state === 'unknown') return 'recheck';
+    if (['queued', 'preparing', 'uploading', 'waiting_remote', 'downloading'].includes(state)) return 'cancel';
+    return null;
   }
 
   openArtifactPreview(artifact) {
