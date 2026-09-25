@@ -64,6 +64,7 @@ export class BookAiPanelController {
       error: null,
       job: { status: 'unavailable', message: '学习产物生成尚未启用。' },
       artifact: null,
+      jobs: [],
       artifacts: [],
     };
   }
@@ -98,15 +99,32 @@ export class BookAiPanelController {
       } : {}),
       error: null,
       artifact: null,
+      ...(newBookContext ? { jobs: [], artifacts: [] } : {}),
     }, 'ask-opened');
     if (newBookContext) this.activeTurn = null;
   }
 
+  setJobs(jobs) {
+    this.#set({
+      jobs: jobs.filter((job) => job.bookId === this.state.bookId),
+      error: null,
+    }, 'jobs-loaded');
+  }
+
   openJob(job) {
     const status = job?.state ?? job?.status;
-    if (!job || typeof status !== 'string') return false;
+    if (!job || typeof status !== 'string' || job.bookId !== this.state.bookId) return false;
     const normalized = { ...job, status, state: status };
-    this.#set({ panelState: BookAiPanelState.Job, job: normalized, error: null }, 'job-opened');
+    const knownIndex = this.state.jobs.findIndex((item) => item.id === job.id);
+    const jobs = [...this.state.jobs];
+    if (knownIndex >= 0) jobs[knownIndex] = { ...jobs[knownIndex], ...normalized };
+    else jobs.unshift(normalized);
+    this.#set({
+      panelState: BookAiPanelState.Job,
+      job: normalized,
+      jobs,
+      error: null,
+    }, 'job-opened');
     return true;
   }
 

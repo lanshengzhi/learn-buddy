@@ -32,7 +32,7 @@ test('Book AI exposes only the four explicit panel states', () => {
   assert.equal(panel.state.panelState, BookAiPanelState.Closed);
   panel.openAsk(identity);
   assert.equal(panel.state.panelState, BookAiPanelState.Ask);
-  panel.openJob({ status: 'waiting_remote' });
+  panel.openJob({ bookId: identity.bookId, status: 'waiting_remote' });
   assert.equal(panel.state.panelState, BookAiPanelState.Job);
   panel.returnFromPreview();
   assert.equal(panel.state.panelState, BookAiPanelState.Ask);
@@ -180,13 +180,37 @@ test('the four artifact types expose only their legal scopes', () => {
   ]);
 });
 
+test('Book task history is Person/Book scoped and updates the visible job safely', () => {
+  const panel = new BookAiPanelController();
+  panel.openAsk(identity);
+  panel.setJobs([
+    { id: 'job-mine', bookId: identity.bookId, state: 'failed' },
+    { id: 'job-other', bookId: 'other-book', state: 'ready' },
+  ]);
+  assert.deepEqual(panel.state.jobs.map((job) => job.id), ['job-mine']);
+  assert.equal(panel.openJob({ id: 'job-foreign', bookId: 'other-book', state: 'ready' }), false);
+  assert.equal(panel.state.panelState, BookAiPanelState.Ask);
+  assert.equal(panel.openJob({ id: 'job-mine', bookId: identity.bookId, state: 'ready' }), true);
+  assert.equal(panel.state.jobs[0].state, 'ready');
+});
+
+test('opening a new Person/Book clears task and artifact center history', () => {
+  const panel = new BookAiPanelController();
+  panel.openAsk(identity);
+  panel.setJobs([{ id: 'job-1', bookId: identity.bookId, state: 'ready' }]);
+  panel.state.artifacts = [{ id: 'artifact-1', bookId: identity.bookId, status: 'ready' }];
+  panel.openAsk({ ...identity, bookId: 'other-book' });
+  assert.deepEqual(panel.state.jobs, []);
+  assert.deepEqual(panel.state.artifacts, []);
+});
+
 test('job status requires a real product job and retains visible type and scope', () => {
   const panel = new BookAiPanelController();
   panel.openAsk(identity);
   assert.equal(panel.openJob(), false);
   assert.equal(panel.state.panelState, BookAiPanelState.Ask);
   assert.equal(panel.openJob({
-    status: 'waiting_remote', artifactType: 'flashcard_set',
+    bookId: identity.bookId, status: 'waiting_remote', artifactType: 'flashcard_set',
     contextScope: { scope: 'selection', anchor: { start: 2, end: 4 } },
   }), true);
   assert.equal(panel.state.job.artifactType, 'flashcard_set');

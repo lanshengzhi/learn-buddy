@@ -240,6 +240,10 @@ export class ServerApi {
     }))?.job ?? null;
   }
 
+  async listStudyJobs(bookId) {
+    return (await this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}/study-jobs`)))?.jobs ?? [];
+  }
+
   async listStudyArtifacts(bookId) {
     return (await this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}/study-artifacts`)))?.artifacts ?? [];
   }

@@ -609,8 +609,10 @@ body[data-face="learn"] #back-to-book {
 
 .book-ai-conversations button.active { background: var(--primary-soft); }
 
-/* Artifact generation is a later ticket. This center surface is mounted now
-   so the state machine and return path are explicit without a fake artifact. */
+/* Artifact preview takes over the reading column only; the Book AI panel
+   remains visible so the reader can return to tasks or artifacts without a
+   second navigation. Narrow behavior is defined with the overlay media query
+   below. */
 .book-artifact-preview {
   position: absolute;
   inset: 76px 400px 0 0;
@@ -650,6 +652,7 @@ body[data-face="learn"] #back-to-book {
     bottom: var(--book-ai-keyboard-inset, 0px);
     left: 0;
     z-index: 45;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
     border-left: 0;
     border-top: 1px solid var(--border);
     box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.18);
@@ -659,6 +662,18 @@ body[data-face="learn"] #back-to-book {
     position: fixed;
     inset: calc(53px + env(safe-area-inset-top)) 0 0;
     z-index: 44;
+    padding: 12px;
+  }
+
+  .book-artifact-card {
+    padding: 14px;
+  }
+
+  /* The virtual keyboard can cover the lower edge of a fixed overlay on
+     iOS Safari. visualViewport drives --book-ai-keyboard-inset in shell.js;
+     mirror it for the center surface and keep its return control above it. */
+  body.book-ai-input-focused .book-artifact-preview {
+    bottom: var(--book-ai-keyboard-inset, 0px);
   }
 }
 

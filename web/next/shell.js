@@ -141,6 +141,7 @@ function renderBookAi() {
       $('book-artifact-content').textContent = preview.text || '此产物没有文本预览。';
     }
   }
+  renderJobList();
   renderArtifactList();
 
   $('book-ai-error').hidden = !s.error;
@@ -180,6 +181,25 @@ function renderBookAi() {
       }).catch(showBookAiError);
     });
     li.append(button);
+    return li;
+  }));
+}
+
+function renderJobList() {
+  const list = $('book-ai-job-list');
+  const jobs = bookAi.state.jobs ?? [];
+  list.replaceChildren(...jobs.map((job) => {
+    const li = document.createElement('li');
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.textContent = `${artifactLabel(job.request?.artifactType)} · ${jobLabel(job.state)}`;
+    open.addEventListener('click', () => {
+      bookAi.openJob(jobView(job));
+      if (['queued', 'preparing', 'uploading', 'waiting_remote', 'downloading'].includes(job.state)) {
+        scheduleJobRecheck(job.id);
+      }
+    });
+    li.append(open);
     return li;
   }));
 }
@@ -635,8 +655,13 @@ async function openBookAi(selection = null) {
     selectedText: selection?.text ?? '',
   });
   renderArtifactTypeControls();
-  await refreshBookAiArtifacts(book.id);
-  await refreshBookAiConversations({ bookId: book.id, personId });
+  // Lists are supplementary to the Ask surface. A listing/provider failure
+  // must not prevent the reader from asking, previewing, or returning.
+  await Promise.allSettled([
+    refreshBookAiJobs(book.id),
+    refreshBookAiArtifacts(book.id),
+    refreshBookAiConversations({ bookId: book.id, personId }),
+  ]);
   if (openRequest !== bookAiOpenRequest
       || bookAi.state.bookId !== book.id
       || bookAi.state.personId !== personId
@@ -656,6 +681,13 @@ async function openBookAi(selection = null) {
           && bookAi.state.personId === personId) showBookAiError(error);
     }
   }
+}
+
+async function refreshBookAiJobs(bookId = bookAi.state.bookId) {
+  if (!bookAiApi || !bookId) return;
+  try {
+    bookAi.setJobs(await bookAiApi.listStudyJobs(bookId));
+  } catch (error) { showBookAiError(error); }
 }
 
 async function refreshBookAiArtifacts(bookId = bookAi.state.bookId) {
@@ -795,7 +827,8 @@ function scheduleJobRecheck(jobId) {
     try {
       const result = await bookAiApi.reconcileStudyJob(jobId);
       bookAi.openJob(jobView(result.job));
-      scheduleJobRecheck(jobId);
+      if (result.job.state === 'ready') await refreshBookAiArtifacts(result.job.bookId);
+      else scheduleJobRecheck(jobId);
     } catch (error) {
       showBookAiError(error);
     }
@@ -818,7 +851,8 @@ $('book-ai-generate').addEventListener('click', async () => {
       contextScope: scope,
     }, { confirmWholeBook });
     bookAi.openJob(jobView(result.job));
-    scheduleJobRecheck(result.job.id);
+    if (result.job.state === 'ready') await refreshBookAiArtifacts(result.job.bookId);
+    else scheduleJobRecheck(result.job.id);
   } catch (error) {
     showBookAiError(error);
   } finally {
@@ -834,7 +868,8 @@ async function runBookAiJobAction(action) {
         : await bookAiApi.recheckStudyJob(job.id);
     bookAi.openJob(jobView(next));
     if (action === 'cancel' && studyJobTimer) window.clearTimeout(studyJobTimer);
-    else scheduleJobRecheck(job.id);
+    else if (next.state !== 'ready') scheduleJobRecheck(job.id);
+    if (next.state === 'ready') await refreshBookAiArtifacts(next.bookId);
   } catch (error) {
     showBookAiError(error);
   }
@@ -876,7 +911,7 @@ $('book-ai-input').addEventListener('keydown', (event) => {
 const BOOK_AI_COARSE = window.matchMedia('(pointer: coarse)');
 function syncBookAiKeyboardInset() {
   const viewport = window.visualViewport;
-  const focused = document.body.classList.contains('editor-takeover');
+  const focused = document.body.classList.contains('book-ai-input-focused');
   const inset = focused && viewport
     ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)
     : 0;
@@ -886,13 +921,13 @@ window.visualViewport?.addEventListener('resize', syncBookAiKeyboardInset);
 window.visualViewport?.addEventListener('scroll', syncBookAiKeyboardInset);
 $('book-ai-input').addEventListener('focus', () => {
   if (!BOOK_AI_COARSE.matches) return;
-  document.body.classList.add('editor-takeover');
+  document.body.classList.add('book-ai-input-focused');
   syncBookAiKeyboardInset();
 });
 $('book-ai-input').addEventListener('blur', (event) => {
-  if (!BOOK_AI_COARSE.matches || !document.body.classList.contains('editor-takeover')) return;
+  if (!BOOK_AI_COARSE.matches || !document.body.classList.contains('book-ai-input-focused')) return;
   if (event.relatedTarget && $('book-ai-form').contains(event.relatedTarget)) return;
-  document.body.classList.remove('editor-takeover');
+  document.body.classList.remove('book-ai-input-focused');
   syncBookAiKeyboardInset();
 });
 $('book-ai-quick-prompts').replaceChildren(...BOOK_AI_QUICK_PROMPTS.map((prompt) => {

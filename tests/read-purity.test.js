@@ -26,8 +26,9 @@ test('legacy ids remain unique; Read lookup returns while study/library tools st
     'bottom-bar', 'prev-button', 'play-button', 'next-button', 'rate-select',
     'text-input', 'history-pane', 'history-list', 'hl-toggle', 'library-btn',
     'library-overlay', 'tab-lookup', 'lookup-drawer', 'book-ai-panel', 'book-ai-open',
-    'book-ai-form', 'book-ai-quick-prompts', 'book-ai-job', 'book-ai-artifact-status',
-    'book-artifact-preview', 'book-artifact-return',
+    'book-ai-form', 'book-ai-quick-prompts', 'book-ai-job', 'book-ai-job-list',
+    'book-ai-artifact-list', 'book-ai-artifact-status', 'book-artifact-preview',
+    'book-artifact-return',
   ]) assert.equal(occurrences(id), 1, `${id} exists exactly once`);
   assert.match(css, /#library-overlay,[\s\S]*?#cards-view\s*\{\s*display: none !important/);
   assert.match(css, /#hl-toggle/);
@@ -91,7 +92,10 @@ test('Book AI rejects stale async Person/Book/chapter context and keeps the mobi
   assert.match(shell, /bookAiApi\.profile !== personId/);
   assert.match(shell, /window\.visualViewport\?\.addEventListener\('resize'/);
   assert.match(shell, /window\.innerHeight - viewport\.height - viewport\.offsetTop/);
+  assert.match(shell, /book-ai-input-focused/);
+  assert.doesNotMatch(shell, /book-ai-input[\s\S]{0,180}classList\.add\('editor-takeover'\)/);
   assert.match(css, /bottom: var\(--book-ai-keyboard-inset, 0px\)/);
+  assert.match(css, /body\.book-ai-input-focused \.book-artifact-preview/);
 });
 
 test('Book AI open/close and preview return are non-reconstructing scroll-safe paths', () => {
@@ -103,6 +107,23 @@ test('Book AI open/close and preview return are non-reconstructing scroll-safe p
   assert.match(css, /grid-template-columns: minmax\(0, 1fr\) 380px/);
   assert.match(css, /#reading-area:has\(#book-ai-panel:not\(\[hidden\]\)\) #book-view \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(css, /\.book-ai-panel \{\s*position: fixed;/);
+});
+
+test('Book AI task and artifact centers keep every safe action reachable', () => {
+  assert.match(html, /id="book-ai-job-list"/);
+  assert.match(html, /id="book-ai-artifact-list"/);
+  assert.match(api, /async listStudyJobs\(bookId\)/);
+  assert.match(api, /async listStudyArtifacts\(bookId\)/);
+  assert.match(shell, /refreshBookAiJobs/);
+  assert.match(shell, /bookAi\.setJobs/);
+  assert.match(shell, /bookAi\.openJob\(jobView\(job\)\)/);
+  for (const action of [
+    'openArtifactPreview', 'studyArtifactDownloadUrl', 'deleteStudyArtifact',
+    'regenerateStudyArtifact', 'remoteCleanupStudyArtifact', 'retryStudyJob',
+    'recheckStudyJob',
+  ]) assert.match(shell, new RegExp(action));
+  assert.match(shell, /result\.job\.state === 'ready'/);
+  assert.match(shell, /await refreshBookAiArtifacts/);
 });
 
 test('Read selection actions are exact, sentence-anchored, and open a Book AI surface', () => {
