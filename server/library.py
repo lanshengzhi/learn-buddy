@@ -329,6 +329,7 @@ class Library:
             })
         manifest = {
             "id": book_id,
+            "contentHash": book_id,
             "title": parsed["title"],
             "author": parsed["author"],
             "lang": parsed["lang"],
@@ -415,6 +416,29 @@ class Library:
 
     # -- internals ---------------------------------------------------------
 
+    def require_book(self, book_id):
+        """Validate the local Book identity for feature-owned records.
+
+        Remote provider IDs are deliberately not accepted here: every Book AI
+        record is anchored to LearnBuddy's content-hash Book ID.
+        """
+        self._require_manifest(book_id)
+        return book_id
+
+    def epub_data(self, book_id):
+        """Return the authoritative local EPUB bytes for an explicit caller.
+
+        Reading an EPUB through normal library APIs never calls this method.
+        Optional cloud synchronization is the only consumer, after its own
+        confirmation, and validates the Book identity before exposing bytes.
+        """
+        self._require_manifest(book_id)
+        try:
+            with open(self._book_path(book_id, "book.epub"), "rb") as handle:
+                return handle.read()
+        except OSError as error:
+            raise ApiError("unknown", f"missing local EPUB: {book_id}") from error
+
     def _require_manifest(self, book_id):
         if not isinstance(book_id, str) or not _SHA256_RE.fullmatch(book_id):
             raise ApiError("book_not_found", f"unknown book: {book_id}")
@@ -426,6 +450,7 @@ class Library:
     def _book_info(self, manifest):
         return {
             "id": manifest.get("id", ""),
+            "contentHash": manifest.get("contentHash", manifest.get("id", "")),
             "title": manifest.get("title", ""),
             "author": manifest.get("author", ""),
             "lang": manifest.get("lang", ""),

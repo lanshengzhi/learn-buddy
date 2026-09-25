@@ -508,6 +508,23 @@ try {
     () => document.querySelector('#chapter-body .sent.playing')?.dataset.sentence === '2',
     { timeout: 30000 },
   );
+  // Reload immediately while the normal debounce is still pending. Prove both
+  // the pending timer and old server value before pagehide must advance it.
+  const pendingPosition = await bpage.evaluate(() => ({
+    pending: window.learnbuddyRead.bookView().positionTimer != null,
+    sentence: window.learnbuddyRead.bookView().lastSentence,
+  }));
+  if (!pendingPosition.pending || pendingPosition.sentence !== 2) {
+    throw new Error(`mid-debounce precondition missing: ${JSON.stringify(pendingPosition)}`);
+  }
+  const persistedBeforeReload = await bpage.evaluate(async () => {
+    const bookId = window.learnbuddyRead.currentBookId();
+    const profile = localStorage.getItem('lb.profile');
+    return (await (await fetch(`/books/${bookId}?profile=${encodeURIComponent(profile)}`)).json()).book?.reading?.sentence ?? null;
+  });
+  if (persistedBeforeReload !== 1) {
+    throw new Error(`mid-debounce precondition changed, expected sentence 1, got ${persistedBeforeReload}`);
+  }
   await bpage.reload({ waitUntil: 'domcontentloaded' });
   await bpage.waitForFunction(() => document.body.dataset.view === 'book', { timeout: 10000 });
   await bpage.waitForSelector('#chapter-body .sent.selected', { timeout: 15000 });
@@ -516,6 +533,23 @@ try {
   if (flushed !== '2') throw new Error(`expected the keepalive flush to save sentence 2, got ${flushed}`);
 
   // 25. Hover-lookup: dwell on a word, the card opens in the (wide) aside.
+  // Keep the browser acceptance run independent of a developer data dir and
+  // live dictionary service: the lookup response is deterministic and still
+  // exercises the real card/mark-known rendering seam.
+  await bpage.route('**/lookup?*', async (route) => {
+    const url = new URL(route.request().url());
+    const word = url.searchParams.get('word') || 'selection';
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        matched: word,
+        key: `${url.searchParams.get('lang')}:${word.toLowerCase()}`,
+        reading: 'deterministic',
+        senses: [{ gloss: 'deterministic browser smoke lookup' }],
+      }),
+    });
+  });
   const word = bpage.locator('#chapter-body .sent .w').first();
   await word.hover();
   await bpage.waitForTimeout(600); // hover dwell (320ms) + request

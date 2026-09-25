@@ -261,5 +261,17 @@ class FakeHistoryApi {
 
 test('API error codes map to learner-facing strings', () => {
   assert.equal(apiErrorToMessage(API_ERROR_CODES.NOT_EPUB), '这不是一个 epub 文件。');
+  for (const code of [
+    API_ERROR_CODES.NOTEBOOKLM_NOT_CONFIGURED,
+    API_ERROR_CODES.NOTEBOOKLM_AUTH_REQUIRED,
+    API_ERROR_CODES.NOTEBOOKLM_UNAVAILABLE,
+    API_ERROR_CODES.NOTEBOOKLM_QUOTA,
+    API_ERROR_CODES.NOTEBOOKLM_SOURCE_REJECTED,
+    API_ERROR_CODES.NOTEBOOKLM_JOB_UNKNOWN,
+    API_ERROR_CODES.ARTIFACT_DOWNLOAD_FAILED,
+  ]) {
+    assert.ok(apiErrorToMessage(code));
+    assert.notEqual(code, apiErrorToMessage(code));
+  }
   assert.equal(apiErrorToMessage('never_seen'), '请求的内容不存在。');
 });

@@ -37,6 +37,7 @@ MAX_CHECK_WORDS = 200
 
 # Lookup response caps — a card shows the first few senses.
 MAX_SENSES = 8
+MAX_ALTERNATE_READINGS = 8
 
 
 class LookupUnavailable(RuntimeError):
@@ -79,12 +80,15 @@ class Dicts:
 
     def lookup_en(self, surface):
         word = surface.strip().lower()
-        if not _EN_WORD_RE.fullmatch(word):
+        if not _EN_PHRASE_RE.fullmatch(word):
             return None
         db = self._db("en.sqlite")
         if db is None:
             raise LookupUnavailable("en dictionary is not built")
-        for candidate in [word] + _en_lemma_candidates(word):
+        # A phrase must match its own dictionary entry. Mechanical lemma
+        # stripping is only a fallback for a single inflected word.
+        candidates = [word] if " " in word else [word] + _en_lemma_candidates(word)
+        for candidate in candidates:
             with _QUERY_LOCK:
                 row = db.execute(
                     "SELECT word, phonetic, translation, definition FROM ecdict WHERE word = ?",
@@ -237,7 +241,9 @@ _KANJI_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 # Han characters for zh lookups, extended planes included (𣬶 U+23236 etc.:
 # #10 measured 5 non-BMP characters in the 红楼梦 化校本 that CC-CEDICT misses).
 _HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]|[\U00020000-\U0002ffff]")
-_EN_WORD_RE = re.compile(r"[a-z][a-z'’\-]*")
+_EN_PHRASE_RE = re.compile(
+    r"[a-z]+(?:[a-z'’\-]*[a-z]+)*(?:[ \t]+[a-z]+(?:[a-z'’\-]*[a-z]+)*)*"
+)
 # Module-level query lock: _ja_entry is a free function (no Dicts self).
 _QUERY_LOCK = threading.Lock()
 
@@ -344,12 +350,26 @@ def _ja_entry(db, entry_id):
             "SELECT pos, gloss FROM senses WHERE entry = ? ORDER BY ord", (entry_id,)
         ).fetchall()
         reading = db.execute("SELECT reading FROM entries WHERE id = ?", (entry_id,)).fetchone()
+        alternate_rows = db.execute(
+            "SELECT DISTINCT entries.reading "
+            "FROM forms AS candidate "
+            "JOIN entries ON entries.id = candidate.entry "
+            "WHERE candidate.text IN (SELECT text FROM forms WHERE entry = ?) "
+            "AND entries.reading != '' "
+            "ORDER BY entries.reading",
+            (entry_id,),
+        ).fetchall()
     if not rows:
         return None
+    primary = (reading[0] if reading else "") or ""
+    alternate_readings = [
+        value for (value,) in alternate_rows if value and value != primary
+    ]
     return {
         "key": None,  # filled by the caller: the matched chain key
         "matched": None,
-        "reading": (reading[0] if reading else "") or "",
+        "reading": primary,
+        "alternateReadings": alternate_readings[:MAX_ALTERNATE_READINGS],
         "senses": [
             {"pos": pos or "", "gloss": gloss}
             for pos, gloss in rows[:MAX_SENSES]

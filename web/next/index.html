@@ -91,6 +91,7 @@
               <b id="book-title">—</b>
               <span id="chapter-title">—</span>
             </div>
+            <button id="book-ai-open" type="button">问书</button>
             <button id="hl-toggle" type="button" hidden>标生词</button>
             <button id="library-btn" type="button" hidden>书库</button>
           </div>
@@ -111,6 +112,102 @@
             </div>
             <div id="aside-body" class="aside-body"></div>
           </aside>
+        </section>
+
+        <!-- Read-owned Book AI surface. It is a sibling of the mounted reader,
+             so opening a context never rebuilds #book-view. -->
+        <aside id="book-ai-panel" class="book-ai-panel" data-state="closed" hidden aria-label="Book AI">
+          <div class="book-ai-head">
+            <div>
+              <b>Book AI</b>
+              <span id="book-ai-person" class="muted">—</span>
+            </div>
+            <button id="book-ai-close" class="plain" type="button" aria-label="关闭 Book AI">×</button>
+          </div>
+          <dl class="book-ai-scope">
+            <div><dt>书</dt><dd id="book-ai-book">—</dd></div>
+            <div><dt>章节</dt><dd id="book-ai-chapter">—</dd></div>
+            <div><dt>上下文</dt><dd id="book-ai-context">—</dd></div>
+          </dl>
+          <blockquote id="book-ai-selection" hidden></blockquote>
+
+          <section id="book-ai-ask" class="book-ai-view" aria-label="向这本书提问">
+            <div id="book-ai-messages" class="book-ai-messages" aria-live="polite"></div>
+            <p id="book-ai-empty" class="muted">围绕当前上下文开始提问。</p>
+            <div id="book-ai-quick-prompts" class="book-ai-quick-prompts" aria-label="快捷提问"></div>
+            <form id="book-ai-form" class="book-ai-composer">
+              <textarea id="book-ai-input" rows="2" maxlength="8000"
+                placeholder="输入问题，Enter 发送，Shift+Enter 换行" aria-label="Book AI 问题"></textarea>
+              <button id="book-ai-send" type="submit" aria-label="发送给 Book AI">↑</button>
+            </form>
+            <fieldset id="book-ai-notebook-sync" class="book-ai-artifact-types">
+              <legend>NotebookLM 云端同步</legend>
+              <p id="book-ai-notebook-status" class="muted">尚未同步；生成前需要上传整本书并确认。</p>
+              <label id="book-ai-notebook-confirm-label">
+                <input id="book-ai-notebook-confirm-input" type="checkbox">
+                我确认将这本 EPUB 上传到 Google NotebookLM
+              </label>
+              <button id="book-ai-notebook-sync-button" class="btn secondary" type="button">确认上传并同步</button>
+              <button id="book-ai-notebook-cleanup-button" class="plain" type="button" hidden>确认清理远端 Notebook/Source</button>
+            </fieldset>
+            <fieldset id="book-ai-artifact-types" class="book-ai-artifact-types">
+              <legend>生成学习产物（NotebookLM）</legend>
+              <div id="book-ai-artifact-buttons"></div>
+              <label id="book-ai-artifact-scope-label">范围
+                <select id="book-ai-artifact-scope"></select>
+              </label>
+              <label id="book-ai-whole-book-confirm" hidden>
+                <input id="book-ai-whole-book-input" type="checkbox">
+                确认将整本书发送给 NotebookLM 云端处理
+              </label>
+              <button id="book-ai-generate" class="btn secondary" type="button" disabled>生成</button>
+            </fieldset>
+            <details class="book-ai-conversations">
+              <summary>这本书的学习任务</summary>
+              <ul id="book-ai-job-list"></ul>
+            </details>
+            <details class="book-ai-conversations">
+              <summary>这本书的学习产物</summary>
+              <ul id="book-ai-artifact-list"></ul>
+            </details>
+            <details class="book-ai-conversations">
+              <summary>这本书的对话</summary>
+              <div class="book-ai-conversation-actions">
+                <button id="book-ai-new-conversation" class="plain" type="button">＋ 新对话</button>
+                <button id="book-ai-delete-conversation" class="plain" type="button">删除当前对话</button>
+              </div>
+              <ul id="book-ai-conversation-list"></ul>
+            </details>
+          </section>
+
+          <section id="book-ai-job" class="book-ai-view" hidden aria-label="学习任务">
+            <h3>学习任务</h3>
+            <p id="book-ai-job-scope"></p>
+            <p id="book-ai-job-status" role="status"></p>
+            <div class="book-ai-job-actions">
+              <button id="book-ai-job-retry" class="plain" type="button" hidden>安全重试</button>
+              <button id="book-ai-job-cancel" class="plain" type="button" hidden>取消任务</button>
+              <button id="book-ai-job-recheck" class="plain" type="button" hidden>重新检查状态</button>
+            </div>
+            <button id="book-ai-job-back" class="plain" type="button">← 返回提问</button>
+          </section>
+
+          <section id="book-ai-artifact-status" class="book-ai-view" hidden aria-label="学习产物状态">
+            <h3>学习产物</h3>
+            <p id="book-ai-artifact-summary" role="status"></p>
+            <button id="book-ai-artifact-back" class="plain" type="button">← 返回阅读</button>
+          </section>
+          <p id="book-ai-error" class="error" role="alert" hidden></p>
+        </aside>
+
+        <section id="book-artifact-preview" class="book-artifact-preview" hidden aria-label="学习产物预览">
+          <div class="book-artifact-card">
+            <div class="book-artifact-head">
+              <b id="book-artifact-title">学习产物</b>
+              <button id="book-artifact-return" class="btn secondary" type="button">返回阅读</button>
+            </div>
+            <div id="book-artifact-content"></div>
+          </div>
         </section>
 
         <nav id="bottom-bar" class="bottom-bar" hidden aria-label="播放控制">
@@ -214,10 +311,15 @@
   <!-- 壳自有的抽屉遮罩（与 app 的 #scrim 分开：那个归词卡用） -->
   <div id="shell-scrim" hidden></div>
 
-  <!-- 拖选工具条：切片 1 只有「复制」；马克笔 / 写想法 / AI问书随切片 3/2 加入 -->
+  <!-- 拖选工具条：Copy / Highlight / Ask Book. All actions preserve the
+       browser's exact selection; the reader DOM is never replaced. -->
   <div id="sel-toolbar" hidden>
     <button id="sel-copy" type="button">复制</button>
-    <button id="sel-lookup" type="button">查义</button>
+    <button id="sel-highlight" type="button">马克笔</button>
+    <button id="sel-ask-book" type="button">AI 问书</button>
+    <!-- Legacy Learn lookup action is hidden in Read; kept mounted for the
+         existing Learn path and its browser smoke coverage. -->
+    <button id="sel-lookup" type="button" hidden>查义</button>
   </div>
 
   <div id="scrim" hidden></div>

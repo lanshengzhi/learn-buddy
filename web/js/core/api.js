@@ -162,6 +162,14 @@ export class ServerApi {
     );
   }
 
+  /** Compile the exact local BookContext used by the Read selection action. */
+  async compileBookContext(bookId, context) {
+    return (await this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/context`),
+      { method: 'POST', body: { bookId, ...context } },
+    ))?.context ?? null;
+  }
+
   async putPosition(bookId, chapter, sentence, { keepalive = false } = {}) {
     await this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}/position`), {
       method: 'PUT',
@@ -197,6 +205,181 @@ export class ServerApi {
       method: 'POST',
       body: { text },
     });
+  }
+
+  // -- BookConversation (Read-owned, ticket #71/#72) -------------------------
+
+  async listBookConversations(bookId) {
+    return (await this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/book-conversations`),
+    ))?.conversations ?? [];
+  }
+
+  async openBookConversation(bookId, { newConversation = false } = {}) {
+    return (await this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/book-conversations`),
+      { method: 'POST', body: { new: newConversation } },
+    ))?.conversation ?? null;
+  }
+
+  async getBookConversation(conversationId) {
+    return (await this.#request(
+      this.#withProfile(`/book-conversations/${encodeURIComponent(conversationId)}`),
+    ))?.conversation ?? null;
+  }
+
+  async getNotebookSync(bookId) {
+    return this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}/notebook-sync`));
+  }
+
+  async syncNotebook(bookId, { confirmUpload, retry = false } = {}) {
+    return this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/notebook-sync`),
+      { method: 'POST', body: { confirmUpload, retry } },
+    );
+  }
+
+  async cleanupNotebookRemote(bookId) {
+    return this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/notebook-sync/remote-cleanup`),
+      { method: 'POST', body: { confirm: true } },
+    );
+  }
+
+  async cancelStudyJob(jobId) {
+    return (await this.#request(this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/cancel`), {
+      method: 'POST', body: { confirm: true },
+    }))?.job ?? null;
+  }
+
+  async retryStudyJob(jobId) {
+    return (await this.#request(this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/retry`), {
+      method: 'POST', body: {},
+    }))?.job ?? null;
+  }
+
+  async listStudyJobs(bookId) {
+    return (await this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}/study-jobs`)))?.jobs ?? [];
+  }
+
+  async listStudyArtifacts(bookId) {
+    return (await this.#request(this.#withProfile(`/books/${encodeURIComponent(bookId)}/study-artifacts`)))?.artifacts ?? [];
+  }
+
+  async getStudyArtifact(artifactId) {
+    return (await this.#request(this.#withProfile(`/study-artifacts/${encodeURIComponent(artifactId)}`)))?.artifact ?? null;
+  }
+
+  async deleteStudyArtifact(artifactId) {
+    await this.#request(this.#withProfile(`/study-artifacts/${encodeURIComponent(artifactId)}`), { method: 'DELETE' });
+  }
+
+  async regenerateStudyArtifact(artifactId) {
+    return this.#request(this.#withProfile(`/study-artifacts/${encodeURIComponent(artifactId)}/regenerate`), { method: 'POST', body: {} });
+  }
+
+  async remoteCleanupStudyArtifact(artifactId) {
+    return this.#request(this.#withProfile(`/study-artifacts/${encodeURIComponent(artifactId)}/remote-cleanup`), { method: 'POST', body: { confirm: true } });
+  }
+
+  studyArtifactDownloadUrl(artifactId) {
+    return `${this.baseUrl}${this.#withProfile(`/study-artifacts/${encodeURIComponent(artifactId)}/download`)}`;
+  }
+
+  async recheckStudyJob(jobId) {
+    return (await this.#request(this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/recheck`), {
+      method: 'POST', body: {},
+    }))?.job ?? null;
+  }
+
+  async resumeBookConversation(conversationId) {
+    return (await this.#request(
+      this.#withProfile(`/book-conversations/${encodeURIComponent(conversationId)}/resume`),
+      { method: 'POST', body: {} },
+    ))?.conversation ?? null;
+  }
+
+  async deleteBookConversation(conversationId) {
+    await this.#request(
+      this.#withProfile(`/book-conversations/${encodeURIComponent(conversationId)}`),
+      { method: 'DELETE' },
+    );
+  }
+
+  /**
+   * Stream one BookConversation turn. The host owns the context snapshot and
+   * persists only a completed turn; callers receive the same NDJSON boundary
+   * as the Python API without treating model text as product instructions.
+   */
+  async streamBookConversationMessage(conversationId, { bookId, text, context, onEvent, signal }) {
+    let response;
+    try {
+      response = await this.fetchImpl(`${this.baseUrl}${this.#withProfile(
+        `/book-conversations/${encodeURIComponent(conversationId)}/messages`,
+      )}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+        body: JSON.stringify({ bookId, text, context }),
+        signal,
+      });
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      throw new ApiError('network_failure', 0);
+    }
+
+    if (!response.ok) {
+      let payload = null;
+      try { payload = await response.json(); } catch { /* fixed fallback below */ }
+      throw new ApiError(payload?.error ?? 'not_found', response.status);
+    }
+    if (!response.body?.getReader) throw new ApiError('ai_upstream_error', response.status);
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    let completed = false;
+    const dispatch = async (line) => {
+      if (!line.trim()) return;
+      let event;
+      try { event = JSON.parse(line); } catch { throw new ApiError('ai_upstream_error', response.status); }
+      await onEvent?.(event);
+      if (event.type === 'done') completed = true;
+      if (event.type === 'error') throw new ApiError(event.code ?? 'ai_upstream_error', response.status);
+    };
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        pending += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+        const lines = pending.split('\n');
+        pending = lines.pop() ?? '';
+        for (const line of lines) await dispatch(line);
+        if (done) break;
+      }
+      if (pending) await dispatch(pending);
+      if (!completed) throw new ApiError('ai_upstream_error', response.status);
+    } finally {
+      reader.releaseLock?.();
+    }
+  }
+
+  // -- NotebookLM StudyJobs (#76) -------------------------------------------
+
+  async createStudyJob(bookId, request, { confirmWholeBook = false } = {}) {
+    return this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/study-jobs`),
+      { method: 'POST', body: { request, confirmWholeBook } },
+    );
+  }
+
+  async getStudyJob(jobId) {
+    return this.#request(this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}`));
+  }
+
+  async reconcileStudyJob(jobId) {
+    return this.#request(
+      this.#withProfile(`/study-jobs/${encodeURIComponent(jobId)}/reconcile`),
+      { method: 'POST', body: {} },
+    );
   }
 
   // -- Lookup / AI (ADR 0008) ------------------------------------------------

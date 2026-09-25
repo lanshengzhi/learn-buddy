@@ -48,7 +48,12 @@ from edge_tts import (
     validate_request,
 )
 from library import ApiError, Library
+from book_context import BookContextCompiler
 from conversations import Conversations
+from book_ai import (
+    BookConversations, NotebookRefs, NotebookSync, StudyArtifacts, StudyJobRunner, StudyJobs,
+)
+from notebooklm_host import NotebookLMProxy
 import reading
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -159,6 +164,29 @@ STATUS_BY_CODE = {
     # Chat / Conversations (ticket #47; ai_usage_limit per ADR 0013).
     "conversation_not_found": 404,
     "ai_usage_limit": 503,
+    # Read-owned Book AI (#71).
+    "book_conversation_not_found": 404,
+    # Lazy NotebookLM sync (#74).
+    "cloud_confirmation_required": 400,
+    "notebook_ref_conflict": 409,
+    # Durable NotebookLM StudyJobs (#75).
+    "study_job_not_found": 404,
+    "study_job_conflict": 409,
+    "study_job_not_cancellable": 409,
+    "invalid_study_job_transition": 409,
+    "notebook_ref_not_found": 409,
+    "study_job_not_retryable": 409,
+    "study_job_not_recheckable": 409,
+    # NotebookLM product failures (the host never forwards worker bodies).
+    "notebooklm_not_configured": 503,
+    "notebooklm_auth_required": 503,
+    "notebooklm_unavailable": 502,
+    "notebooklm_quota": 503,
+    "notebooklm_source_rejected": 422,
+    "notebooklm_job_unknown": 502,
+    "artifact_download_failed": 502,
+    "artifact_not_found": 404,
+    "artifact_cleanup_failed": 502,
 }
 
 # Hand-written routes: path says what, `?profile=` says who is asking.
@@ -175,22 +203,47 @@ ROUTE_TABLE = (
     ("GET", re.compile(r"^/books$"), "api_list_books"),
     ("POST", re.compile(r"^/books$"), "api_add_book"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)$"), "api_get_book"),
+    ("POST", re.compile(r"^/books/(?P<book>[^/]+)/context$"), "api_compile_context"),
+    ("GET", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync$"), "api_notebook_sync_status"),
+    ("POST", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync$"), "api_notebook_sync"),
+    ("POST", re.compile(r"^/books/(?P<book>[^/]+)/notebook-sync/remote-cleanup$"), "api_notebook_sync_remote_cleanup"),
+    ("GET", re.compile(r"^/books/(?P<book>[^/]+)/study-jobs$"), "api_list_study_jobs"),
+    ("POST", re.compile(r"^/books/(?P<book>[^/]+)/study-jobs$"), "api_create_study_job"),
+    ("GET", re.compile(r"^/books/(?P<book>[^/]+)/study-artifacts$"), "api_list_study_artifacts"),
+    ("GET", re.compile(r"^/study-artifacts/(?P<artifact>[^/]+)$"), "api_get_study_artifact"),
+    ("GET", re.compile(r"^/study-artifacts/(?P<artifact>[^/]+)/download$"), "api_download_study_artifact"),
+    ("DELETE", re.compile(r"^/study-artifacts/(?P<artifact>[^/]+)$"), "api_delete_study_artifact"),
+    ("POST", re.compile(r"^/study-artifacts/(?P<artifact>[^/]+)/regenerate$"), "api_regenerate_study_artifact"),
+    ("POST", re.compile(r"^/study-artifacts/(?P<artifact>[^/]+)/remote-cleanup$"), "api_remote_cleanup_study_artifact"),
+    ("GET", re.compile(r"^/study-jobs/(?P<job>[^/]+)$"), "api_get_study_job"),
+    ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/reconcile$"), "api_reconcile_study_job"),
+    ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/cancel$"), "api_cancel_study_job"),
+    ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/retry$"), "api_retry_study_job"),
+    ("POST", re.compile(r"^/study-jobs/(?P<job>[^/]+)/recheck$"), "api_recheck_study_job"),
     ("GET", re.compile(r"^/books/(?P<book>[^/]+)/chapters/(?P<chapter>[^/]+)$"), "api_get_chapter"),
     ("PUT", re.compile(r"^/books/(?P<book>[^/]+)/position$"), "api_put_position"),
     ("GET", re.compile(r"^/conversations$"), "api_list_conversations"),
     ("POST", re.compile(r"^/conversations$"), "api_create_conversation"),
     ("GET", re.compile(r"^/conversations/(?P<conversation>[^/]+)$"), "api_get_conversation"),
     ("POST", re.compile(r"^/conversations/(?P<conversation>[^/]+)/messages$"), "api_post_conversation_message"),
+    ("GET", re.compile(r"^/books/(?P<book>[^/]+)/book-conversations$"), "api_list_book_conversations"),
+    ("POST", re.compile(r"^/books/(?P<book>[^/]+)/book-conversations$"), "api_create_book_conversation"),
+    ("GET", re.compile(r"^/book-conversations/(?P<conversation>[^/]+)$"), "api_get_book_conversation"),
+    ("POST", re.compile(r"^/book-conversations/(?P<conversation>[^/]+)/resume$"), "api_resume_book_conversation"),
+    ("DELETE", re.compile(r"^/book-conversations/(?P<conversation>[^/]+)$"), "api_delete_book_conversation"),
+    ("POST", re.compile(r"^/book-conversations/(?P<conversation>[^/]+)/messages$"), "api_post_book_conversation_message"),
     ("GET", re.compile(r"^/lookup$"), "api_lookup"),
     ("POST", re.compile(r"^/lookup/check$"), "api_lookup_check"),
     ("POST", re.compile(r"^/ai$"), "api_ai"),
+    ("GET", re.compile(r"^/notebooklm/status$"), "api_notebooklm_status"),
 )
 
 
 class TtsServer:
     def __init__(self, static_dir=DEFAULT_STATIC_DIR, cache_dir=DEFAULT_CACHE_DIR,
                  synthesizer=None, azure=None, pace_interval=PACE_INTERVAL_SECONDS,
-                 sleep=time.sleep, normalizer=None, data_dir=None, library=None):
+                 sleep=time.sleep, normalizer=None, data_dir=None, library=None,
+                 notebooklm=None):
         self.static_dir = os.path.abspath(static_dir)
         self.cache = AudioCache(cache_dir)
         self.synthesizer = synthesizer or EdgeTtsSynthesizer()
@@ -200,10 +253,30 @@ class TtsServer:
         self.normalizer = normalizer or reading.normalize_ja
         self.pace_gate = PaceGate(interval=pace_interval, sleep=sleep)
         self.synthesis_lock = threading.Lock()
-        self.library = library if library is not None else Library(data_dir or DEFAULT_DATA_DIR)
-        self.conversations = Conversations(data_dir or DEFAULT_DATA_DIR, self.library.require_profile)
-        self.dicts = Dicts(os.path.join(data_dir or DEFAULT_DATA_DIR, "dicts"))
-        self.ai = AiProxy(os.path.join(data_dir or DEFAULT_DATA_DIR, "ai-cache"))
+        data_dir = data_dir or DEFAULT_DATA_DIR
+        self.library = library if library is not None else Library(data_dir)
+        self.conversations = Conversations(data_dir, self.library.require_profile)
+        self.book_context = BookContextCompiler(self.library)
+        # Read-owned Book AI data is host-owned from #67 onward. Routes are
+        # added separately by #71; keeping the stores on the app here makes the
+        # persistence boundary explicit and ready for that API slice.
+        self.book_conversations = BookConversations(
+            data_dir, self.library.require_profile, self.library.require_book)
+        self.notebook_refs = NotebookRefs(data_dir, self.library.require_book)
+        self.study_jobs = StudyJobs(
+            data_dir, self.library.require_profile, self.library.require_book)
+        self.study_artifacts = StudyArtifacts(
+            data_dir, self.library.require_profile, self.library.require_book)
+        self.dicts = Dicts(os.path.join(data_dir, "dicts"))
+        self.ai = AiProxy(os.path.join(data_dir, "ai-cache"))
+        # The optional NotebookLM process is deliberately a separate, private
+        # service. The host only proxies its safe status and never sees its
+        # credentials or profile files.
+        self.notebooklm = notebooklm or NotebookLMProxy()
+        self.notebook_sync = NotebookSync(self.library, self.notebook_refs, self.notebooklm)
+        self.study_job_runner = StudyJobRunner(
+            self.library, self.book_context, self.study_jobs,
+            self.notebook_refs, self.notebooklm, self.study_artifacts)
 
     def _use_azure(self):
         """Azure is primary exactly when it holds a subscription key."""
@@ -359,6 +432,127 @@ class TtsHandler(BaseHTTPRequestHandler):
     def api_get_book(self, params, groups):
         self._json_response(200, self._library().get_book(groups["book"], params.get("profile", "") or None))
 
+    def api_compile_context(self, params, groups):
+        body = self._read_json()
+        scope = body.get("scope")
+        context = self.server.app.book_context.compile(
+            groups["book"], scope,
+            chapter=body.get("chapter", 0),
+            sentence=body.get("sentence"),
+            start=body.get("start"),
+            end=body.get("end"),
+            selected_text=body.get("selectedText"),
+            expected_book_id=body.get("bookId"),
+            content_hash=body.get("contentHash"),
+            max_chars=body.get("maxChars"),
+        )
+        self._json_response(200, {"context": context})
+
+    def api_notebook_sync_status(self, params, groups):
+        self._json_response(200, self.server.app.notebook_sync.status(groups["book"]))
+
+    def api_notebook_sync(self, params, groups):
+        body = self._read_json()
+        result = self.server.app.notebook_sync.sync(
+            groups["book"], confirm_upload=body.get("confirmUpload"),
+            retry=body.get("retry", False),
+        )
+        self._json_response(200, result)
+
+    def api_notebook_sync_remote_cleanup(self, params, groups):
+        body = self._read_json()
+        if body.get("confirm") is not True:
+            raise ApiError("bad_request", "explicit Notebook/Source cleanup confirmation is required")
+        ref = self.server.app.notebook_refs.cleanup_remote(
+            groups["book"], self.server.app.notebooklm)
+        self._json_response(200, {"notebookRef": ref, "cleanup": ref["remoteCleanup"]})
+
+    def api_list_study_jobs(self, params, groups):
+        result = self.server.app.study_jobs.list(params.get("profile", ""), groups["book"])
+        self._json_response(200, {**result, "book": groups["book"]})
+
+    def api_create_study_job(self, params, groups):
+        profile = params.get("profile", "")
+        body = self._read_json()
+        request = body.get("request")
+        if not isinstance(request, dict):
+            raise ApiError("bad_request", "request must be an object")
+        request = dict(request)
+        request.setdefault("bookId", groups["book"])
+        request.setdefault("bookContentHash", groups["book"])
+        request.setdefault("personId", profile)
+        created = self.server.app.study_job_runner.create(
+            profile, groups["book"], request, confirm_whole_book=body.get("confirmWholeBook") is True)
+        self._json_response(201 if created["created"] else 200, {
+            "job": created["job"], "book": groups["book"],
+        })
+
+    def api_list_study_artifacts(self, params, groups):
+        result = self.server.app.study_artifacts.list(params.get("profile", ""), groups["book"])
+        self._json_response(200, {**result, "book": groups["book"]})
+
+    def api_get_study_artifact(self, params, groups):
+        artifact = self.server.app.study_artifacts.get(params.get("profile", ""), groups["artifact"])
+        self._json_response(200, {"artifact": artifact, "book": artifact["bookId"]})
+
+    def api_download_study_artifact(self, params, groups):
+        path, artifact = self.server.app.study_artifacts.download_path(
+            params.get("profile", ""), groups["artifact"])
+        with open(path, "rb") as handle:
+            data = handle.read()
+        self.send_response(200)
+        self.send_header("Content-Type", artifact.get("contentType", "application/octet-stream"))
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f'attachment; filename="{artifact["originalFileName"]}"')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def api_delete_study_artifact(self, params, groups):
+        self.server.app.study_artifacts.delete_local(params.get("profile", ""), groups["artifact"])
+        self._no_content()
+
+    def api_regenerate_study_artifact(self, params, groups):
+        self._read_json()
+        result = self.server.app.study_artifacts.regenerate(
+            params.get("profile", ""), groups["artifact"], self.server.app.study_job_runner)
+        self._json_response(201 if result.get("created") else 200, result)
+
+    def api_remote_cleanup_study_artifact(self, params, groups):
+        body = self._read_json()
+        if body.get("confirm") is not True:
+            raise ApiError("bad_request", "explicit remote cleanup confirmation is required")
+        artifact = self.server.app.study_artifacts.remote_cleanup(
+            params.get("profile", ""), groups["artifact"], self.server.app.notebooklm)
+        self._json_response(200, {"artifact": artifact, "cleanup": artifact["remoteCleanup"]})
+
+    def api_get_study_job(self, params, groups):
+        job = self.server.app.study_jobs.get(params.get("profile", ""), groups["job"])
+        self._json_response(200, {"job": job, "book": job["bookId"]})
+
+    def api_reconcile_study_job(self, params, groups):
+        self._read_json()
+        job = self.server.app.study_job_runner.reconcile(
+            params.get("profile", ""), groups["job"])
+        self._json_response(200, {"job": job, "book": job["bookId"]})
+
+    def api_cancel_study_job(self, params, groups):
+        body = self._read_json()
+        if body.get("confirm") is not True:
+            raise ApiError("bad_request", "explicit cancellation confirmation is required")
+        job = self.server.app.study_jobs.cancel(
+            params.get("profile", ""), groups["job"], provider=self.server.app.notebooklm)
+        self._json_response(200, {"job": job, "book": job["bookId"]})
+
+    def api_retry_study_job(self, params, groups):
+        self._read_json()
+        job = self.server.app.study_job_runner.retry(params.get("profile", ""), groups["job"])
+        self._json_response(200, {"job": job, "book": job["bookId"]})
+
+    def api_recheck_study_job(self, params, groups):
+        self._read_json()
+        job = self.server.app.study_job_runner.recheck(params.get("profile", ""), groups["job"])
+        self._json_response(200, {"job": job, "book": job["bookId"]})
+
     def api_get_chapter(self, params, groups):
         self._json_response(200, self._library().get_chapter(
             groups["book"], groups["chapter"], params.get("profile", "")))
@@ -398,6 +592,136 @@ class TtsHandler(BaseHTTPRequestHandler):
             self._json_error(STATUS_BY_CODE.get(code, 502), code)
             return
         self._json_response(200, result)
+
+    # -- Read-owned Book AI (#71) -------------------------------------------
+
+    def _book_conversations(self):
+        return self.server.app.book_conversations
+
+    def _book_conversation_response(self, result, status=200):
+        conversation = result["conversation"]
+        self._json_response(status, {
+            "conversation": conversation,
+            "book": conversation["bookId"],
+            "contextScope": None,
+        })
+
+    def api_list_book_conversations(self, params, groups):
+        result = self._book_conversations().list(params.get("profile", ""), groups["book"])
+        self._json_response(200, {**result, "book": groups["book"], "contextScope": None})
+
+    def api_create_book_conversation(self, params, groups):
+        body = self._read_json()
+        store = self._book_conversations()
+        result = store.create(
+            params.get("profile", ""), groups["book"], body.get("notebookRefId")
+        ) if body.get("new") is True else store.open(
+            params.get("profile", ""), groups["book"], body.get("notebookRefId")
+        )
+        self._book_conversation_response(result, 201 if result["created"] else 200)
+
+    def api_get_book_conversation(self, params, groups):
+        result = self._book_conversations().get(params.get("profile", ""), groups["conversation"])
+        self._book_conversation_response(result)
+
+    def api_resume_book_conversation(self, params, groups):
+        self._read_json()
+        result = self._book_conversations().activate(params.get("profile", ""), groups["conversation"])
+        self._book_conversation_response(result)
+
+    def api_delete_book_conversation(self, params, groups):
+        self._book_conversations().delete(params.get("profile", ""), groups["conversation"])
+        self._no_content()
+
+    def api_post_book_conversation_message(self, params, groups):
+        profile = params.get("profile", "")
+        body = self._read_json()
+        raw_context = body.get("context")
+        try:
+            conversation = self._book_conversations().get(profile, groups["conversation"])["conversation"]
+            context = self._validated_book_context(
+                conversation["bookId"], raw_context, body.get("bookId"))
+            turn = self._book_conversations().prepare_message(
+                profile, groups["conversation"], conversation["bookId"], body.get("text"), context)
+        except ApiError:
+            raise
+        try:
+            upstream = self.server.app.ai.book_chat_stream(turn["messages"], context)
+        except (LookupError, ValueError) as error:
+            code = str(error) if isinstance(error, LookupError) else "bad_request"
+            self._json_error(STATUS_BY_CODE.get(code, 502), code)
+            return
+
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self._ndjson({
+            "type": "meta",
+            "conversation": {"id": conversation["id"], "bookId": conversation["bookId"]},
+            "book": context["book"],
+            "contextScope": context["scope"],
+            "context": context,
+        })
+        answer = []
+        completed = False
+        try:
+            for raw_line in upstream:
+                try:
+                    event = json.loads(raw_line.decode("utf-8"))
+                    event_type = event.get("type") if isinstance(event, dict) else None
+                    if event_type == "delta" and isinstance(event.get("text"), str):
+                        answer.append(event["text"])
+                        self._ndjson({"type": "delta", "text": event["text"]})
+                    elif event_type == "done":
+                        completed = True
+                        break
+                    elif event_type == "error":
+                        code = event.get("code")
+                        if code not in ("ai_not_configured", "ai_upstream_error",
+                                        "ai_timeout", "ai_usage_limit"):
+                            code = "ai_upstream_error"
+                        self._ndjson({"type": "error", "code": code})
+                        return
+                except (UnicodeDecodeError, ValueError, AttributeError):
+                    self._ndjson({"type": "error", "code": "ai_upstream_error"})
+                    return
+            if not completed:
+                self._ndjson({"type": "error", "code": "ai_upstream_error"})
+                return
+            result = self._book_conversations().append_turn(
+                profile, groups["conversation"], turn["text"], "".join(answer), context)
+            self._ndjson({
+                "type": "done",
+                "conversation": result["conversation"],
+                "contextScope": context["scope"],
+            })
+        except TimeoutError:
+            self._ndjson({"type": "error", "code": "ai_timeout"})
+        except OSError:
+            self._ndjson({"type": "error", "code": "ai_upstream_error"})
+        finally:
+            upstream.close()
+        self.close_connection = True
+
+    def _validated_book_context(self, book_id, context, expected_book_id=None):
+        snapshot = self.server.app.book_context.snapshot(context)
+        compiled = self.server.app.book_context.compile(
+            book_id, snapshot["scope"],
+            chapter=(snapshot.get("anchor") or {}).get("chapter", 0),
+            sentence=(snapshot.get("anchor") or {}).get("sentence"),
+            start=(snapshot.get("anchor") or {}).get("start"),
+            end=(snapshot.get("anchor") or {}).get("end"),
+            selected_text=snapshot.get("selectedText"),
+            expected_book_id=expected_book_id if expected_book_id is not None else snapshot["bookId"],
+            content_hash=snapshot["contentHash"],
+            max_chars=(snapshot.get("metadata") or {}).get("budgetChars"),
+        )
+        if snapshot != compiled:
+            raise ApiError("bad_request", "context snapshot does not match the bound Book content")
+        return snapshot
 
     # -- lookup / AI (ADR 0008) --------------------------------------------
 
@@ -441,6 +765,11 @@ class TtsHandler(BaseHTTPRequestHandler):
             self._json_error(STATUS_BY_CODE.get(code, 502), code)
             return
         self._json_response(200, answer)
+
+    def api_notebooklm_status(self, params, groups):
+        # This is a status-only seam for the optional provider. A missing or
+        # stopped worker is a normal safe result, not a host failure.
+        self._json_response(200, self.server.app.notebooklm.status())
 
     def _lookup(self, lang, word):
         dicts = self.server.app.dicts
@@ -493,6 +822,10 @@ class TtsHandler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
+
+    def _ndjson(self, payload):
+        self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+        self.wfile.flush()
 
     # -- /tts --------------------------------------------------------------
 

@@ -1238,3 +1238,29 @@ button.icon-button.tinted {
   box-shadow: 0 6px 20px rgba(20, 19, 19, 0.18);
   max-width: 84vw;
 }
+
+/* ---- issue #69 word / phrase card context ---- */
+
+.card-word {
+  overflow-wrap: anywhere;
+}
+
+.card-vocabulary-state {
+  margin-left: auto;
+  padding: 2px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.card-vocabulary-state[data-known="true"] {
+  border-color: var(--primary);
+  color: var(--primary-strong);
+}
+
+.card-alternate-readings {
+  margin: -6px 0 0;
+  font-size: 13px;
+}

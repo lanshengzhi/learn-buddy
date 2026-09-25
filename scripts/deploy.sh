@@ -40,7 +40,7 @@ ssh "${HOST}" "sudo mkdir -p ${APP} && sudo rsync -a ${STAGE}/web/ ${APP}/web/ &
 # provisioned). The venv is root-owned under /opt; the service only
 # executes it. Install only when something is missing — pip is slow offline.
 ssh "${HOST}" "test -x ${APP}/.venv/bin/python3 || sudo python3 -m venv ${APP}/.venv"
-ssh "${HOST}" "sudo ${APP}/.venv/bin/python3 -c 'import jieba, sudachipy' 2>/dev/null || sudo ${APP}/.venv/bin/pip install -q -r ${APP}/server/requirements.txt"
+ssh "${HOST}" "sudo ${APP}/.venv/bin/python3 -c 'import jieba, sudachipy, notebooklm' 2>/dev/null || sudo ${APP}/.venv/bin/pip install -q -r ${APP}/server/requirements.txt"
 
 # Lookup dictionaries (~150 MB build artifacts, ADR 0008/0009). Synced once —
 # rebuilt only when a local rebuild changes them; absent locally, the
@@ -55,6 +55,10 @@ fi
 
 # Runtime config: created once, never overwritten — hand edits survive.
 ssh "${HOST}" "sudo mkdir -p /etc/learnbuddy && test -f ${ENV_FILE} || sudo cp ${APP}/deploy/learnbuddy.env.example ${ENV_FILE}"
+
+# NotebookLM profile/cookie/token storage is service-user-only. It is seeded
+# by hand (never synced or committed) and the worker is the only reader.
+ssh "${HOST}" "sudo -u learnbuddy mkdir -p ${STATE}/notebooklm && sudo chmod 0700 ${STATE}/notebooklm"
 
 # pi agent dir (auth.json, settings.json, models-store.json): hand-seeded,
 # never synced. Ensure the dir exists with 0700 and the key with 0600 when
@@ -75,10 +79,12 @@ ssh "${HOST}" "sudo sed -i \"s/^const DEPLOY_STAMP = '[^']*';/const DEPLOY_STAMP
 # node_modules is installed on claw only.
 ssh "${HOST}" "cd ${APP}/ai && if [ ! -d node_modules/@earendil-works/pi-coding-agent ] || ! cmp -s package-lock.json .lock-installed; then sudo npm install --omit=dev --no-audit --no-fund && sudo cp package-lock.json .lock-installed; fi"
 # Units are managed from the repo and installed verbatim — never sed-patched.
-ssh "${HOST}" "sudo cp ${APP}/ai/learnbuddy-ai.service /etc/systemd/system/learnbuddy-ai.service && sudo cp ${APP}/deploy/learnbuddy.service /etc/systemd/system/learnbuddy.service"
+ssh "${HOST}" "sudo cp ${APP}/ai/learnbuddy-ai.service /etc/systemd/system/learnbuddy-ai.service && sudo cp ${APP}/deploy/learnbuddy.service /etc/systemd/system/learnbuddy.service && sudo cp ${APP}/deploy/learnbuddy-notebooklm.service /etc/systemd/system/learnbuddy-notebooklm.service"
 ssh "${HOST}" "sudo systemctl daemon-reload"
+ssh "${HOST}" "sudo systemctl enable --quiet learnbuddy-notebooklm 2>/dev/null || sudo systemctl enable learnbuddy-notebooklm >/dev/null"
 ssh "${HOST}" "sudo systemctl enable --quiet learnbuddy-ai 2>/dev/null || sudo systemctl enable learnbuddy-ai >/dev/null"
 ssh "${HOST}" "sudo systemctl enable --quiet learnbuddy 2>/dev/null || sudo systemctl enable learnbuddy >/dev/null"
+ssh "${HOST}" "sudo systemctl restart learnbuddy-notebooklm"
 ssh "${HOST}" "sudo systemctl restart learnbuddy-ai"
 # The AI service must answer before learnbuddy restarts so the tab lights up.
 ssh "${HOST}" "for i in \$(seq 1 20); do curl -sf http://127.0.0.1:8123/health >/dev/null 2>&1 && break || sleep 1; done; curl -sf http://127.0.0.1:8123/health"

@@ -130,6 +130,106 @@ test('a rejected upload/books request surfaces the server’s error code', async
   });
 });
 
+test('StudyJob cancel, retry, and recheck all unwrap the canonical job response', async () => {
+  const calls = [];
+  const jobs = {
+    cancelled: { id: 'job-cancelled', state: 'cancelled' },
+    retried: { id: 'job-retried', state: 'queued' },
+    rechecked: { id: 'job-rechecked', state: 'unknown' },
+  };
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      if (path.includes('/cancel')) return response({ job: jobs.cancelled });
+      if (path.includes('/retry')) return response({ job: jobs.retried });
+      return response({ job: jobs.rechecked });
+    },
+  });
+
+  assert.deepEqual(await api.cancelStudyJob('job-1'), jobs.cancelled);
+  assert.deepEqual(await api.retryStudyJob('job-1'), jobs.retried);
+  assert.deepEqual(await api.recheckStudyJob('job-1'), jobs.rechecked);
+  assert.deepEqual(calls.map(({ path, options }) => `${options.method} ${path}`), [
+    'POST /study-jobs/job-1/cancel?profile=dad',
+    'POST /study-jobs/job-1/retry?profile=dad',
+    'POST /study-jobs/job-1/recheck?profile=dad',
+  ]);
+  assert.deepEqual(JSON.parse(calls[0].options.body), { confirm: true });
+});
+
+test('Notebook sync and remote cleanup expose explicit confirmation contracts', async () => {
+  const calls = [];
+  const ref = { mutationStatus: 'confirmed', notebookId: 'nb-1', sourceId: 'src-1' };
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      if (options?.method === 'POST' && path.includes('remote-cleanup')) {
+        return response({ notebookRef: ref, cleanup: { status: 'unsupported' } });
+      }
+      if (options?.method === 'POST') return response({ notebookRef: ref, reused: false });
+      return response({ notebookRef: ref });
+    },
+  });
+
+  assert.deepEqual((await api.getNotebookSync('book-hash')).notebookRef, ref);
+  assert.equal((await api.syncNotebook('book-hash', { confirmUpload: true })).notebookRef.mutationStatus, 'confirmed');
+  assert.equal((await api.cleanupNotebookRemote('book-hash')).cleanup.status, 'unsupported');
+  assert.deepEqual(calls.map(({ path, options }) => `${options?.method ?? 'GET'} ${path}`), [
+    'GET /books/book-hash/notebook-sync?profile=dad',
+    'POST /books/book-hash/notebook-sync?profile=dad',
+    'POST /books/book-hash/notebook-sync/remote-cleanup?profile=dad',
+  ]);
+  assert.deepEqual(JSON.parse(calls[1].options.body), { confirmUpload: true, retry: false });
+  assert.deepEqual(JSON.parse(calls[2].options.body), { confirm: true });
+});
+
+test('StudyArtifact list, preview, download, delete, regenerate, and cleanup stay Person-scoped', async () => {
+  const calls = [];
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      if (options?.method === 'DELETE') return response(null, 204);
+      if (path.includes('/study-jobs')) return response({ jobs: [{ id: 'job-local', bookId: 'book-hash' }] });
+      if (path.includes('/regenerate?')) return response({ job: { id: 'job-new' }, created: true }, 201);
+      if (path.includes('/remote-cleanup?')) {
+        return response({ artifact: { id: 'artifact-local' }, cleanup: { status: 'not_requested' } });
+      }
+      if (path.includes('/study-artifacts/')) {
+        return response({ artifact: { id: 'artifact-local', previewData: { kind: 'text', text: 'ready' } } });
+      }
+      return response({ artifacts: [{ id: 'artifact-local' }] });
+    },
+  });
+
+  const jobs = await api.listStudyJobs('book-hash');
+  const artifacts = await api.listStudyArtifacts('book-hash');
+  const artifact = await api.getStudyArtifact('artifact-local');
+  const downloadUrl = api.studyArtifactDownloadUrl('artifact-local');
+  await api.deleteStudyArtifact('artifact-local');
+  const regenerated = await api.regenerateStudyArtifact('artifact-local');
+  const cleaned = await api.remoteCleanupStudyArtifact('artifact-local');
+
+  assert.deepEqual(jobs, [{ id: 'job-local', bookId: 'book-hash' }]);
+  assert.deepEqual(artifacts, [{ id: 'artifact-local' }]);
+  assert.equal(artifact.previewData.text, 'ready');
+  assert.equal(downloadUrl, '/study-artifacts/artifact-local/download?profile=dad');
+  assert.equal(regenerated.job.id, 'job-new');
+  assert.equal(cleaned.cleanup.status, 'not_requested');
+  assert.deepEqual(calls.map((call) => `${call.options?.method ?? 'GET'} ${call.path}`), [
+    'GET /books/book-hash/study-jobs?profile=dad',
+    'GET /books/book-hash/study-artifacts?profile=dad',
+    'GET /study-artifacts/artifact-local?profile=dad',
+    'DELETE /study-artifacts/artifact-local?profile=dad',
+    'POST /study-artifacts/artifact-local/regenerate?profile=dad',
+    'POST /study-artifacts/artifact-local/remote-cleanup?profile=dad',
+  ]);
+  assert.deepEqual(JSON.parse(calls[4].options.body), {});
+  assert.deepEqual(JSON.parse(calls[5].options.body), { confirm: true });
+});
+
 // --- Chat / Conversations (ticket #47: every request stays inside the
 // active profile; a turn carries only the new text — the server assembles
 // the Conversation context, so nothing else can leak from the client) ---
@@ -230,4 +330,63 @@ test('an over-limit Conversation surfaces too_large, not a generic failure', asy
     assert.equal(error.status, 413);
     return true;
   });
+});
+
+test('BookConversation lifecycle stays scoped to the active Person and Book', async () => {
+  const calls = [];
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      if (path.endsWith('/book-conversations') && (!options || options.method !== 'POST')) {
+        return response({ conversations: [{ id: '000001', bookId: 'abc', active: true }] });
+      }
+      return response({ conversation: { id: '000001', bookId: 'abc', messages: [] } });
+    },
+  });
+
+  await api.listBookConversations('abc');
+  await api.openBookConversation('abc', { newConversation: true });
+  await api.resumeBookConversation('000001');
+  await api.deleteBookConversation('000001');
+
+  assert.deepEqual(calls.map((call) => `${call.options?.method ?? 'GET'} ${call.path}`), [
+    'GET /books/abc/book-conversations?profile=dad',
+    'POST /books/abc/book-conversations?profile=dad',
+    'POST /book-conversations/000001/resume?profile=dad',
+    'DELETE /book-conversations/000001?profile=dad',
+  ]);
+  assert.deepEqual(JSON.parse(calls[1].options.body), { new: true });
+});
+
+test('BookConversation answer API parses split NDJSON and preserves the context snapshot', async () => {
+  const encoder = new TextEncoder();
+  const chunks = [
+    encoder.encode('{"type":"meta","contextScope":"selection"}\n{"type":"del'),
+    encoder.encode('ta","text":"回答"}\n{"type":"done","conversation":{"id":"1"}}\n'),
+  ];
+  const calls = [];
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      let index = 0;
+      return {
+        ok: true,
+        status: 200,
+        body: { getReader: () => ({ read: async () => index < chunks.length
+          ? { value: chunks[index++], done: false } : { done: true }, releaseLock() {} }) },
+      };
+    },
+  });
+  const events = [];
+  const context = { bookId: 'abc', scope: 'selection', anchor: { start: 0, end: 0 } };
+
+  await api.streamBookConversationMessage('1', {
+    bookId: 'abc', text: '解释', context, onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(calls[0].path, '/book-conversations/1/messages?profile=dad');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { bookId: 'abc', text: '解释', context });
+  assert.deepEqual(events.map((event) => event.type), ['meta', 'delta', 'done']);
 });

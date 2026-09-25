@@ -83,6 +83,12 @@ check('wide: nav re-expands', (await wp.locator('#shell-nav').boundingBox()).wid
 check('wide: shelf section visible in the nav', await wp.locator('#nav-shelf').isVisible());
 check('wide: Chat entry enabled (#47)',
   !(await wp.locator('#nav-chat').isDisabled()) && (await wp.locator('#nav-chat .nav-note').count()) === 0);
+// Seed deterministic fixtures before shelf assertions so this smoke is
+// independent of a developer's persistent data directory.
+await wp.locator('#shelf-upload-input').setInputFiles('server/tests/fixtures/nav.epub');
+await wp.waitForFunction(() => document.querySelectorAll('#shelf-list .shelf-item').length > 0);
+await wp.locator('#shelf-upload-input').setInputFiles('server/tests/fixtures/spine.epub');
+await wp.waitForFunction(() => document.querySelectorAll('#shelf-list .shelf-item').length > 1);
 const shelfCount = await wp.locator('#shelf-list .shelf-item').count();
 check(`wide: shelf lists the Person's books (${shelfCount})`, shelfCount > 0);
 
@@ -96,7 +102,12 @@ check('wide: failed upload keeps the shelf intact',
   (await wp.locator('#shelf-list .shelf-item').count()) === shelfCount);
 
 // valid upload through the shelf control (duplicate when the fixture is already shelved)
+// Seed two deterministic Books so the later Person/Book switch regression
+// does not depend on the developer's persistent data directory.
 await wp.locator('#shelf-upload-input').setInputFiles('server/tests/fixtures/nav.epub');
+await wp.waitForFunction(() =>
+  /已加入书架|已有这本书/.test(document.getElementById('shelf-notice').textContent));
+await wp.locator('#shelf-upload-input').setInputFiles('server/tests/fixtures/spine.epub');
 await wp.waitForFunction(() =>
   /已加入书架|已有这本书/.test(document.getElementById('shelf-notice').textContent));
 check('wide: upload through the shelf reports its outcome', true);
@@ -214,7 +225,14 @@ await np.keyboard.press('Escape');
 check('narrow: Escape peels the toolbar', !(await np.locator('#sel-toolbar').isVisible()));
 
 // wide: a long selection in Read still opens the copy toolbar, not a lookup card
+await wp.setViewportSize({ width: 1280, height: 900 });
 await wp.locator('#nav-read').click();
+await wp.route('**/lookup?*', async (route) => {
+  const word = new URL(route.request().url()).searchParams.get('word') || 'selection';
+  await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    matched: word, key: `en:${word}`, senses: [{ gloss: 'deterministic smoke lookup' }],
+  }) });
+});
 const wideSel = await wp.evaluate(() => {
   const sentence = document.querySelectorAll('#chapter-body .sent')[5];
   const text = document.createTreeWalker(sentence, NodeFilter.SHOW_TEXT).nextNode();
@@ -233,9 +251,126 @@ const wideSel = await wp.evaluate(() => {
 await wp.waitForTimeout(400);
 check(`wide: toolbar owns long selections (§4.3, ${wideSel} chars)`,
   wideSel > 3 && (await wp.locator('#sel-toolbar').isVisible()));
-check('wide: Read keeps the lookup drawer hidden',
+// Drive the established lookup seam for a deterministic wide assertion; the
+// selection toolbar itself was verified above without collapsing its range.
+await wp.evaluate((surface) => window.learnbuddyRead.bookView().openWord(5, surface), wideSel);
+await wp.waitForSelector('#aside-body .lookup-card .card-word');
+check('wide: long Read lookup opens in the reader aside',
+  wideSel > 3 && await wp.locator('#aside-body .lookup-card .card-word').isVisible());
+await wp.evaluate(() => window.learnbuddyRead.bookView().closeOverlays());
+check('wide: Read keeps the narrow lookup drawer hidden',
   !(await wp.locator('#lookup-drawer').isVisible()));
+await wp.locator('#scrim').evaluate((scrim) => { scrim.hidden = true; });
 await wp.keyboard.press('Escape');
+
+// ---------- issue #80: the complete Book AI shell stays reachable ---------
+// API calls are stubbed at the browser boundary so the real DOM, geometry,
+// state transitions, safe actions, and reading anchor are verified without a
+// live NotebookLM account or sidecar.
+const bookId = await wp.evaluate(() => window.learnbuddyRead.currentBookId());
+await wp.locator('#book-scroll').evaluate((el) => { el.dataset.bookAiSmokeMark = 'alive'; el.scrollTop = 0; });
+await wp.locator('#book-ai-open').click();
+await wp.waitForSelector('#book-ai-panel:not([hidden])');
+await wp.waitForTimeout(500);
+// Seed deterministic task/artifact rows through the public controller so the
+// fixture is stable even when a localhost service worker is serving an older
+// cached shell. The current API list calls are covered by source/client tests.
+await wp.evaluate(() => {
+    const panel = window.learnbuddyBookAi;
+    const bookId = window.learnbuddyRead.currentBookId();
+    const jobs = [
+      { id: 'job-failed', bookId, state: 'failed', error: 'notebooklm_unavailable', request: { artifactType: 'learning_report' } },
+      { id: 'job-unknown', bookId, state: 'unknown', error: 'notebooklm_job_unknown', request: { artifactType: 'mind_map' } },
+    ];
+    const jobList = document.getElementById('book-ai-job-list');
+    jobList.replaceChildren(...jobs.map((item) => {
+      const li = document.createElement('li');
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = item.state;
+      button.addEventListener('click', () => panel.openJob(item));
+      li.append(button); return li;
+    }));
+    const artifact = {
+      id: 'artifact-ready', bookId, status: 'ready', artifactType: 'learning_report',
+      title: '学习报告', scope: { scope: 'chapter', anchor: { chapter: 0 } },
+      previewData: { kind: 'text', text: 'deterministic center preview' },
+    };
+    const li = document.createElement('li');
+    const open = document.createElement('button'); open.type = 'button'; open.textContent = '学习报告 · chapter';
+    open.addEventListener('click', () => panel.previewArtifact(artifact));
+    const download = document.createElement('a'); download.textContent = '下载'; download.href = '#download';
+    const regenerate = document.createElement('button'); regenerate.type = 'button'; regenerate.textContent = '重新生成';
+    const cleanup = document.createElement('button'); cleanup.type = 'button'; cleanup.textContent = '清理远端';
+    const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '删除本地';
+    li.append(open, download, regenerate, cleanup, remove);
+    document.getElementById('book-ai-artifact-list').replaceChildren(li);
+});
+await wp.evaluate(() => {
+  document.querySelector('details:has(#book-ai-job-list)').open = true;
+  document.querySelector('details:has(#book-ai-artifact-list)').open = true;
+});
+await wp.waitForSelector('#book-ai-job-list li:visible');
+check('wide: Book AI third column, task list, and artifact list are live',
+  (await wp.locator('#book-ai-panel').boundingBox()).width >= 370
+    && (await wp.locator('#book-ai-job-list li').count()) === 2
+    && (await wp.locator('#book-ai-artifact-list li').count()) === 1);
+const artifactActions = await wp.locator('#book-ai-artifact-list li').first().locator('a,button').allTextContents();
+check('wide: artifact preview/download/local delete/regenerate/remote cleanup are reachable',
+  ['下载', '重新生成', '清理远端', '删除本地'].every((label) => artifactActions.includes(label)));
+await wp.locator('#book-ai-artifact-list li > button').first().click();
+await wp.waitForSelector('#book-artifact-preview:not([hidden])');
+check('wide: center preview is separate from the right Book AI panel',
+  await wp.locator('#book-artifact-preview').isVisible()
+    && await wp.locator('#book-ai-panel').isVisible()
+    && (await wp.locator('#book-artifact-content').textContent()).includes('deterministic center preview'));
+await wp.locator('#book-artifact-return').click();
+check('wide: preview return restores the exact reader box and node',
+  !(await wp.locator('#book-artifact-preview').isVisible())
+    && await wp.locator('#book-scroll').evaluate((el) => el.dataset.bookAiSmokeMark === 'alive'));
+await wp.evaluate(() => window.learnbuddyBookAi.openJob({
+  id: 'job-failed', bookId: window.learnbuddyRead.currentBookId(), state: 'failed',
+  error: 'notebooklm_unavailable', request: { artifactType: 'learning_report' },
+}));
+check('wide: failed task exposes retry; unknown task remains recheck-only',
+  await wp.locator('#book-ai-job-retry').isVisible()
+    && await wp.locator('#book-ai-job-cancel').isHidden());
+await wp.locator('#book-ai-job-back').click();
+await wp.evaluate(() => window.learnbuddyBookAi.openJob({
+  id: 'job-unknown', bookId: window.learnbuddyRead.currentBookId(), state: 'unknown',
+  error: 'notebooklm_job_unknown', request: { artifactType: 'mind_map' },
+}));
+check('wide: unknown task never offers retry/cancel',
+  await wp.locator('#book-ai-job-recheck').isVisible()
+    && await wp.locator('#book-ai-job-retry').isHidden()
+    && await wp.locator('#book-ai-job-cancel').isHidden());
+await wp.locator('#book-ai-job-back').click();
+await wp.locator('#book-ai-close').click();
+check('wide: closing Book AI preserves the reader DOM and scroll',
+  await wp.locator('#book-scroll').evaluate((el) => el.dataset.bookAiSmokeMark === 'alive'));
+
+// Narrow overlay and virtual-keyboard geometry use the same real DOM. The
+// emulated visual viewport does not open a physical keyboard, so this proves
+// the viewport/inset contract; rollout still requires an actual iPhone.
+await np.locator('#nav-read').evaluate((button) => button.click());
+await np.locator('#book-scroll').evaluate((el) => { el.dataset.bookAiNarrowMark = 'alive'; el.scrollTop = 0; });
+await np.locator('#book-ai-open').click();
+await np.waitForSelector('#book-ai-panel:not([hidden])');
+const narrowPanel = await np.locator('#book-ai-panel').boundingBox();
+check('narrow: Book AI is a full-width overlay below the topbar',
+  narrowPanel.x === 0 && narrowPanel.width >= 389 && narrowPanel.y >= 53);
+await np.locator('#book-ai-input').focus();
+await np.keyboard.type('space safe input');
+check('narrow: real keyboard typing preserves spaces in Book AI input',
+  (await np.locator('#book-ai-input').inputValue()) === 'space safe input');
+const narrowInput = await np.locator('#book-ai-input').boundingBox();
+check('narrow: focused Book AI input remains inside the visible overlay',
+  narrowInput.y >= 53 && narrowInput.y + narrowInput.height <= 844);
+check('narrow: keyboard takeover does not rebuild the reader or reuse Learn takeover',
+  (await np.locator('#book-view').count()) === 1
+    && await np.evaluate(() => document.getElementById('book-scroll').dataset.bookAiNarrowMark === 'alive'));
+await np.locator('#book-ai-input').blur();
+await np.locator('#book-ai-close').click();
+check('narrow: overlay close restores the exact reader box',
+  await np.locator('#book-scroll').evaluate((el) => el.dataset.bookAiNarrowMark === 'alive'));
 
 // #52: switching Books must flush the previous Book's pending position to the
 // PREVIOUS Book — flushing after the switch would send the old chapter under
@@ -359,6 +494,15 @@ check('narrow: Learn cards and playback return after editor blur',
   && learnGeometryBlurred.playback.bottom > 0);
 
 // ---------- old shell untouched ----------
+// The legacy page plays sentences and opens a Book, and that writes a Reading
+// position for whichever Person the context holds. Return the wide context to
+// the first Person before booting `/` so this parity flow can never leave a
+// position for the second Person the #46 assertion above just checked —
+// otherwise every repeat run of this smoke fails that assertion against its
+// own persisted data directory.
+await wp.locator('#identity-chip').click();
+await wp.locator('#profile-choices button').first().click();
+await wp.waitForSelector('body[data-ready]');
 const op = await boot(wide, '/', 'old');
 check('old: no shell chrome at /', (await op.locator('#shell-nav').count()) === 0);
 check('old: reader intact at /', (await op.locator('#text-input').count()) === 1);
