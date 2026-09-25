@@ -231,3 +231,62 @@ test('an over-limit Conversation surfaces too_large, not a generic failure', asy
     return true;
   });
 });
+
+test('BookConversation lifecycle stays scoped to the active Person and Book', async () => {
+  const calls = [];
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      if (path.endsWith('/book-conversations') && (!options || options.method !== 'POST')) {
+        return response({ conversations: [{ id: '000001', bookId: 'abc', active: true }] });
+      }
+      return response({ conversation: { id: '000001', bookId: 'abc', messages: [] } });
+    },
+  });
+
+  await api.listBookConversations('abc');
+  await api.openBookConversation('abc', { newConversation: true });
+  await api.resumeBookConversation('000001');
+  await api.deleteBookConversation('000001');
+
+  assert.deepEqual(calls.map((call) => `${call.options?.method ?? 'GET'} ${call.path}`), [
+    'GET /books/abc/book-conversations?profile=dad',
+    'POST /books/abc/book-conversations?profile=dad',
+    'POST /book-conversations/000001/resume?profile=dad',
+    'DELETE /book-conversations/000001?profile=dad',
+  ]);
+  assert.deepEqual(JSON.parse(calls[1].options.body), { new: true });
+});
+
+test('BookConversation answer API parses split NDJSON and preserves the context snapshot', async () => {
+  const encoder = new TextEncoder();
+  const chunks = [
+    encoder.encode('{"type":"meta","contextScope":"selection"}\n{"type":"del'),
+    encoder.encode('ta","text":"回答"}\n{"type":"done","conversation":{"id":"1"}}\n'),
+  ];
+  const calls = [];
+  const api = new ServerApi({
+    profile: 'dad',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      let index = 0;
+      return {
+        ok: true,
+        status: 200,
+        body: { getReader: () => ({ read: async () => index < chunks.length
+          ? { value: chunks[index++], done: false } : { done: true }, releaseLock() {} }) },
+      };
+    },
+  });
+  const events = [];
+  const context = { bookId: 'abc', scope: 'selection', anchor: { start: 0, end: 0 } };
+
+  await api.streamBookConversationMessage('1', {
+    bookId: 'abc', text: '解释', context, onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(calls[0].path, '/book-conversations/1/messages?profile=dad');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { bookId: 'abc', text: '解释', context });
+  assert.deepEqual(events.map((event) => event.type), ['meta', 'delta', 'done']);
+});

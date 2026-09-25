@@ -207,6 +207,97 @@ export class ServerApi {
     });
   }
 
+  // -- BookConversation (Read-owned, ticket #71/#72) -------------------------
+
+  async listBookConversations(bookId) {
+    return (await this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/book-conversations`),
+    ))?.conversations ?? [];
+  }
+
+  async openBookConversation(bookId, { newConversation = false } = {}) {
+    return (await this.#request(
+      this.#withProfile(`/books/${encodeURIComponent(bookId)}/book-conversations`),
+      { method: 'POST', body: { new: newConversation } },
+    ))?.conversation ?? null;
+  }
+
+  async getBookConversation(conversationId) {
+    return (await this.#request(
+      this.#withProfile(`/book-conversations/${encodeURIComponent(conversationId)}`),
+    ))?.conversation ?? null;
+  }
+
+  async resumeBookConversation(conversationId) {
+    return (await this.#request(
+      this.#withProfile(`/book-conversations/${encodeURIComponent(conversationId)}/resume`),
+      { method: 'POST', body: {} },
+    ))?.conversation ?? null;
+  }
+
+  async deleteBookConversation(conversationId) {
+    await this.#request(
+      this.#withProfile(`/book-conversations/${encodeURIComponent(conversationId)}`),
+      { method: 'DELETE' },
+    );
+  }
+
+  /**
+   * Stream one BookConversation turn. The host owns the context snapshot and
+   * persists only a completed turn; callers receive the same NDJSON boundary
+   * as the Python API without treating model text as product instructions.
+   */
+  async streamBookConversationMessage(conversationId, { bookId, text, context, onEvent, signal }) {
+    let response;
+    try {
+      response = await this.fetchImpl(`${this.baseUrl}${this.#withProfile(
+        `/book-conversations/${encodeURIComponent(conversationId)}/messages`,
+      )}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+        body: JSON.stringify({ bookId, text, context }),
+        signal,
+      });
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      throw new ApiError('network_failure', 0);
+    }
+
+    if (!response.ok) {
+      let payload = null;
+      try { payload = await response.json(); } catch { /* fixed fallback below */ }
+      throw new ApiError(payload?.error ?? 'not_found', response.status);
+    }
+    if (!response.body?.getReader) throw new ApiError('ai_upstream_error', response.status);
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    let completed = false;
+    const dispatch = async (line) => {
+      if (!line.trim()) return;
+      let event;
+      try { event = JSON.parse(line); } catch { throw new ApiError('ai_upstream_error', response.status); }
+      await onEvent?.(event);
+      if (event.type === 'done') completed = true;
+      if (event.type === 'error') throw new ApiError(event.code ?? 'ai_upstream_error', response.status);
+    };
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        pending += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+        const lines = pending.split('\n');
+        pending = lines.pop() ?? '';
+        for (const line of lines) await dispatch(line);
+        if (done) break;
+      }
+      if (pending) await dispatch(pending);
+      if (!completed) throw new ApiError('ai_upstream_error', response.status);
+    } finally {
+      reader.releaseLock?.();
+    }
+  }
+
   // -- Lookup / AI (ADR 0008) ------------------------------------------------
 
   async lookup(lang, word, signal) {

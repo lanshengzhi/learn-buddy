@@ -363,17 +363,42 @@ body[data-face="learn"] #back-to-book {
   box-shadow: inset 3px 0 0 var(--primary);
 }
 
+/* Wide: the shell's established nav + reading columns gain one explicit AI
+   column. #book-view stays mounted, so opening this never remounts sentences. */
+@media (min-width: 900px) {
+  #reading-area:has(#book-ai-panel:not([hidden])) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+  }
+
+  #reading-area:has(#book-ai-panel:not([hidden])) #book-view {
+    min-width: 0;
+    /* The Read shell is nav + reader + Book AI. The legacy lookup/TOC aside
+       yields to the active Book AI column rather than creating a fourth one. */
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #reading-area:has(#book-ai-panel:not([hidden])) .book-aside {
+    display: none;
+  }
+
+  #reading-area:has(#book-ai-panel:not([hidden])) #bottom-bar {
+    grid-column: 1;
+  }
+}
+
 .book-ai-panel {
-  position: absolute;
-  top: 76px;
-  right: 20px;
   z-index: 45;
-  width: min(360px, calc(100vw - 40px));
+  width: auto;
+  min-width: 0;
+  min-height: 0;
   padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border-left: 1px solid var(--border);
   background: var(--surface);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
 }
 
 .book-ai-head {
@@ -381,6 +406,7 @@ body[data-face="learn"] #back-to-book {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex: none;
 }
 
 .book-ai-head > div {
@@ -389,20 +415,204 @@ body[data-face="learn"] #back-to-book {
   gap: 2px;
 }
 
+.book-ai-scope {
+  flex: none;
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.book-ai-scope div {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 6px;
+}
+
+.book-ai-scope dt { color: var(--text-muted); }
+.book-ai-scope dd { margin: 0; overflow-wrap: anywhere; }
+
 #book-ai-selection {
-  margin: 12px 0 0;
-  padding: 10px 12px;
+  flex: none;
+  max-height: 8em;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
   border-left: 3px solid var(--primary);
   background: var(--primary-soft);
   white-space: pre-wrap;
 }
 
+.book-ai-view {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.book-ai-view[hidden] { display: none; }
+.book-ai-view h3 { margin: 0; }
+
+.book-ai-messages {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.book-ai-message {
+  max-width: 92%;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px 12px 12px 12px;
+  background: var(--bg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.book-ai-message.user {
+  align-self: flex-end;
+  border-radius: 12px 6px 12px 12px;
+  background: var(--primary-soft);
+}
+
+.book-ai-quick-prompts {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.book-ai-quick-prompts button {
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.book-ai-composer {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.book-ai-composer textarea {
+  min-width: 0;
+  flex: 1;
+  resize: none;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.book-ai-composer button {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--bg);
+  cursor: pointer;
+}
+
+.book-ai-conversations {
+  flex: none;
+  font-size: 12px;
+}
+
+.book-ai-conversation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.book-ai-conversations ul {
+  max-height: 10em;
+  overflow: auto;
+  margin: 5px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.book-ai-conversations button {
+  width: 100%;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.book-ai-conversations button.active { background: var(--primary-soft); }
+
+/* Artifact generation is a later ticket. This center surface is mounted now
+   so the state machine and return path are explicit without a fake artifact. */
+.book-artifact-preview {
+  position: absolute;
+  inset: 76px 400px 0 0;
+  z-index: 44;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+}
+
+.book-artifact-card {
+  width: min(720px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.16);
+}
+
+.book-artifact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
 @media (max-width: 899.98px) {
+  /* Narrow: the panel follows the established topbar/overlay/drawer layering
+     and never changes the reader's layout box. */
   .book-ai-panel {
-    top: 62px;
-    right: 10px;
-    left: 10px;
-    width: auto;
+    position: fixed;
+    top: calc(53px + env(safe-area-inset-top));
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 45;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.18);
+  }
+
+  .book-artifact-preview {
+    position: fixed;
+    inset: calc(53px + env(safe-area-inset-top)) 0 0;
+    z-index: 44;
   }
 }
 

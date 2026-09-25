@@ -6,6 +6,7 @@ const html = readFileSync(new URL('../web/next/index.html', import.meta.url), 'u
 const css = readFileSync(new URL('../web/next/shell.css', import.meta.url), 'utf8');
 const shell = readFileSync(new URL('../web/next/shell.js', import.meta.url), 'utf8');
 const api = readFileSync(new URL('../web/js/core/api.js', import.meta.url), 'utf8');
+const panel = readFileSync(new URL('../web/js/core/book-ai-panel.js', import.meta.url), 'utf8');
 
 const occurrences = (value) => [...html.matchAll(new RegExp(`id="${value}"`, 'g'))].length;
 
@@ -24,7 +25,9 @@ test('legacy ids remain unique; Read lookup returns while study/library tools st
     'profile-chip', 'lang-badge', 'reader-empty', 'empty-library-btn', 'chapter-body',
     'bottom-bar', 'prev-button', 'play-button', 'next-button', 'rate-select',
     'text-input', 'history-pane', 'history-list', 'hl-toggle', 'library-btn',
-    'library-overlay', 'tab-lookup', 'lookup-drawer',
+    'library-overlay', 'tab-lookup', 'lookup-drawer', 'book-ai-panel', 'book-ai-open',
+    'book-ai-form', 'book-ai-quick-prompts', 'book-ai-job', 'book-ai-artifact-status',
+    'book-artifact-preview', 'book-artifact-return',
   ]) assert.equal(occurrences(id), 1, `${id} exists exactly once`);
   assert.match(css, /#library-overlay,[\s\S]*?#cards-view\s*\{\s*display: none !important/);
   assert.match(css, /#hl-toggle/);
@@ -33,6 +36,48 @@ test('legacy ids remain unique; Read lookup returns while study/library tools st
   assert.match(css, /body\[data-face="learn"\] #lookup-drawer:not\(\[hidden\]\)/);
   assert.doesNotMatch(html, /id="d3(?:"|-)/i);
   assert.doesNotMatch(shell, /Layer\.D3|d3-trigger/);
+});
+
+test('Book AI has an explicit four-state shell with honest job/artifact gates', () => {
+  assert.match(panel, /Closed: 'closed'/);
+  assert.match(panel, /Ask: 'ask'/);
+  assert.match(panel, /Job: 'job'/);
+  assert.match(panel, /ArtifactPreview: 'artifact-preview'/);
+  assert.match(panel, /artifact\.status !== 'ready'/);
+  assert.match(shell, /bookAi\.openAsk/);
+  assert.match(shell, /bookAi\.openJob/);
+  assert.match(shell, /bookAi\.openArtifactPreview/);
+  assert.match(shell, /bookAi\.returnFromPreview/);
+  assert.match(shell, /bookAi\.close/);
+  assert.match(html, /data-state="closed"/);
+  assert.match(html, /id="book-artifact-return"[^>]*>返回阅读/);
+});
+
+test('Book AI shows Person/Book/chapter/context, streams answers, and offers fixed quick prompts', () => {
+  for (const id of ['book-ai-person', 'book-ai-book', 'book-ai-chapter', 'book-ai-context']) {
+    assert.ok(html.includes(`id="${id}"`), `${id} is visible`);
+  }
+  assert.match(shell, /streamBookConversationMessage/);
+  assert.match(shell, /event\.type === 'delta'/);
+  assert.match(shell, /event\.type === 'done'/);
+  assert.match(panel, /句子结构/);
+  assert.match(panel, /逐词解释/);
+  assert.match(panel, /语法点/);
+  assert.match(panel, /中文翻译/);
+  assert.match(api, /openBookConversation/);
+  assert.match(api, /resumeBookConversation/);
+  assert.match(api, /deleteBookConversation/);
+});
+
+test('Book AI open/close and preview return are non-reconstructing scroll-safe paths', () => {
+  assert.match(shell, /preservedReaderAnchor = \{\s*scrollTop: scroll\.scrollTop/);
+  assert.ok(shell.includes("$('book-scroll').scrollTop = preservedReaderAnchor.scrollTop"));
+  assert.match(shell, /focus\(\{ preventScroll: true \}\)/);
+  assert.doesNotMatch(shell, /bookViewEl\.replaceChildren|chapterBody\.replaceChildren|bookView\.openChapter/);
+  assert.match(css, /#reading-area:has\(#book-ai-panel:not\(\[hidden\]\)\)/);
+  assert.match(css, /grid-template-columns: minmax\(0, 1fr\) 380px/);
+  assert.match(css, /#reading-area:has\(#book-ai-panel:not\(\[hidden\]\)\) #book-view \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(css, /\.book-ai-panel \{\s*position: fixed;/);
 });
 
 test('Read selection actions are exact, sentence-anchored, and open a Book AI surface', () => {
