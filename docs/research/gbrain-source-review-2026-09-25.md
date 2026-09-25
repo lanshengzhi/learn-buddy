@@ -1,11 +1,11 @@
 # GBrain primary-source review for LearnBuddy
 
-**Review date:** 2026-09-25  
-**Upstream repository:** <https://github.com/garrytan/gbrain>  
-**Exact inspected commit:** [`467ff6737f741375a9a78eafd2818634d908eb99`](https://github.com/garrytan/gbrain/commit/467ff6737f741375a9a78eafd2818634d908eb99)  
-**Upstream version:** `0.57.0.0` ([`VERSION`](https://github.com/garrytan/gbrain/blob/467ff6737f741375a9a78eafd2818634d908eb99/VERSION), [`package.json`](https://github.com/garrytan/gbrain/blob/467ff6737f741375a9a78eafd2818634d908eb99/package.json#L178-L183))  
-**Tags inspected:** both `v0.57.0.0` and `latest-stable` resolve to that exact commit.  
-**Clone used:** `/tmp/learnbuddy-gbrain-research-1790317107-514592` (clean `master`, tracking `origin/master`)  
+**Review date:** 2026-09-25
+**Upstream repository:** <https://github.com/garrytan/gbrain>
+**Exact inspected commit:** [`467ff6737f741375a9a78eafd2818634d908eb99`](https://github.com/garrytan/gbrain/commit/467ff6737f741375a9a78eafd2818634d908eb99)
+**Upstream version:** `0.57.0.0` ([`VERSION`](https://github.com/garrytan/gbrain/blob/467ff6737f741375a9a78eafd2818634d908eb99/VERSION), [`package.json`](https://github.com/garrytan/gbrain/blob/467ff6737f741375a9a78eafd2818634d908eb99/package.json#L178-L183))
+**Tags inspected:** both `v0.57.0.0` and `latest-stable` resolve to that exact commit.
+**Clone used:** `/tmp/learnbuddy-gbrain-research-1790317107-514592` (clean `master`, tracking `origin/master`)
 **Commit timestamp:** `2026-09-24T19:13:16-04:00`; subject: `v0.57.0.0 fix: bound accepted-write waits and report safe receipt health (#5411)`.
 
 All upstream links in this report are pinned to that commit rather than `master`.

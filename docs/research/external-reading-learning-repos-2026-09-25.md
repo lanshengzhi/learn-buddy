@@ -35,8 +35,8 @@
 
 ## 仓库一：notebooklm-py
 
-仓库：<https://github.com/teng-lin/notebooklm-py>  
-调研版本：`978467ecdf810be85e4d4cbc37e57945d46fd194`（main，2026-09-23；报告还检查了 v0.8.2）  
+仓库：<https://github.com/teng-lin/notebooklm-py>
+调研版本：`978467ecdf810be85e4d4cbc37e57945d46fd194`（main，2026-09-23；报告还检查了 v0.8.2）
 许可：MIT
 
 ### 它是什么
@@ -104,8 +104,8 @@ LearnBuddy 只保存 correlation ID、状态和用户选择保留的输出元数
 
 ## 仓库二：Open Notebook
 
-仓库：<https://github.com/lfnovo/open-notebook>  
-调研版本：`3127f14ea9dbb519f0e4ddc64a0742ca644ba6ef`（main，package metadata 为 1.14.0；main 比 v1.14.0 tag 更新）  
+仓库：<https://github.com/lfnovo/open-notebook>
+调研版本：`3127f14ea9dbb519f0e4ddc64a0742ca644ba6ef`（main，package metadata 为 1.14.0；main 比 v1.14.0 tag 更新）
 许可：项目 MIT；完整部署栈需单独审查（尤其 SurrealDB v2 的 BSL）
 
 ### 它是什么
@@ -205,8 +205,8 @@ browser -> Next.js frontend -> FastAPI -> SurrealDB
 
 ## 仓库三：weread-omni
 
-仓库：<https://github.com/teng-lin/weread-omni>  
-调研版本：`88bd2e095d7d7ee423eaadf8f40653e72c5be6d4`，v0.1.2（2026-09-14）  
+仓库：<https://github.com/teng-lin/weread-omni>
+调研版本：`88bd2e095d7d7ee423eaadf8f40653e72c5be6d4`，v0.1.2（2026-09-14）
 许可：MIT
 
 ### 它是什么
