@@ -28,6 +28,7 @@ import { storedProfile, switchProfile, storeProfile } from './browser/profile.js
 import { ServerPlaybackPreferences } from './browser/server-playback-preferences.js';
 import { BookView } from './book.js';
 import { createLearnLookupBridge } from './core/learn-lookup.js';
+import { installBookLookupCards } from './core/book-lookup-card.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -194,6 +195,7 @@ async function boot() {
     knownWords,
     rateSsml: () => controller.state.ratePreset.ssmlRate,
   });
+  if (isNextShell) installBookLookupCards({ bookView, api, knownWords, isNextShell });
 
   bindProfileChip(profiles, profileId);
   void renderHistory();

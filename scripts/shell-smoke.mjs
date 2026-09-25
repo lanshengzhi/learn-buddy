@@ -233,7 +233,9 @@ const wideSel = await wp.evaluate(() => {
 await wp.waitForTimeout(400);
 check(`wide: toolbar owns long selections (§4.3, ${wideSel} chars)`,
   wideSel > 3 && (await wp.locator('#sel-toolbar').isVisible()));
-check('wide: Read keeps the lookup drawer hidden',
+check('wide: long Read selection opens its phrase card in the aside',
+  wideSel > 3 && await wp.locator('#aside-body .lookup-card .card-word').isVisible());
+check('wide: Read keeps the narrow lookup drawer hidden',
   !(await wp.locator('#lookup-drawer').isVisible()));
 await wp.keyboard.press('Escape');
 

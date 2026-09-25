@@ -35,6 +35,7 @@ def _fixture_dicts(dir):
             "INSERT INTO ecdict VALUES ('run', 'rʌn', '跑\n运行', 'move fast')",
             "INSERT INTO ecdict VALUES ('stop', 'stɑp', '停', 'cease')",
             "INSERT INTO ecdict VALUES ('move', 'muːv', '', 'change location')",
+            "INSERT INTO ecdict VALUES ('stop machine', 'ˈstɑp məˈʃiːn', '停机', 'a machine that stops')",
         ],
     )
     _write_db(
@@ -44,10 +45,11 @@ def _fixture_dicts(dir):
             "CREATE TABLE entries (id INTEGER PRIMARY KEY, reading TEXT)",
             "CREATE TABLE senses (entry INTEGER NOT NULL, ord INTEGER NOT NULL, pos TEXT, gloss TEXT)",
             "CREATE INDEX forms_text ON forms(text)",
-            "INSERT INTO entries VALUES (1, 'たべる')",
-            "INSERT INTO forms VALUES ('食べる', 1), ('たべる', 1)",
+            "INSERT INTO entries VALUES (1, 'たべる'), (2, 'いって'), (3, 'いく')",
+            "INSERT INTO forms VALUES ('食べる', 1), ('たべる', 1), ('行く', 2), ('行って', 2), ('行く', 3)",
             "INSERT INTO senses VALUES (1, 0, 'v1', 'to eat')",
             "INSERT INTO senses VALUES (1, 1, '', 'to live on')",
+            "INSERT INTO senses VALUES (2, 0, 'v5', 'to go'), (3, 0, 'v5', 'to go')",
         ],
     )
     _write_db(
@@ -100,6 +102,13 @@ class DictsTestCase(unittest.TestCase):
         self.assertEqual(self.dicts.lookup_en("stopping")["key"], "en:stop")
         self.assertEqual(self.dicts.lookup_en("stopped")["key"], "en:stop")
 
+    def test_en_phrase_is_an_exact_dictionary_entry(self):
+        entry = self.dicts.lookup_en(" Stop machine ")
+        self.assertEqual(entry["key"], "en:stop machine")
+        self.assertEqual(entry["reading"], "ˈstɑp məˈʃiːn")
+        self.assertEqual(entry["senses"][0]["gloss"], "停机")
+        self.assertIsNone(self.dicts.lookup_en("stopping machine"))
+
     def test_en_misses_are_none(self):
         self.assertIsNone(self.dicts.lookup_en("qwertyuiop"))
         self.assertIsNone(self.dicts.lookup_en("日本語"))
@@ -110,6 +119,17 @@ class DictsTestCase(unittest.TestCase):
         self.assertEqual(entry["matched"], "食べる")
         self.assertEqual(entry["reading"], "たべる")
         self.assertEqual(entry["senses"][0], {"pos": "v1", "gloss": "to eat"})
+
+    def test_ja_exact_phrase_hit(self):
+        entry = self.dicts.lookup_ja("行って")
+        self.assertEqual(entry["key"], "ja:行って")
+        self.assertEqual(entry["reading"], "いって")
+        self.assertEqual(entry["senses"][0]["gloss"], "to go")
+
+    def test_ja_alternate_readings_do_not_replace_primary(self):
+        entry = self.dicts.lookup_ja("行く")
+        self.assertEqual(entry["reading"], "いって")
+        self.assertEqual(entry["alternateReadings"], ["いく"])
 
     def test_ja_inflected_form_hits_via_chain(self):
         try:
@@ -148,6 +168,12 @@ class DictsTestCase(unittest.TestCase):
         self.assertEqual(entry["senses"][0]["gloss"], "precious jade")
         self.assertEqual(entry["glossLanguage"], "en")
         self.assertEqual(entry["glossSource"], "CC-CEDICT")
+
+    def test_zh_phrase_keeps_its_own_pinyin_and_meaning(self):
+        entry = self.dicts.lookup_zh("红楼梦")
+        self.assertEqual(entry["key"], "zh:红楼梦")
+        self.assertEqual(entry["reading"], "Hóng lóu Mèng")
+        self.assertEqual(entry["senses"][0]["gloss"], "A Dream of Red Mansions")
 
     def test_zh_traditional_form_resolves_to_the_same_key(self):
         # CC-CEDICT stores both traditions in one row; the key is the

@@ -379,6 +379,7 @@ class TestLookupEndpoints(ApiTestCase):
             [
                 "CREATE TABLE ecdict (word TEXT PRIMARY KEY, phonetic TEXT, translation TEXT, definition TEXT)",
                 "INSERT INTO ecdict VALUES ('run', 'rʌn', '跑', 'move fast')",
+                "INSERT INTO ecdict VALUES ('stop machine', 'ˈstɑp məˈʃiːn', '停机', 'a machine that stops')",
             ],
         )
         _write_db(
@@ -387,9 +388,9 @@ class TestLookupEndpoints(ApiTestCase):
                 "CREATE TABLE forms (text TEXT NOT NULL, entry INTEGER NOT NULL)",
                 "CREATE TABLE entries (id INTEGER PRIMARY KEY, reading TEXT)",
                 "CREATE TABLE senses (entry INTEGER NOT NULL, ord INTEGER NOT NULL, pos TEXT, gloss TEXT)",
-                "INSERT INTO entries VALUES (1, 'たべる')",
-                "INSERT INTO forms VALUES ('食べる', 1), ('たべる', 1)",
-                "INSERT INTO senses VALUES (1, 0, 'v1', 'to eat')",
+                "INSERT INTO entries VALUES (1, 'たべる'), (2, 'いって'), (3, 'いく')",
+                "INSERT INTO forms VALUES ('食べる', 1), ('たべる', 1), ('行く', 2), ('行って', 2), ('行く', 3)",
+                "INSERT INTO senses VALUES (1, 0, 'v1', 'to eat'), (2, 0, 'v5', 'to go'), (3, 0, 'v5', 'to go')",
             ],
         )
         _write_db(
@@ -418,6 +419,24 @@ class TestLookupEndpoints(ApiTestCase):
         payload = json.loads(body)
         self.assertEqual(payload["key"], "ja:食べる")
         self.assertEqual(payload["reading"], "たべる")
+
+        status, _, body = self.get_url("/lookup", {"lang": "ja", "word": "行く"})
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["reading"], "いって")
+        self.assertEqual(payload["alternateReadings"], ["いく"])
+
+    def test_lookup_resolves_an_english_phrase_without_tokenizing_it(self):
+        self._with_fixture_dicts()
+        status, _, body = self.get_url(
+            "/lookup", {"lang": "en", "word": "stop machine"}
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["word"], "stop machine")
+        self.assertEqual(payload["key"], "en:stop machine")
+        self.assertEqual(payload["reading"], "ˈstɑp məˈʃiːn")
+        self.assertEqual(payload["senses"][0]["gloss"], "停机")
 
     def test_lookup_resolves_zh(self):
         self._with_fixture_dicts()
